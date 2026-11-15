@@ -1,0 +1,117 @@
+{
+  "schema": "track-ed/project@2",
+  "name": "Loop Spline Point Terrain",
+  "generator": "track-ed fixtures 0.1.0",
+  "road": {
+    "halfWidth": 5,
+    "shoulderHalfWidth": 8
+  },
+  "terrain": {
+    "margin": 30,
+    "points": [
+      {
+        "position": [
+          40,
+          40
+        ],
+        "height": 6
+      },
+      {
+        "position": [
+          -45,
+          40
+        ],
+        "height": 4
+      },
+      {
+        "position": [
+          60,
+          100
+        ],
+        "height": 8
+      },
+      {
+        "position": [
+          120,
+          60
+        ],
+        "height": 3
+      },
+      {
+        "position": [
+          -45,
+          90
+        ],
+        "height": 5
+      },
+      {
+        "position": [
+          40,
+          -20
+        ],
+        "height": 2
+      }
+    ]
+  },
+  "centerlines": [
+    {
+      "id": "main",
+      "closed": true,
+      "points": [
+        {
+          "id": "p0",
+          "position": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p1",
+          "position": [
+            80,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "position": [
+            110,
+            40
+          ]
+        },
+        {
+          "id": "p3",
+          "position": [
+            80,
+            80
+          ]
+        },
+        {
+          "id": "p4",
+          "position": [
+            0,
+            80
+          ]
+        },
+        {
+          "id": "p5",
+          "position": [
+            -30,
+            40
+          ]
+        }
+      ],
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      }
+    }
+  ],
+  "spawn": {
+    "centerline": "main",
+    "fraction": 0,
+    "lateral": 0
+  },
+  "cameras": [],
+  "junctions": []
+}

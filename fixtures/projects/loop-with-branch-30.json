@@ -1,0 +1,72 @@
+{
+  "schema": "track-ed/project@1",
+  "name": "Loop with 30-degree Branch",
+  "generator": "track-ed fixtures 0.1.0",
+  "road": {
+    "halfWidth": 5.0,
+    "shoulderHalfWidth": 8.0
+  },
+  "terrain": {
+    "margin": 30.0
+  },
+  "centerlines": [
+    {
+      "id": "main",
+      "closed": true,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          0
+        ],
+        [
+          110,
+          40
+        ],
+        [
+          80,
+          80
+        ],
+        [
+          0,
+          80
+        ],
+        [
+          -30,
+          40
+        ]
+      ]
+    },
+    {
+      "id": "branch-30",
+      "closed": false,
+      "attach": {
+        "to": "main",
+        "fraction": 0.05555555555555555
+      },
+      "points": [
+        [
+          20,
+          0
+        ],
+        [
+          38,
+          -10.392304845413264
+        ],
+        [
+          56,
+          -20.784609690826528
+        ]
+      ]
+    }
+  ],
+  "spawn": {
+    "centerline": "main",
+    "fraction": 0.0,
+    "lateral": 0.0
+  },
+  "cameras": []
+}

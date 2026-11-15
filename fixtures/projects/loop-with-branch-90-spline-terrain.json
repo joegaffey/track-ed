@@ -1,0 +1,86 @@
+{
+  "schema": "track-ed/project@1",
+  "name": "Loop with 90-degree Spline Branch Terrain",
+  "generator": "track-ed fixtures 0.1.0",
+  "road": {
+    "halfWidth": 5,
+    "shoulderHalfWidth": 8
+  },
+  "terrain": {
+    "margin": 30,
+    "elevation": {
+      "amplitude": 8,
+      "wavelength": 120,
+      "blend": 25,
+      "gridSpacing": 10
+    }
+  },
+  "centerlines": [
+    {
+      "id": "main",
+      "closed": true,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          0
+        ],
+        [
+          110,
+          40
+        ],
+        [
+          80,
+          80
+        ],
+        [
+          0,
+          80
+        ],
+        [
+          -30,
+          40
+        ]
+      ],
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      }
+    },
+    {
+      "id": "branch-90",
+      "closed": false,
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      },
+      "attach": {
+        "to": "main",
+        "fraction": 0.2203819009826999
+      },
+      "points": [
+        [
+          80,
+          0
+        ],
+        [
+          91.55528200346237,
+          -27.685293168403664
+        ],
+        [
+          92.03644673956327,
+          -59.99269913819228
+        ]
+      ]
+    }
+  ],
+  "spawn": {
+    "centerline": "main",
+    "fraction": 0,
+    "lateral": 0
+  },
+  "cameras": []
+}

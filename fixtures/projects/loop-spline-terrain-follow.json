@@ -1,0 +1,61 @@
+{
+  "schema": "track-ed/project@1",
+  "name": "Loop Spline Terrain Follow",
+  "generator": "track-ed fixtures 0.1.0",
+  "road": {
+    "halfWidth": 5,
+    "shoulderHalfWidth": 8
+  },
+  "terrain": {
+    "margin": 30,
+    "elevation": {
+      "amplitude": 8,
+      "wavelength": 120,
+      "blend": 25,
+      "gridSpacing": 10
+    },
+    "mode": "follow"
+  },
+  "centerlines": [
+    {
+      "id": "main",
+      "closed": true,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          0
+        ],
+        [
+          110,
+          40
+        ],
+        [
+          80,
+          80
+        ],
+        [
+          0,
+          80
+        ],
+        [
+          -30,
+          40
+        ]
+      ],
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      }
+    }
+  ],
+  "spawn": {
+    "centerline": "main",
+    "fraction": 0,
+    "lateral": 0
+  },
+  "cameras": []
+}

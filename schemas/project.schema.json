@@ -1,0 +1,346 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://track-ed.dev/schemas/project.schema.json",
+  "title": "track-ed project",
+  "description": "Authoring format for track-ed v0. Semantic rules are defined in docs/contracts/project.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "name",
+    "generator",
+    "road",
+    "terrain",
+    "centerlines",
+    "spawn"
+  ],
+  "properties": {
+    "schema": {
+      "const": "track-ed/project@1"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generator": {
+      "type": "string",
+      "minLength": 1
+    },
+    "road": {
+      "$ref": "#/$defs/road"
+    },
+    "terrain": {
+      "$ref": "#/$defs/terrain"
+    },
+    "centerlines": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "items": {
+        "$ref": "#/$defs/centerline"
+      }
+    },
+    "spawn": {
+      "$ref": "#/$defs/spawn"
+    },
+    "cameras": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/camera"
+      },
+      "default": []
+    }
+  },
+  "$defs": {
+    "vec2": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "vec3": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "road": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "halfWidth",
+        "shoulderHalfWidth"
+      ],
+      "properties": {
+        "halfWidth": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "shoulderHalfWidth": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "terrain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "margin"
+      ],
+      "properties": {
+        "margin": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "elevation": {
+          "$ref": "#/$defs/elevation"
+        },
+        "mode": {
+          "enum": [
+            "conform",
+            "follow"
+          ],
+          "default": "conform"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/terrainPoint"
+          }
+        }
+      }
+    },
+    "centerline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "closed",
+        "points"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "closed": {
+          "type": "boolean"
+        },
+        "points": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/vec2"
+          }
+        },
+        "attach": {
+          "$ref": "#/$defs/attach"
+        },
+        "spline": {
+          "$ref": "#/$defs/spline"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "closed": {
+                "const": true
+              }
+            },
+            "required": [
+              "closed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "points": {
+                "minItems": 3
+              }
+            },
+            "not": {
+              "required": [
+                "attach"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "closed": {
+                "const": false
+              }
+            },
+            "required": [
+              "closed"
+            ]
+          },
+          "then": {
+            "required": [
+              "attach"
+            ]
+          }
+        }
+      ]
+    },
+    "attach": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "to",
+        "fraction"
+      ],
+      "properties": {
+        "to": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fraction": {
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMaximum": 1
+        }
+      }
+    },
+    "spawn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "centerline",
+        "fraction"
+      ],
+      "properties": {
+        "centerline": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fraction": {
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "lateral": {
+          "type": "number",
+          "default": 0
+        }
+      }
+    },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "position",
+        "target",
+        "fovY"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "$ref": "#/$defs/vec3"
+        },
+        "target": {
+          "$ref": "#/$defs/vec3"
+        },
+        "fovY": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "spline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "catmull-rom"
+        },
+        "samplesPerSegment": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 64,
+          "default": 12
+        }
+      },
+      "default": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      }
+    },
+    "elevation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "amplitude",
+        "wavelength"
+      ],
+      "properties": {
+        "amplitude": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "wavelength": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "phase": {
+          "type": "number",
+          "default": 0
+        },
+        "blend": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 20
+        },
+        "gridSpacing": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 10
+        }
+      }
+    },
+    "terrainPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "position",
+        "height"
+      ],
+      "properties": {
+        "position": {
+          "$ref": "#/$defs/vec2"
+        },
+        "height": {
+          "type": "number"
+        }
+      }
+    }
+  }
+}

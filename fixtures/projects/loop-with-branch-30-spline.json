@@ -1,0 +1,80 @@
+{
+  "schema": "track-ed/project@1",
+  "name": "Loop with 30-degree Spline Branch",
+  "generator": "track-ed fixtures 0.1.0",
+  "road": {
+    "halfWidth": 5,
+    "shoulderHalfWidth": 8
+  },
+  "terrain": {
+    "margin": 30
+  },
+  "centerlines": [
+    {
+      "id": "main",
+      "closed": true,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          0
+        ],
+        [
+          110,
+          40
+        ],
+        [
+          80,
+          80
+        ],
+        [
+          0,
+          80
+        ],
+        [
+          -30,
+          40
+        ]
+      ],
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      }
+    },
+    {
+      "id": "branch-30",
+      "closed": false,
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      },
+      "attach": {
+        "to": "main",
+        "fraction": 0.2203819009826999
+      },
+      "points": [
+        [
+          80,
+          0
+        ],
+        [
+          109.75380819678853,
+          -3.8354788213102737
+        ],
+        [
+          128.4334991262156,
+          -12.293070444005496
+        ]
+      ]
+    }
+  ],
+  "spawn": {
+    "centerline": "main",
+    "fraction": 0,
+    "lateral": 0
+  },
+  "cameras": []
+}

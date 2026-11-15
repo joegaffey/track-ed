@@ -1,0 +1,80 @@
+{
+  "schema": "track-ed/project@1",
+  "name": "Loop with 45-degree Spline Branch",
+  "generator": "track-ed fixtures 0.1.0",
+  "road": {
+    "halfWidth": 5,
+    "shoulderHalfWidth": 8
+  },
+  "terrain": {
+    "margin": 30
+  },
+  "centerlines": [
+    {
+      "id": "main",
+      "closed": true,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          0
+        ],
+        [
+          110,
+          40
+        ],
+        [
+          80,
+          80
+        ],
+        [
+          0,
+          80
+        ],
+        [
+          -30,
+          40
+        ]
+      ],
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      }
+    },
+    {
+      "id": "branch-45",
+      "closed": false,
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      },
+      "attach": {
+        "to": "main",
+        "fraction": 0.36019095049134997
+      },
+      "points": [
+        [
+          110,
+          39.999999999999986
+        ],
+        [
+          133.00575560125134,
+          59.25448543107535
+        ],
+        [
+          154.95049177234495,
+          66.55596965873625
+        ]
+      ]
+    }
+  ],
+  "spawn": {
+    "centerline": "main",
+    "fraction": 0,
+    "lateral": 0
+  },
+  "cameras": []
+}
