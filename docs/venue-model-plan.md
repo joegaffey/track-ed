@@ -1,6 +1,6 @@
 # Venue section graph — implementation plan
 
-Status: in progress. Slice 1 (`project@3` sections, multiple loops, dead-ended opens) is implemented; general junctions, authoring migration, routes, and loop splitting remain.
+Status: in progress. Slices 1 and 2 (`project@3` sections, multiple loops, dead-ended opens, general junction members, open-section junctions, and multi-way junctions) are implemented in the kernel and validated against Lapster; app authoring, routes, and loop splitting remain.
 
 ## Goal
 

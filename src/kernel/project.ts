@@ -41,10 +41,16 @@ export type ProjectAttach =
   | { to: string; fraction: number }
   | { junction: string };
 
+export interface ProjectJunctionMember {
+  section: string;
+  point: string;
+}
+
 export interface ProjectJunction {
   id: string;
   centerline: string;
   point: string;
+  members?: ProjectJunctionMember[];
 }
 
 export interface ProjectSpline {
@@ -455,17 +461,66 @@ function parsePointObjects(
   return { points, pointIds };
 }
 
+function parseJunctionMember(
+  value: unknown,
+  path: string,
+  issues: ProjectIssue[],
+): ProjectJunctionMember | null {
+  const object = expectObject(value, path, issues);
+  if (!object) {
+    return null;
+  }
+  rejectUnknownKeys(object, ["section", "point"], path, issues);
+  const section = readString(object.section, `${path}.section`, issues);
+  const point = readString(object.point, `${path}.point`, issues);
+  return section === null || point === null ? null : { section, point };
+}
+
 function parseJunction(
   value: unknown,
   path: string,
   issues: ProjectIssue[],
+  schema: ProjectSchema,
 ): ProjectJunction | null {
   const object = expectObject(value, path, issues);
   if (!object) {
     return null;
   }
-  rejectUnknownKeys(object, ["id", "centerline", "point"], path, issues);
+
   const id = readString(object.id, `${path}.id`, issues);
+  if (schema === "track-ed/project@3") {
+    rejectUnknownKeys(object, ["id", "members", "anchor"], path, issues);
+    if (!Array.isArray(object.members) || object.members.length < 2) {
+      issues.push({
+        path: `${path}.members`,
+        message: "must be an array with at least two members",
+      });
+      return null;
+    }
+    const members: ProjectJunctionMember[] = [];
+    for (let i = 0; i < object.members.length; i += 1) {
+      const member = parseJunctionMember(object.members[i], `${path}.members[${i}]`, issues);
+      if (!member) {
+        return null;
+      }
+      members.push(member);
+    }
+    const anchor =
+      object.anchor === undefined
+        ? members[0]!
+        : parseJunctionMember(object.anchor, `${path}.anchor`, issues);
+    if (!anchor || id === null) {
+      return null;
+    }
+    return {
+      id,
+      centerline: anchor.section,
+      point: anchor.point,
+      members,
+    };
+  }
+
+  rejectUnknownKeys(object, ["id", "centerline", "point"], path, issues);
   const centerline = readString(object.centerline, `${path}.centerline`, issues);
   const point = readString(object.point, `${path}.point`, issues);
   return id === null || centerline === null || point === null
@@ -565,13 +620,13 @@ function parseCenterline(
         message: "a closed centreline needs at least 3 points",
       });
     }
-    if (object.attach !== undefined) {
+    if (!isV3 && object.attach !== undefined) {
       issues.push({
         path: `${path}.attach`,
         message: "must be omitted for a closed centreline",
       });
     }
-    if (object.endAttach !== undefined) {
+    if (!isV3 && object.endAttach !== undefined) {
       issues.push({
         path: `${path}.endAttach`,
         message: "must be omitted for a closed centreline",
@@ -697,7 +752,7 @@ function validateSemantics(project: Project, issues: ProjectIssue[]): void {
       });
       continue;
     }
-    if (!host.closed) {
+    if (!isV3 && !host.closed) {
       issues.push({
         path: `junctions[${junction.id}].centerline`,
         message: "junction host must be a closed centreline",
@@ -709,6 +764,61 @@ function validateSemantics(project: Project, issues: ProjectIssue[]): void {
         message: `unknown point "${junction.point}" on centreline "${junction.centerline}"`,
       });
     }
+
+    if (isV3) {
+      const members = junction.members ?? [];
+      if (members.length < 2) {
+        issues.push({
+          path: `junctions[${junction.id}].members`,
+          message: "must contain at least two members",
+        });
+      }
+      const sectionsInJunction = new Set<string>();
+      const anchored = new Set<string>();
+      for (let index = 0; index < members.length; index += 1) {
+        const member = members[index]!;
+        const section = project.centerlines.find(
+          (candidate) => candidate.id === member.section,
+        );
+        if (!section) {
+          issues.push({
+            path: `junctions[${junction.id}].members[${index}].section`,
+            message: `unknown section "${member.section}"`,
+          });
+          continue;
+        }
+        if (!section.pointIds.includes(member.point)) {
+          issues.push({
+            path: `junctions[${junction.id}].members[${index}].point`,
+            message: `unknown point "${member.point}" on section "${member.section}"`,
+          });
+        }
+        if (sectionsInJunction.has(member.section)) {
+          issues.push({
+            path: `junctions[${junction.id}].members[${index}].section`,
+            message: "a junction cannot contain two points from the same section",
+          });
+        }
+        sectionsInJunction.add(member.section);
+        anchored.add(`${member.section}:${member.point}`);
+        const key = `${member.section}:${member.point}`;
+        if (junctionPoints.has(key)) {
+          issues.push({
+            path: `junctions[${junction.id}].members[${index}]`,
+            message: "a section point can belong to only one junction",
+          });
+        }
+        junctionPoints.add(key);
+      }
+      if (!anchored.has(`${junction.centerline}:${junction.point}`)) {
+        issues.push({
+          path: `junctions[${junction.id}].anchor`,
+          message: "anchor must be one of the junction members",
+        });
+      }
+      continue;
+    }
+
     const key = `${junction.centerline}:${junction.point}`;
     if (junctionPoints.has(key)) {
       issues.push({
@@ -974,16 +1084,21 @@ export function parseProject(input: unknown): ProjectParseResult {
 
   let junctions: ProjectJunction[] = [];
   if (object.junctions !== undefined) {
-    if (schema !== "track-ed/project@2") {
+    if (schema !== "track-ed/project@2" && schema !== "track-ed/project@3") {
       issues.push({
         path: "$.junctions",
-        message: "junctions are only supported in track-ed/project@2",
+        message: "junctions are only supported in track-ed/project@2 and project@3",
       });
     } else if (!Array.isArray(object.junctions)) {
       issues.push({ path: "$.junctions", message: "must be an array" });
     } else {
       for (let i = 0; i < object.junctions.length; i += 1) {
-        const junction = parseJunction(object.junctions[i], `$.junctions[${i}]`, issues);
+        const junction = parseJunction(
+          object.junctions[i],
+          `$.junctions[${i}]`,
+          issues,
+          schema,
+        );
         if (!junction) {
           junctions = [];
           break;

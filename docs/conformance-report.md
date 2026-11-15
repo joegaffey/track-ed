@@ -67,6 +67,8 @@ Merging two loose branch ends into one centreline passed: 67668 B `.sima`, 894 v
 
 The `project@3` venue fixture with two disjoint closed sections and a dead-ended open spur passed: 128844 B `.sima`, 1728 vertices, 1146 triangles, `Two Loops and Spur (Track)`, `validate ok`.
 
+The `project@3` junction fixture with a closed loop and an open spur attached at an interior loop control point passed: 67536 B `.sima`, 891 vertices, 588 triangles, `Loop and Spur Junction (Track)`, `validate ok`.
+
 ## Viewer checks
 
 - `web/track-viewer/?track=<bundle>.sima` loaded the loop and 90° branch bundles with no console errors.

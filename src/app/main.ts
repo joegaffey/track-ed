@@ -654,6 +654,13 @@ function serializeProject(source: Project): unknown {
       terrain: source.terrain,
       spawn: source.spawn,
       cameras: source.cameras,
+      junctions: source.junctions.map((junction) => ({
+        id: junction.id,
+        members:
+          junction.members ??
+          [{ section: junction.centerline, point: junction.point }],
+        anchor: { section: junction.centerline, point: junction.point },
+      })),
       sections: source.centerlines.map((centerline) => ({
         id: centerline.id,
         closed: centerline.closed,
@@ -966,13 +973,25 @@ function updateJunctionList(source: Project): void {
           "junction" in branch.endAttach &&
           branch.endAttach.junction === junction.id),
     ).length;
-    label.textContent = `${junction.id} · ${junction.centerline}/${junction.point} · ${branchCount} branch${
-      branchCount === 1 ? "" : "es"
-    }`;
+    if (source.schema === "track-ed/project@3") {
+      const memberCount = junction.members?.length ?? 1;
+      label.textContent = `${junction.id} · ${memberCount} section${
+        memberCount === 1 ? "" : "s"
+      }`;
+    } else {
+      label.textContent = `${junction.id} · ${junction.centerline}/${junction.point} · ${branchCount} branch${
+        branchCount === 1 ? "" : "es"
+      }`;
+    }
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "edit-button";
     remove.textContent = "Remove";
+    remove.disabled = source.schema === "track-ed/project@3";
+    remove.title =
+      source.schema === "track-ed/project@3"
+        ? "Junction detach authoring is not implemented for project@3 yet."
+        : "";
     remove.addEventListener("click", () => removeJunction(junction.id));
     row.append(label, remove);
     junctionList.appendChild(row);

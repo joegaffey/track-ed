@@ -1,6 +1,6 @@
 # Contract — `track-ed/project@3`
 
-Status: implementation slice 1. Venue sections are implemented; general junctions and routes are not yet implemented.
+Status: implementation slice 2. Venue sections and general junctions are implemented; routes and app authoring remain deferred.
 
 ## Purpose
 
@@ -36,6 +36,21 @@ The executable schema is `schemas/project-v3.schema.json`.
 
 Road, terrain, spawn, and camera fields follow `track-ed/project@2`.
 
+Junctions connect section control points:
+
+```json
+"junctions": [
+  {
+    "id": "junction-1",
+    "members": [
+      { "section": "loop", "point": "a1" },
+      { "section": "spur", "point": "s0" }
+    ],
+    "anchor": { "section": "loop", "point": "a1" }
+  }
+]
+```
+
 ## Semantic rules
 
 - `sections` MUST contain at least one section.
@@ -47,11 +62,19 @@ Road, terrain, spawn, and camera fields follow `track-ed/project@2`.
 - Closed sections MUST have at least three points and enclose non-zero area.
 - Open sections MUST have at least two points.
 - Sections MUST NOT self-intersect.
-- Disconnected sections MUST NOT intersect; connect them at a junction instead.
 - `spawn.centerline` MUST reference a section id.
 - Export length is the sum of all section lengths while routes are absent.
-- A venue MAY have junctions in a later slice; slice 1 rejects `junctions`.
 - `attach` and `endAttach` are not part of `project@3`.
+- A junction MUST have at least two members.
+- Every junction member MUST reference an existing section point.
+- A junction member may be an endpoint or an interior control point of an open or closed section.
+- The `anchor` MUST be one of the junction members; the first member is the anchor when omitted.
+- All members snap to the anchor position before baking.
+- A section point may belong to at most one junction.
+- A junction cannot contain two points from the same section.
+- Multiple sections may share a junction.
+- Disconnected sections MUST NOT intersect; intersections are allowed only at shared junctions.
+- Loose ends may remain disconnected.
 
 ## Migration
 
@@ -59,7 +82,7 @@ Road, terrain, spawn, and camera fields follow `track-ed/project@2`.
 
 ## Deferred
 
-- Junction members and anchors.
-- Open ends connecting to arbitrary control points.
+- App authoring for general junctions.
 - Route/lap objects and route-based length.
 - Closed-loop splitting and section authoring UI.
+- Loose-to-loose authoring merge in `project@3`.

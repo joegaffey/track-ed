@@ -9,6 +9,7 @@ App default:
 Venue section fixtures:
 
 - `projects/venue-two-loops-spur.json` — `project@3` with two disjoint closed loops and a dead-ended open spur. Spawn is on the spur; length is the sum of all sections.
+- `projects/venue-loop-spur-junction.json` — `project@3` closed loop with an open spur attached at an interior loop control point.
 
 Legacy procedural terrain fixtures (kernel conformance only; not exposed in the app):
 

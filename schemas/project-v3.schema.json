@@ -48,6 +48,13 @@
       "items": {
         "$ref": "#/$defs/section"
       }
+    },
+    "junctions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/junction"
+      },
+      "default": []
     }
   },
   "$defs": {
@@ -313,6 +320,49 @@
           }
         }
       ]
+    },
+    "junctionMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "section",
+        "point"
+      ],
+      "properties": {
+        "section": {
+          "type": "string",
+          "minLength": 1
+        },
+        "point": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "junction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "members"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "members": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/junctionMember"
+          }
+        },
+        "anchor": {
+          "$ref": "#/$defs/junctionMember"
+        }
+      }
     }
   }
 }

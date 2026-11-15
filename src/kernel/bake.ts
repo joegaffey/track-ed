@@ -376,6 +376,113 @@ function extendedShoulderRibbon(points: Vec2[], width: number): Vec2[] {
   ];
 }
 
+function extendedShoulderRibbonStart(points: Vec2[], width: number): Vec2[] {
+  const left = offsetPolyline(points, false, 1, width);
+  const right = offsetPolyline(points, false, -1, width);
+  if (left.length < 2 || right.length < 2) {
+    return [...left, ...right.slice().reverse()];
+  }
+  const first = points[0]!;
+  const second = points[1]!;
+  const startDirection = normalize2(sub2(first, second));
+  const leftStart = add2(left[0]!, scale2(startDirection, width));
+  const rightStart = add2(right[0]!, scale2(startDirection, width));
+  return [
+    leftStart,
+    ...left.slice(1),
+    ...right.slice(1).reverse(),
+    rightStart,
+  ];
+}
+
+function shoulderRibbonForEnds(
+  points: Vec2[],
+  width: number,
+  startAttached: boolean,
+  endAttached: boolean,
+): Vec2[] {
+  if (startAttached && endAttached) {
+    return ribbon(points, width);
+  }
+  if (startAttached) {
+    return extendedShoulderRibbon(points, width);
+  }
+  if (endAttached) {
+    return extendedShoulderRibbonStart(points, width);
+  }
+  return extendedShoulderRibbonBoth(points, width);
+}
+
+function snapSectionJunctions(project: Project): void {
+  for (const junction of project.junctions) {
+    const members = junction.members;
+    if (!members) {
+      continue;
+    }
+    const anchorSection = project.centerlines.find(
+      (section) => section.id === junction.centerline,
+    );
+    const anchorIndex = anchorSection?.pointIds.indexOf(junction.point) ?? -1;
+    const anchorPosition =
+      anchorSection && anchorIndex >= 0 ? anchorSection.points[anchorIndex] : undefined;
+    if (!anchorPosition) {
+      throw new BakeError(`junction "${junction.id}" has an unknown anchor point`);
+    }
+    for (const member of members) {
+      if (member.section === junction.centerline && member.point === junction.point) {
+        continue;
+      }
+      const section = project.centerlines.find(
+        (candidate) => candidate.id === member.section,
+      );
+      const pointIndex = section?.pointIds.indexOf(member.point) ?? -1;
+      if (!section || pointIndex < 0) {
+        throw new BakeError(
+          `junction "${junction.id}" references an unknown point "${member.point}" on section "${member.section}"`,
+        );
+      }
+      section.points[pointIndex] = [anchorPosition[0], anchorPosition[1]];
+    }
+  }
+}
+
+function sectionAttachedPoints(project: Project): Set<string> {
+  const attached = new Set<string>();
+  for (const junction of project.junctions) {
+    for (const member of junction.members ?? []) {
+      attached.add(`${member.section}:${member.point}`);
+    }
+  }
+  return attached;
+}
+
+function sharedJunctionPoints(
+  project: Project,
+  sectionA: string,
+  sectionB: string,
+): Vec2[] {
+  const points: Vec2[] = [];
+  for (const junction of project.junctions) {
+    const members = junction.members ?? [];
+    if (
+      !members.some((member) => member.section === sectionA) ||
+      !members.some((member) => member.section === sectionB)
+    ) {
+      continue;
+    }
+    const anchorSection = project.centerlines.find(
+      (section) => section.id === junction.centerline,
+    );
+    const anchorIndex = anchorSection?.pointIds.indexOf(junction.point) ?? -1;
+    const position =
+      anchorSection && anchorIndex >= 0 ? anchorSection.points[anchorIndex] : undefined;
+    if (position) {
+      points.push([position[0], position[1]]);
+    }
+  }
+  return points;
+}
+
 function extendedShoulderRibbonBoth(points: Vec2[], width: number): Vec2[] {
   const left = offsetPolyline(points, false, 1, width);
   const right = offsetPolyline(points, false, -1, width);
@@ -624,6 +731,7 @@ function sectionsCross(
   aClosed: boolean,
   b: Vec2[],
   bClosed: boolean,
+  allowed: Vec2[],
 ): boolean {
   const aCount = aClosed ? a.length : a.length - 1;
   const bCount = bClosed ? b.length : b.length - 1;
@@ -633,7 +741,15 @@ function sectionsCross(
     for (let bIndex = 0; bIndex < bCount; bIndex += 1) {
       const bStart = b[bIndex]!;
       const bEnd = b[(bIndex + 1) % b.length]!;
-      if (segmentsIntersect(aStart, aEnd, bStart, bEnd)) {
+      if (!segmentsIntersect(aStart, aEnd, bStart, bEnd)) {
+        continue;
+      }
+      const atSharedJunction = allowed.some(
+        (point) =>
+          distancePointToSegmentSq(point, aStart, aEnd) <= 1e-10 &&
+          distancePointToSegmentSq(point, bStart, bEnd) <= 1e-10,
+      );
+      if (!atSharedJunction) {
         return true;
       }
     }
@@ -642,10 +758,9 @@ function sectionsCross(
 }
 
 function bakeAllSections(project: Project): BakedTrack {
-  if (project.junctions.length > 0) {
-    throw new BakeError("project@3 junctions are not implemented yet");
-  }
+  snapSectionJunctions(project);
 
+  const attachedPoints = sectionAttachedPoints(project);
   const sampledSections = project.centerlines.map((section) => ({
     section,
     points: simplifyPolyline(
@@ -657,7 +772,15 @@ function bakeAllSections(project: Project): BakedTrack {
     for (let j = i + 1; j < sampledSections.length; j += 1) {
       const a = sampledSections[i]!;
       const b = sampledSections[j]!;
-      if (sectionsCross(a.points, a.section.closed, b.points, b.section.closed)) {
+      if (
+        sectionsCross(
+          a.points,
+          a.section.closed,
+          b.points,
+          b.section.closed,
+          sharedJunctionPoints(project, a.section.id, b.section.id),
+        )
+      ) {
         throw new BakeError(
           `sections "${a.section.id}" and "${b.section.id}" intersect; connect them at a junction instead`,
         );
@@ -694,9 +817,17 @@ function bakeAllSections(project: Project): BakedTrack {
     }
 
     const asphaltRing = ribbon(sectionPoints, project.road.halfWidth);
-    const shoulderRing = extendedShoulderRibbonBoth(
+    const startAttached = attachedPoints.has(
+      `${section.id}:${section.pointIds[0]}`,
+    );
+    const endAttached = attachedPoints.has(
+      `${section.id}:${section.pointIds[section.pointIds.length - 1]}`,
+    );
+    const shoulderRing = shoulderRibbonForEnds(
       sectionPoints,
       project.road.shoulderHalfWidth,
+      startAttached,
+      endAttached,
     );
     for (const [name, ring] of [
       ["asphalt", asphaltRing],

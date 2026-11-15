@@ -21,7 +21,7 @@ The project model is track-ed's own. Lapster is the first consumer, not the defi
 - v1-G2b is implemented: `follow` mode drapes the road, shoulder, and terrain over the same heightfield while keeping seams welded.
 - v1-G2c1 is implemented: terrain is authored by absolute point heights as a TIN, with click-add, vertical drag, numeric height, delete/clear, and undo/redo. Preview and GLB normals are computed from geometry.
 - v1-G2c4 is implemented: road-follow mode now samples a global TIN built from the terrain points, so the road, shoulder, and terrain follow the same surface.
-- `track-ed/project@3` foundation is in progress: multiple closed sections and dead-ended open sections bake without a main loop. General junctions, routes, and authoring migration remain deferred.
+- `track-ed/project@3` is in progress: multiple closed sections, dead-ended open sections, multi-way junction members, and open-section junctions bake without a main loop. Routes and app authoring migration remain deferred.
 - `track-ed/project@2` is implemented: shared junction nodes with stable point ids support multiple junctions and multi-way branches. Moving a shared junction point moves every connected branch. A loose branch end can be dragged onto a main-loop control point to join it (`endAttach`), and dragging a joined end pulls it free. Dragging one loose branch end onto another merges both branches into a single open centreline.
 - v1-G3 kerbs are next. The v0 performance comparison remains useful baseline input for the v1 decision.
 

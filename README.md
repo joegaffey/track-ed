@@ -4,7 +4,7 @@ Standalone, browser-first track geometry editor.
 
 Live demo: https://joegaffey.com/track-ed/
 
-Status: M4 conformance passed. v1-G1 rounded spline centrelines and v1-G2 terrain are implemented. Terrain is authored by point-based TIN, with both `conform` and `follow` road modes. Multiple junctions are authored with the `track-ed/project@2` shared-junction graph. `track-ed/project@3` venue sections are in progress: multiple closed loops and dead-ended open sections bake without a main loop. track-ed remains a spike and is **not promoted to production** yet; road elevation, banking/crown, kerbs, and props remain v1 gates. See `docs/v1-roadmap.md`.
+Status: M4 conformance passed. v1-G1 rounded spline centrelines and v1-G2 terrain are implemented. Terrain is authored by point-based TIN, with both `conform` and `follow` road modes. Multiple junctions are authored with the `track-ed/project@2` shared-junction graph. `track-ed/project@3` venue sections are in progress: multiple closed loops, dead-ended open sections, and general junction members bake without a main loop. track-ed remains a spike and is **not promoted to production** yet; road elevation, banking/crown, kerbs, and props remain v1 gates. See `docs/v1-roadmap.md`.
 
 Lapster is the first consumer, not the definition of the tool. The core is consumer-agnostic. v0 ships one export profile, `lapster-glb-track@1`, which emits `track.glb` + `track.json` for Lapster's asset compiler. The `.sima` pack is produced downstream by Lapster, not by track-ed.
 
