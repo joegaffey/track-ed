@@ -2,7 +2,7 @@
 
 Standalone, browser-first track geometry editor.
 
-Live demo: https://joegaffey.github.io/track-ed/
+Live demo: https://joegaffey.com/track-ed/
 
 Status: M4 conformance passed. v1-G1 rounded spline centrelines and v1-G2 terrain are implemented. Terrain is authored by point-based TIN, with both `conform` and `follow` road modes. Multiple junctions are authored with the new `track-ed/project@2` shared-junction graph. track-ed remains a spike and is **not promoted to production** yet; road elevation, banking/crown, kerbs, and props remain v1 gates. See `docs/v1-roadmap.md`.
 
