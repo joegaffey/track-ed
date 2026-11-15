@@ -101,9 +101,14 @@ function sceneBounds(project: Project): { min: Vec3; max: Vec3 } {
   };
 }
 
-function spawnFor(project: Project, main: ProjectCenterline): Spawn {
+function spawnFor(project: Project, fallback?: ProjectCenterline): Spawn {
   const centerline =
-    project.centerlines.find((candidate) => candidate.id === project.spawn.centerline) ?? main;
+    project.centerlines.find((candidate) => candidate.id === project.spawn.centerline) ??
+    fallback ??
+    project.centerlines[0];
+  if (!centerline) {
+    throw new BakeError("spawn requires at least one section");
+  }
   const sampledCenterline = sampleCenterline(
     centerline.points as Vec2[],
     centerline.closed,
@@ -233,11 +238,19 @@ function applyTerrainMode(
   return surfaceGraph;
 }
 
+function sectionLength(centerline: ProjectCenterline): number {
+  return centerlineLength(
+    sampleCenterline(centerline.points as Vec2[], centerline.closed, centerline.spline),
+    centerline.closed,
+  );
+}
+
 function finishTrack(
   project: Project,
-  main: ProjectCenterline,
+  main: ProjectCenterline | undefined,
   bounds: { min: Vec3; max: Vec3 },
   surfaceGraph: SurfaceGraph,
+  lengthOverride?: number,
 ): BakedTrack {
   const surfaces: Surface[] = DEFAULT_SURFACES.map((surface) => ({ ...surface }));
   const spawn = spawnFor(project, main);
@@ -268,7 +281,9 @@ function finishTrack(
   return {
     kind: "track",
     name: project.name,
-    length: centerlineLength(sampleCenterline(main.points as Vec2[], true, main.spline), true),
+    length:
+      lengthOverride ??
+      (main ? sectionLength(main) : project.centerlines.reduce((sum, section) => sum + sectionLength(section), 0)),
     bounds: {
       min: [bounds.min[0], minY, bounds.min[2]],
       max: [bounds.max[0], maxY, bounds.max[2]],
@@ -358,6 +373,32 @@ function extendedShoulderRibbon(points: Vec2[], width: number): Vec2[] {
     leftEnd,
     rightEnd,
     ...right.slice(0, -1).reverse(),
+  ];
+}
+
+function extendedShoulderRibbonBoth(points: Vec2[], width: number): Vec2[] {
+  const left = offsetPolyline(points, false, 1, width);
+  const right = offsetPolyline(points, false, -1, width);
+  if (left.length < 2 || right.length < 2) {
+    return [...left, ...right.slice().reverse()];
+  }
+  const first = points[0]!;
+  const second = points[1]!;
+  const last = points[points.length - 1]!;
+  const previous = points[points.length - 2]!;
+  const startDirection = normalize2(sub2(first, second));
+  const endDirection = normalize2(sub2(last, previous));
+  const leftStart = add2(left[0]!, scale2(startDirection, width));
+  const rightStart = add2(right[0]!, scale2(startDirection, width));
+  const leftEnd = add2(left[left.length - 1]!, scale2(endDirection, width));
+  const rightEnd = add2(right[right.length - 1]!, scale2(endDirection, width));
+  return [
+    leftStart,
+    ...left.slice(1, -1),
+    leftEnd,
+    rightEnd,
+    ...right.slice(1, -1).reverse(),
+    rightStart,
   ];
 }
 
@@ -578,7 +619,161 @@ function bakeBranches(
   }
 }
 
+function sectionsCross(
+  a: Vec2[],
+  aClosed: boolean,
+  b: Vec2[],
+  bClosed: boolean,
+): boolean {
+  const aCount = aClosed ? a.length : a.length - 1;
+  const bCount = bClosed ? b.length : b.length - 1;
+  for (let aIndex = 0; aIndex < aCount; aIndex += 1) {
+    const aStart = a[aIndex]!;
+    const aEnd = a[(aIndex + 1) % a.length]!;
+    for (let bIndex = 0; bIndex < bCount; bIndex += 1) {
+      const bStart = b[bIndex]!;
+      const bEnd = b[(bIndex + 1) % b.length]!;
+      if (segmentsIntersect(aStart, aEnd, bStart, bEnd)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function bakeAllSections(project: Project): BakedTrack {
+  if (project.junctions.length > 0) {
+    throw new BakeError("project@3 junctions are not implemented yet");
+  }
+
+  const sampledSections = project.centerlines.map((section) => ({
+    section,
+    points: simplifyPolyline(
+      sampleCenterline(section.points as Vec2[], section.closed, section.spline),
+      section.closed,
+    ),
+  }));
+  for (let i = 0; i < sampledSections.length; i += 1) {
+    for (let j = i + 1; j < sampledSections.length; j += 1) {
+      const a = sampledSections[i]!;
+      const b = sampledSections[j]!;
+      if (sectionsCross(a.points, a.section.closed, b.points, b.section.closed)) {
+        throw new BakeError(
+          `sections "${a.section.id}" and "${b.section.id}" intersect; connect them at a junction instead`,
+        );
+      }
+    }
+  }
+
+  const bounds = sceneBounds(project);
+  const rectangle: Vec2[] = [
+    [bounds.min[0], bounds.min[2]],
+    [bounds.max[0], bounds.min[2]],
+    [bounds.max[0], bounds.max[2]],
+    [bounds.min[0], bounds.max[2]],
+  ];
+
+  const asphaltPolygons: Polygon2[] = [];
+  const shoulderPolygons: Polygon2[] = [];
+
+  for (let sectionIndex = 0; sectionIndex < project.centerlines.length; sectionIndex += 1) {
+    const section = project.centerlines[sectionIndex]!;
+    if (section.closed) {
+      const bands = mainBands(project, section);
+      asphaltPolygons.push([bands.outerAsphalt, bands.innerAsphalt]);
+      shoulderPolygons.push([bands.outerShoulder, bands.innerShoulder]);
+      continue;
+    }
+
+    const sectionPoints = sampledSections[sectionIndex]!.points;
+    if (sectionPoints.length < 2) {
+      throw new BakeError(`section "${section.id}" has no usable geometry after simplification`);
+    }
+    if (polylineSelfIntersections(sectionPoints, false).length > 0) {
+      throw new BakeError(`section "${section.id}" sampled centreline self-intersects`);
+    }
+
+    const asphaltRing = ribbon(sectionPoints, project.road.halfWidth);
+    const shoulderRing = extendedShoulderRibbonBoth(
+      sectionPoints,
+      project.road.shoulderHalfWidth,
+    );
+    for (const [name, ring] of [
+      ["asphalt", asphaltRing],
+      ["shoulder", shoulderRing],
+    ] as const) {
+      if (!isSimplePolygon(ring)) {
+        throw new BakeError(`section "${section.id}" ${name} ribbon self-intersects`);
+      }
+    }
+    asphaltPolygons.push([asphaltRing]);
+    shoulderPolygons.push([shoulderRing]);
+  }
+
+  try {
+    const shoulderFootprint = unionManyPolygons(shoulderPolygons);
+    const asphaltFootprint = unionManyPolygons(asphaltPolygons);
+
+    if (shoulderFootprint.length === 0 || asphaltFootprint.length === 0) {
+      throw new BakeError("road footprint union produced an empty surface");
+    }
+
+    const dirtFootprint = differencePolygons(shoulderFootprint, asphaltFootprint);
+    const grassFootprint = differencePolygons([[rectangle]], shoulderFootprint);
+
+    if (dirtFootprint.length === 0) {
+      throw new BakeError("dirt footprint difference produced an empty surface");
+    }
+
+    const provisional = conformMultiPolygons([
+      asphaltFootprint,
+      dirtFootprint,
+      grassFootprint,
+    ]);
+    const normalized = provisional.map((multiPolygon) => normalizeMultiPolygon(multiPolygon));
+    const [conformedAsphalt, conformedDirt, conformedGrass] = conformMultiPolygons(normalized);
+
+    const builder = new MeshBuilder();
+    addConformedMultiPolygon(builder, conformedAsphalt!, 0);
+    addConformedMultiPolygon(builder, conformedDirt!, 1);
+    if (project.terrain.points && project.terrain.points.length > 0) {
+      addPointTerrainMultiPolygon(builder, conformedGrass!, project.terrain.points, 2);
+    } else if (project.terrain.elevation) {
+      addTerrainMultiPolygon(
+        builder,
+        conformedGrass!,
+        bounds,
+        project.terrain.elevation,
+        2,
+      );
+    } else {
+      addConformedMultiPolygon(builder, conformedGrass!, 2);
+    }
+
+    const length = project.centerlines.reduce(
+      (sum, section) => sum + sectionLength(section),
+      0,
+    );
+    return finishTrack(
+      project,
+      undefined,
+      bounds,
+      applyTerrainMode(project, builder.build(), bounds),
+      length,
+    );
+  } catch (error) {
+    if (error instanceof BakeError) {
+      throw error;
+    }
+    throw new BakeError("section bake failed", [String(error)]);
+  }
+}
+
 export function bakeProject(project: Project): BakedTrack {
+  if (project.schema === "track-ed/project@3") {
+    return bakeAllSections(project);
+  }
+
   const closed = project.centerlines.filter((centerline) => centerline.closed);
   const open = project.centerlines.filter((centerline) => !centerline.closed);
 

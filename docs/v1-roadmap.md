@@ -90,7 +90,7 @@ Terrain and kerbs depend on the final centreline representation, so splines come
 
 ## Remaining deferred beyond v1
 
-- Multiple loops, shared sections, multiple branches per junction.
+- Multiple loops, shared sections, multiple branches per junction. See `docs/venue-model-plan.md`.
 - Pit lanes, pit boxes, routes, sectors, multiple layouts.
 - Textures and material libraries beyond flat base colours.
 - Direct `.sima` export and CLI/headless export.

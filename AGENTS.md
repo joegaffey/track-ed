@@ -6,21 +6,23 @@ This repository is a standalone track geometry editor. Read `SPEC.md` before wri
 
 1. `SPEC.md`
 2. `docs/decisions.md`
-3. `docs/contracts/project-v2.md`
-4. `docs/contracts/project.md` (legacy `project@1`)
-5. `docs/contracts/baked-track.md`
-6. `docs/contracts/lapster-glb-track.md`
-7. `docs/toolchain.md`
-8. `schemas/project-v2.schema.json`
-9. `schemas/project.schema.json`
-10. `schemas/lapster-track-manifest.schema.json`
-11. `src/model/baked-track.ts`
+3. `docs/contracts/project-v3.md`
+4. `docs/contracts/project-v2.md` (legacy junction graph)
+5. `docs/contracts/project.md` (legacy `project@1`)
+6. `docs/contracts/baked-track.md`
+7. `docs/contracts/lapster-glb-track.md`
+8. `docs/toolchain.md`
+9. `schemas/project-v3.schema.json`
+10. `schemas/project-v2.schema.json`
+11. `schemas/project.schema.json`
+12. `schemas/lapster-track-manifest.schema.json`
+13. `src/model/baked-track.ts`
 
 ## Mission
 
 Maintain track-ed as a browser editor for a closed main loop, multiple attached branches, shared junctions, spline centrelines, point-based TIN terrain, and branch-end joins/merges. It bakes one welded surface graph, inspects topology, and exports `track.glb` + `track.json` for the Lapster profile.
 
-M4 conformance has passed. v1-G1 (splines), v1-G2 (terrain/TIN), and `project@2` multi-junction authoring are implemented. Kerbs, props, dynamic sections, and production promotion remain deferred; do not regress the existing invariants while extending them.
+M4 conformance has passed. v1-G1 (splines), v1-G2 (terrain/TIN), and `project@2` multi-junction authoring are implemented. `project@3` venue sections are in progress: multiple closed loops and dead-ended open sections bake without a main loop. General junctions, routes, kerbs, props, dynamic sections, and production promotion remain deferred; do not regress the existing invariants while extending them.
 
 ## Architecture boundaries
 
@@ -71,7 +73,7 @@ Then run the Lapster conformance steps in `docs/contracts/lapster-glb-track.md`.
 - Do not commit or push unless asked.
 - Do not copy GPL or otherwise incompatible code. Record licenses for anything studied or reused.
 - Keep the kernel deterministic. No timestamps, random ids, or environment-dependent values in exports.
-- Keep `track-ed/project@1` and `track-ed/project@2` strict: reject unknown fields.
+- Keep `track-ed/project@1`, `track-ed/project@2`, and `track-ed/project@3` strict: reject unknown fields.
 - Keep `BakedTrack` free of consumer-specific fields.
 - Do not weaken the geometry invariants to make a fixture pass.
 

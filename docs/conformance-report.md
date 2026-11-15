@@ -65,6 +65,8 @@ A connector branch joined at both ends (`endAttach`) also passed: 66580 B `.sima
 
 Merging two loose branch ends into one centreline passed: 67668 B `.sima`, 894 vertices, 590 triangles, `Track`, `validate ok`.
 
+The `project@3` venue fixture with two disjoint closed sections and a dead-ended open spur passed: 128844 B `.sima`, 1728 vertices, 1146 triangles, `Two Loops and Spur (Track)`, `validate ok`.
+
 ## Viewer checks
 
 - `web/track-viewer/?track=<bundle>.sima` loaded the loop and 90° branch bundles with no console errors.

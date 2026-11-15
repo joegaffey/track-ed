@@ -4,7 +4,7 @@ Standalone, browser-first track geometry editor.
 
 Live demo: https://joegaffey.com/track-ed/
 
-Status: M4 conformance passed. v1-G1 rounded spline centrelines and v1-G2 terrain are implemented. Terrain is authored by point-based TIN, with both `conform` and `follow` road modes. Multiple junctions are authored with the new `track-ed/project@2` shared-junction graph. track-ed remains a spike and is **not promoted to production** yet; road elevation, banking/crown, kerbs, and props remain v1 gates. See `docs/v1-roadmap.md`.
+Status: M4 conformance passed. v1-G1 rounded spline centrelines and v1-G2 terrain are implemented. Terrain is authored by point-based TIN, with both `conform` and `follow` road modes. Multiple junctions are authored with the `track-ed/project@2` shared-junction graph. `track-ed/project@3` venue sections are in progress: multiple closed loops and dead-ended open sections bake without a main loop. track-ed remains a spike and is **not promoted to production** yet; road elevation, banking/crown, kerbs, and props remain v1 gates. See `docs/v1-roadmap.md`.
 
 Lapster is the first consumer, not the definition of the tool. The core is consumer-agnostic. v0 ships one export profile, `lapster-glb-track@1`, which emits `track.glb` + `track.json` for Lapster's asset compiler. The `.sima` pack is produced downstream by Lapster, not by track-ed.
 
@@ -22,18 +22,20 @@ Lapster is the first consumer, not the definition of the tool. The core is consu
 
 1. `SPEC.md` — functional specification and acceptance criteria.
 2. `docs/decisions.md` — rationale, alternatives, promotion and kill criteria.
-3. `docs/contracts/project-v2.md` — current junction-graph authoring contract.
-4. `docs/contracts/project.md` — legacy `project@1` authoring contract.
-5. `docs/contracts/baked-track.md` — consumer-neutral baked model.
-6. `docs/contracts/lapster-glb-track.md` — v0 export profile.
-7. `docs/research-brief.md` — brief for the independent research agent.
-8. `docs/research-report.md` — prior-art and technique survey for the kernel and inspector.
-9. `docs/conformance-report.md` — latest Lapster conformance results.
-10. `docs/performance-baseline.md` — pre-v1 FPS, bake, export, and compiler timings.
-11. `docs/v1-roadmap.md` — production promotion gates beyond v0.
-12. `schemas/` — executable JSON Schemas.
-13. `src/model/baked-track.ts` — TypeScript contract for the baked model.
-14. `docs/agent-prompt.md` — historical v0 implementation prompt.
+3. `docs/contracts/project-v3.md` — current venue-section authoring contract.
+4. `docs/contracts/project-v2.md` — legacy junction-graph contract.
+5. `docs/contracts/project.md` — legacy `project@1` authoring contract.
+6. `docs/contracts/baked-track.md` — consumer-neutral baked model.
+7. `docs/contracts/lapster-glb-track.md` — v0 export profile.
+8. `docs/research-brief.md` — brief for the independent research agent.
+9. `docs/research-report.md` — prior-art and technique survey for the kernel and inspector.
+10. `docs/conformance-report.md` — latest Lapster conformance results.
+11. `docs/performance-baseline.md` — pre-v1 FPS, bake, export, and compiler timings.
+12. `docs/v1-roadmap.md` — production promotion gates beyond v0.
+13. `docs/venue-model-plan.md` — venue section-graph implementation plan.
+14. `schemas/` — executable JSON Schemas.
+15. `src/model/baked-track.ts` — TypeScript contract for the baked model.
+16. `docs/agent-prompt.md` — historical v0 implementation prompt.
 
 ## Quick start
 

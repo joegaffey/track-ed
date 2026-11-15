@@ -351,6 +351,11 @@ function updateAuthoringUI(): void {
   redoButton.disabled = redoStack.length === 0;
   deleteButton.disabled = selectedPoint === null;
   branchButton.textContent = "Add junction";
+  branchButton.disabled = project?.schema === "track-ed/project@3";
+  branchButton.title =
+    project?.schema === "track-ed/project@3"
+      ? "General junction authoring is not implemented for project@3 yet."
+      : "";
   const legacyBranch = project
     ? branchesOf(project).find(
         (candidate) => candidate.attach && "to" in candidate.attach,
@@ -640,6 +645,27 @@ function serializeProject(source: Project): unknown {
     };
   }
 
+  if (source.schema === "track-ed/project@3") {
+    return {
+      schema: "track-ed/project@3",
+      name: source.name,
+      generator: source.generator,
+      road: source.road,
+      terrain: source.terrain,
+      spawn: source.spawn,
+      cameras: source.cameras,
+      sections: source.centerlines.map((centerline) => ({
+        id: centerline.id,
+        closed: centerline.closed,
+        points: centerline.points.map((position, index) => ({
+          id: centerline.pointIds[index],
+          position,
+        })),
+        ...(centerline.spline ? { spline: centerline.spline } : {}),
+      })),
+    };
+  }
+
   return {
     schema: "track-ed/project@2",
     name: source.name,
@@ -668,9 +694,9 @@ function updateMeta(source: Project): void {
     <span class="meta-label">project</span>
     <strong>${source.name}</strong>
     <span class="meta-separator">/</span>
-    <span>${source.centerlines.length} centreline${
-      source.centerlines.length === 1 ? "" : "s"
-    }</span>
+    <span>${source.centerlines.length} ${
+      source.schema === "track-ed/project@3" ? "section" : "centreline"
+    }${source.centerlines.length === 1 ? "" : "s"}</span>
     <span class="meta-separator">/</span>
     <span>${source.road.halfWidth} m asphalt · ${source.road.shoulderHalfWidth} m shoulder</span>
   `;
@@ -1105,6 +1131,9 @@ function findJoinTarget(
   branchIndex: number,
   position: Vec2,
 ): ControlPointPick | null {
+  if (source.schema === "track-ed/project@3") {
+    return null;
+  }
   const branch = source.centerlines[branchIndex];
   if (!branch || branch.closed || branch.points.length < 2) {
     return null;

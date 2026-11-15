@@ -7,6 +7,10 @@ import {
 
 export type ProjectVec2 = [number, number];
 export type ProjectVec3 = [number, number, number];
+export type ProjectSchema =
+  | "track-ed/project@1"
+  | "track-ed/project@2"
+  | "track-ed/project@3";
 
 export interface ProjectRoad {
   halfWidth: number;
@@ -72,7 +76,7 @@ export interface ProjectCamera {
 }
 
 export interface Project {
-  schema: "track-ed/project@1" | "track-ed/project@2";
+  schema: ProjectSchema;
   name: string;
   generator: string;
   road: ProjectRoad;
@@ -396,7 +400,7 @@ function parseAttach(
   value: unknown,
   path: string,
   issues: ProjectIssue[],
-  schema: "track-ed/project@1" | "track-ed/project@2",
+  schema: ProjectSchema,
 ): ProjectAttach | null {
   const object = expectObject(value, path, issues);
   if (!object) {
@@ -504,15 +508,18 @@ function parseCenterline(
   value: unknown,
   path: string,
   issues: ProjectIssue[],
-  schema: "track-ed/project@1" | "track-ed/project@2",
+  schema: ProjectSchema,
 ): ProjectCenterline | null {
   const object = expectObject(value, path, issues);
   if (!object) {
     return null;
   }
+  const isV3 = schema === "track-ed/project@3";
   rejectUnknownKeys(
     object,
-    ["id", "closed", "points", "attach", "endAttach", "spline"],
+    isV3
+      ? ["id", "closed", "points", "spline"]
+      : ["id", "closed", "points", "attach", "endAttach", "spline"],
     path,
     issues,
   );
@@ -521,7 +528,7 @@ function parseCenterline(
   const closed = readBoolean(object.closed, `${path}.closed`, issues);
   let points: ProjectVec2[] | null;
   let pointIds: string[];
-  if (schema === "track-ed/project@2") {
+  if (schema === "track-ed/project@2" || isV3) {
     const parsedPoints = parsePointObjects(object.points, `${path}.points`, 2, issues);
     points = parsedPoints?.points ?? null;
     pointIds = parsedPoints?.pointIds ?? [];
@@ -535,12 +542,12 @@ function parseCenterline(
   }
 
   let attach: ProjectAttach | null = null;
-  if (object.attach !== undefined) {
+  if (!isV3 && object.attach !== undefined) {
     attach = parseAttach(object.attach, `${path}.attach`, issues, schema);
   }
 
   let endAttach: ProjectAttach | null = null;
-  if (object.endAttach !== undefined) {
+  if (!isV3 && object.endAttach !== undefined) {
     if (schema !== "track-ed/project@2") {
       issues.push({
         path: `${path}.endAttach`,
@@ -570,7 +577,7 @@ function parseCenterline(
         message: "must be omitted for a closed centreline",
       });
     }
-  } else if (closed === false && object.attach === undefined) {
+  } else if (closed === false && !isV3 && object.attach === undefined) {
     issues.push({
       path: `${path}.attach`,
       message: "is required for an open centreline",
@@ -580,7 +587,7 @@ function parseCenterline(
   if (id === null || closed === null || points === null) {
     return null;
   }
-  if (closed === false && attach === null) {
+  if (closed === false && !isV3 && attach === null) {
     return null;
   }
 
@@ -637,9 +644,10 @@ function segmentLengths(points: readonly Vec2[], closed: boolean): number[] {
 }
 
 function validateSemantics(project: Project, issues: ProjectIssue[]): void {
-  const isV2 = project.schema === "track-ed/project@2";
+  const isV1 = project.schema === "track-ed/project@1";
+  const isV3 = project.schema === "track-ed/project@3";
 
-  if (!isV2 && project.centerlines.length > 2) {
+  if (isV1 && project.centerlines.length > 2) {
     issues.push({
       path: "centerlines",
       message: "project@1 supports at most two centrelines (one closed, one open)",
@@ -660,13 +668,13 @@ function validateSemantics(project: Project, issues: ProjectIssue[]): void {
   const closed = project.centerlines.filter((centerline) => centerline.closed);
   const open = project.centerlines.filter((centerline) => !centerline.closed);
 
-  if (closed.length !== 1) {
+  if (!isV3 && closed.length !== 1) {
     issues.push({
       path: "centerlines",
-      message: "v0 requires exactly one closed centreline",
+      message: "project@1 and project@2 require exactly one closed centreline",
     });
   }
-  if (!isV2 && open.length > 1) {
+  if (isV1 && open.length > 1) {
     issues.push({
       path: "centerlines",
       message: "project@1 supports at most one open centreline",
@@ -896,6 +904,7 @@ export function parseProject(input: unknown): ProjectParseResult {
       "road",
       "terrain",
       "centerlines",
+      "sections",
       "junctions",
       "spawn",
       "cameras",
@@ -908,30 +917,50 @@ export function parseProject(input: unknown): ProjectParseResult {
   if (
     schemaText !== null &&
     schemaText !== "track-ed/project@1" &&
-    schemaText !== "track-ed/project@2"
+    schemaText !== "track-ed/project@2" &&
+    schemaText !== "track-ed/project@3"
   ) {
     issues.push({
       path: "$.schema",
-      message: 'must be "track-ed/project@1" or "track-ed/project@2"',
+      message:
+        'must be "track-ed/project@1", "track-ed/project@2", or "track-ed/project@3"',
     });
   }
-  const schema: "track-ed/project@1" | "track-ed/project@2" =
-    schemaText === "track-ed/project@2" ? "track-ed/project@2" : "track-ed/project@1";
+  const schema: ProjectSchema =
+    schemaText === "track-ed/project@2" || schemaText === "track-ed/project@3"
+      ? schemaText
+      : "track-ed/project@1";
+  const isV3 = schema === "track-ed/project@3";
   const name = readString(object.name, "$.name", issues);
   const generator = readString(object.generator, "$.generator", issues);
   const road = parseRoad(object.road, "$.road", issues);
   const terrain = parseTerrain(object.terrain, "$.terrain", issues);
   const spawn = parseSpawn(object.spawn, "$.spawn", issues);
 
+  if (isV3 && object.centerlines !== undefined) {
+    issues.push({
+      path: "$.centerlines",
+      message: "use sections for track-ed/project@3",
+    });
+  }
+  if (!isV3 && object.sections !== undefined) {
+    issues.push({
+      path: "$.sections",
+      message: "sections are only supported in track-ed/project@3",
+    });
+  }
+
+  const sectionInput = isV3 ? object.sections : object.centerlines;
+  const sectionPath = isV3 ? "$.sections" : "$.centerlines";
   let centerlines: ProjectCenterline[] | null = null;
-  if (!Array.isArray(object.centerlines) || object.centerlines.length < 1) {
-    issues.push({ path: "$.centerlines", message: "must be a non-empty array" });
+  if (!Array.isArray(sectionInput) || sectionInput.length < 1) {
+    issues.push({ path: sectionPath, message: "must be a non-empty array" });
   } else {
     centerlines = [];
-    for (let i = 0; i < object.centerlines.length; i += 1) {
+    for (let i = 0; i < sectionInput.length; i += 1) {
       const centerline = parseCenterline(
-        object.centerlines[i],
-        `$.centerlines[${i}]`,
+        sectionInput[i],
+        `${sectionPath}[${i}]`,
         issues,
         schema,
       );
@@ -983,7 +1012,8 @@ export function parseProject(input: unknown): ProjectParseResult {
 
   if (
     schemaText !== "track-ed/project@1" &&
-    schemaText !== "track-ed/project@2"
+    schemaText !== "track-ed/project@2" &&
+    schemaText !== "track-ed/project@3"
   ) {
     return { project: null, issues, warnings };
   }

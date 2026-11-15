@@ -3,16 +3,20 @@
 The v0 pipeline has three layers:
 
 ```text
-track-ed/project@1  ->  BakedTrack v1  ->  lapster-glb-track@1
-   authoring format        neutral model        export profile
+track-ed/project@3  ->  BakedTrack v1  ->  lapster-glb-track@1
+   venue sections          neutral model        export profile
 ```
 
-- `project.md` — authoring format. Owned by track-ed.
+- `project-v3.md` — current venue-section authoring format. Owned by track-ed.
+- `project-v2.md` — legacy `project@2` shared-junction graph.
+- `project.md` — legacy `project@1` authoring format.
 - `baked-track.md` — consumer-neutral contract between the kernel and every export profile. Owned by track-ed.
 - `lapster-glb-track.md` — v0 export profile for Lapster's `sim-track-glb-v1` importer. The manifest schema is pinned from Lapster.
 
 Executable schemas:
 
+- `schemas/project-v3.schema.json`
+- `schemas/project-v2.schema.json`
 - `schemas/project.schema.json`
 - `schemas/lapster-track-manifest.schema.json`
 

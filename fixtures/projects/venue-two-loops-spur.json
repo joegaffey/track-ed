@@ -1,0 +1,142 @@
+{
+  "schema": "track-ed/project@3",
+  "name": "Two Loops and Spur",
+  "generator": "track-ed v1",
+  "road": {
+    "halfWidth": 5,
+    "shoulderHalfWidth": 8
+  },
+  "terrain": {
+    "margin": 30,
+    "mode": "conform"
+  },
+  "spawn": {
+    "centerline": "spur",
+    "fraction": 0.2,
+    "lateral": 0
+  },
+  "cameras": [],
+  "sections": [
+    {
+      "id": "loop-a",
+      "closed": true,
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      },
+      "points": [
+        {
+          "id": "a0",
+          "position": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": "a1",
+          "position": [
+            80,
+            0
+          ]
+        },
+        {
+          "id": "a2",
+          "position": [
+            110,
+            40
+          ]
+        },
+        {
+          "id": "a3",
+          "position": [
+            80,
+            80
+          ]
+        },
+        {
+          "id": "a4",
+          "position": [
+            0,
+            80
+          ]
+        },
+        {
+          "id": "a5",
+          "position": [
+            -30,
+            40
+          ]
+        }
+      ]
+    },
+    {
+      "id": "loop-b",
+      "closed": true,
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      },
+      "points": [
+        {
+          "id": "b0",
+          "position": [
+            250,
+            0
+          ]
+        },
+        {
+          "id": "b1",
+          "position": [
+            330,
+            0
+          ]
+        },
+        {
+          "id": "b2",
+          "position": [
+            330,
+            80
+          ]
+        },
+        {
+          "id": "b3",
+          "position": [
+            250,
+            80
+          ]
+        }
+      ]
+    },
+    {
+      "id": "spur",
+      "closed": false,
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      },
+      "points": [
+        {
+          "id": "s0",
+          "position": [
+            150,
+            150
+          ]
+        },
+        {
+          "id": "s1",
+          "position": [
+            200,
+            175
+          ]
+        },
+        {
+          "id": "s2",
+          "position": [
+            245,
+            155
+          ]
+        }
+      ]
+    }
+  ]
+}

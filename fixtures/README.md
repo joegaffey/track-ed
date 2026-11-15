@@ -1,10 +1,14 @@
 # Fixtures
 
-Authoring fixtures for `track-ed/project@1`.
+Authoring fixtures for `track-ed/project@1`, `@2`, and `@3`.
 
 App default:
 
 - `projects/loop-spline-terrain-junctions.json` — `project@2` rounded spline loop with point-based terrain, ready for multiple junctions.
+
+Venue section fixtures:
+
+- `projects/venue-two-loops-spur.json` — `project@3` with two disjoint closed loops and a dead-ended open spur. Spawn is on the spur; length is the sum of all sections.
 
 Legacy procedural terrain fixtures (kernel conformance only; not exposed in the app):
 
