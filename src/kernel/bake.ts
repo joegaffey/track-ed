@@ -246,7 +246,7 @@ function finishTrack(
   surfaceGraph: SurfaceGraph,
   lengthOverride?: number,
 ): BakedTrack {
-  const kerbGraph = buildKerbGraph(project, surfaceGraph, bounds);
+  const kerbGraph = buildKerbGraph(project, bounds);
   const surfaces: Surface[] = DEFAULT_SURFACES.map((surface) => ({ ...surface }));
   if (kerbGraph) {
     const kerbSurfaceIds = new Set(kerbGraph.triangleSurfaces);

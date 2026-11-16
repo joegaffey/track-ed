@@ -22,7 +22,7 @@ This repository is a standalone track geometry editor. Read `SPEC.md` before wri
 
 Maintain track-ed as a browser editor for a closed main loop, multiple attached branches, shared junctions, spline centrelines, point-based TIN terrain, and branch-end joins/merges. It bakes one welded ground surface graph plus a separate kerb graph, inspects topology, and exports `track.glb` + `track.json` for the Lapster profile.
 
-M4 conformance has passed. v1-G1 (splines), v1-G2 (terrain/TIN), v1-G3 (kerbs), `project@2` multi-junction authoring, and `project@3` venue sections are implemented: multiple closed loops, dead-ended open sections, general and multi-way junctions, open-section junctions, independent section/junction authoring, an independent section list, loose-end joins/merges, junction detach, loop splitting, and authorable kerb spans work without a main loop. All 17 fixtures pass bake/validate/export and Lapster conformance. Routes, props, dynamic sections, and production promotion remain deferred; do not regress the existing invariants while extending them.
+M4 conformance has passed. v1-G1 (splines), v1-G2 (terrain/TIN), v1-G3 (kerbs), `project@2` multi-junction authoring, and `project@3` venue sections are implemented: multiple closed loops, dead-ended open sections, general and multi-way junctions, open-section junctions, independent section/junction authoring, an independent section list, loose-end joins/merges, junction detach, loop splitting, and authorable kerb spans work without a main loop. All 18 fixtures pass bake/validate/export and Lapster conformance. Routes, props, dynamic sections, and production promotion remain deferred; do not regress the existing invariants while extending them.
 
 ## Architecture boundaries
 
@@ -36,7 +36,7 @@ M4 conformance has passed. v1-G1 (splines), v1-G2 (terrain/TIN), v1-G3 (kerbs), 
 
 ## Current scope
 
-In scope: multiple open and closed venue sections with no main-loop privilege, dead-ended sections, shared junction nodes, general and multi-way junctions, section list, section splitting, junction detach, loop joins and loose-to-loose section merges, spline centrelines, point-based TIN terrain with `conform`/`follow` modes, asphalt/dirt/grass surface bands, directly authored red/white kerb spans on dashed guide rails, including seam-wrapping spans, with global or per-span flat/corner heights in a separate kerb graph, one welded ground surface graph, browser preview, geometry inspector, browser download export, deterministic output.
+In scope: multiple open and closed venue sections with no main-loop privilege, dead-ended sections, shared junction nodes, general and multi-way junctions, section list, section splitting, junction detach, loop joins and loose-to-loose section merges, spline centrelines, point-based TIN terrain with `conform`/`follow` modes, asphalt/dirt/grass surface bands, directly authored red/white kerb spans on dashed guide rails, including seam-wrapping spans, with global or per-span flat/corner heights in a separate kerb graph normalized through shared roadside runs, with junction overlaps allowed, one welded ground surface graph, browser preview, geometry inspector, browser download export, deterministic output.
 
 Out of scope for now: routes/laps, sectors, blank-sheet authoring, pit lanes, props, barriers, decorations, textures, direct `.sima` export, CLI or headless export app, game runtime.
 

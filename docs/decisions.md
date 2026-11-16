@@ -118,7 +118,7 @@ Rationale: a branch-hosted junction would still be two roads meeting at a node. 
 
 Rationale: a fraction attachment has no stable target point id. Converting it requires inserting a control point into the host section at the sampled position, which changes the host's authored control points, point ids, and spline shape. Silent migration would make the geometry differ from the source file and would make round-trips lossy without an explicit author decision. Import-only also keeps the `project@2` conversion path small and deterministic.
 
-Limits: `project@1` geometry can be viewed, baked, exported, and edited with its legacy fraction slider, but it cannot use `project@3` section/junction authoring until it is re-authored or explicitly converted in a future migration tool. `project@2` projects continue to convert on load because their junction and `attach`/`endAttach` references already carry stable point ids.
+Limits: `project@1` geometry can be viewed, baked, exported, and edited by dragging the legacy branch root along its host, but it cannot use `project@3` section/junction authoring until it is re-authored or explicitly converted in a future migration tool. `project@2` projects continue to convert on load because their junction and `attach`/`endAttach` references already carry stable point ids.
 
 ## D16 — Authorable kerbs are a separate solid graph
 
@@ -137,6 +137,18 @@ Kerbs are authored as section-local forward arcs (`side`, `start`, `length`) and
 Rationale: the ground graph's G3–G11 invariants assume an upward-facing, non-overlapping welded surface. Raised kerbs have vertical faces and intentionally occupy space above the shoulder. Keeping them in a separate graph preserves the existing ground invariants while allowing a distinct validation contract (K1–K3).
 
 Trade-off: kerbs are not welded into the ground mesh, so visual seams between kerb bases and shoulders rely on shared height sampling rather than shared vertices. Junction clipping uses the baked asphalt footprint and may leave capped gaps around junction mouths, which is preferable to a kerb crossing live tarmac.
+
+## D17 — Roadside runs are the shared bake abstraction
+
+Kerbs are normalized into consumer-neutral **roadside runs** before baking. A run carries the ordered legs, side, offset reference, junction policy, collision policy, and a surface profile. The current slice implements only `kind: "kerb"` with `mechanism: "surface"`; walls and instanced props can reuse the same leg/path/clipping layer without a parallel kerb-specific system.
+
+- Existing section-local kerb arrays are converted into one-leg kerb runs by `roadsideRunsFromProject`.
+- Runs are not clipped against junction asphalt. Each section keeps its own continuous kerb run; overlapping geometry at shared junctions is intentional.
+- Exposed run ends remain capped.
+- Section kerbs run continuously to their authored ends and are allowed to overlap at shared junctions. No clipping, setback, or joiner is applied at junctions.
+- The shared run model is internal for this slice. `project@3` authoring stays unchanged until walls or cross-section chains need a schema migration.
+
+Rationale: walls need the same path, offset, junction, collision, and authoring semantics as kerbs. Keeping kerbs as a special bake path would force a second implementation later.
 
 ## Alternatives considered
 

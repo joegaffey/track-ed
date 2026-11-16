@@ -92,11 +92,11 @@ The closed-loop split gap search remains the slowest authoring operation because
 
 ## Edit scheduling
 
-Continuous point and terrain edits now update only the centreline, control-point, and terrain-point overlays per animation frame, while full bakes are deferred until the pointer pauses or is released. Discrete slider edits use a 150 ms trailing delay with a 300 ms maximum wait. Export is disabled while a bake is pending, and every drag flushes synchronously on release before join/merge validation and the undo decision.
+Continuous point and terrain edits now update only the centreline, control-point, and terrain-point overlays per animation frame, while full bakes are deferred until the pointer pauses or is released. Discrete numeric edits use a 150 ms trailing delay with a 300 ms maximum wait. Export is disabled while a bake is pending, and every drag flushes synchronously on release before join/merge validation and the undo decision.
 
 A continuous 3-second drag on `venue-two-loops-spur` held 60 fps with no full bakes until release; the final bake still validated, enabled export, and produced one undo entry.
 
-Spawn drags and sliders now update the spawn marker through the same overlay path, so the arrow and ring move before the deferred bake completes.
+Spawn drags update the spawn marker through the same overlay path, so the arrow and ring move before the deferred bake completes.
 
 ## Demand-driven rendering
 

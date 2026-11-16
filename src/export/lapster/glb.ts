@@ -76,7 +76,10 @@ function surfaceColor(surface: Surface): [number, number, number] {
 
 export function buildTrackGlb(track: BakedTrack): Uint8Array {
   const surfaces = [...track.surfaces].sort((a, b) => a.id - b.id);
-  const sourceGraphs = [track.surfaceGraph, ...(track.kerbGraph ? [track.kerbGraph] : [])];
+  const sourceGraphs = [
+    track.surfaceGraph,
+    ...(track.kerbGraph ? [track.kerbGraph] : []),
+  ];
   const positions: Vec3[] = [];
   const indices: number[] = [];
   const triangleSurfaces: number[] = [];

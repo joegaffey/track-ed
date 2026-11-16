@@ -275,32 +275,39 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
   const kerbTopology = track.kerbGraph
     ? analyzeSurfaceGraph(track.kerbGraph, track.bounds)
     : undefined;
-  if (kerbTopology) {
-    if (kerbTopology.degenerateTriangles.length > 0) {
+  const validateKerbTopology = (
+    source: TopologyReport | undefined,
+    label: string,
+  ): void => {
+    if (!source) {
+      return;
+    }
+    if (source.degenerateTriangles.length > 0) {
       addError(
         violations,
         "K1",
-        `${kerbTopology.degenerateTriangles.length} degenerate kerb triangle(s)`,
-        { triangle: kerbTopology.degenerateTriangles[0]! },
+        `${source.degenerateTriangles.length} degenerate ${label} triangle(s)`,
+        { triangle: source.degenerateTriangles[0]! },
       );
     }
-    if (kerbTopology.duplicateTriangles.length > 0) {
+    if (source.duplicateTriangles.length > 0) {
       addError(
         violations,
         "K1",
-        `${kerbTopology.duplicateTriangles.length} duplicate kerb triangle pair(s)`,
-        { triangle: kerbTopology.duplicateTriangles[0]![0] },
+        `${source.duplicateTriangles.length} duplicate ${label} triangle pair(s)`,
+        { triangle: source.duplicateTriangles[0]![0] },
       );
     }
-    if (kerbTopology.tJunctions.length > 0) {
+    if (source.tJunctions.length > 0) {
       addError(
         violations,
         "K2",
-        `${kerbTopology.tJunctions.length} kerb T-junction(s) detected`,
-        { edge: [kerbTopology.tJunctions[0]!.edgeA, kerbTopology.tJunctions[0]!.edgeB] },
+        `${source.tJunctions.length} ${label} T-junction(s) detected`,
+        { edge: [source.tJunctions[0]!.edgeA, source.tJunctions[0]!.edgeB] },
       );
     }
-  }
+  };
+  validateKerbTopology(kerbTopology, "kerb");
 
   const coveredSurfaces = new Set(topology.surfaceTriangleCounts.map(([id]) => id));
   for (const [id] of kerbTopology?.surfaceTriangleCounts ?? []) {

@@ -1,0 +1,131 @@
+{
+  "schema": "track-ed/project@3",
+  "name": "Wrapped Kerb Fixture",
+  "generator": "track-ed fixtures 0.1.0",
+  "road": {
+    "halfWidth": 5,
+    "shoulderHalfWidth": 8
+  },
+  "terrain": {
+    "margin": 30,
+    "mode": "conform"
+  },
+  "kerbs": {
+    "flatHeight": 0.06,
+    "cornerHeight": 0.155
+  },
+  "spawn": {
+    "centerline": "loop",
+    "fraction": 0.9,
+    "lateral": 0
+  },
+  "cameras": [],
+  "sections": [
+    {
+      "id": "loop",
+      "closed": true,
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      },
+      "points": [
+        {
+          "id": "p0",
+          "position": [
+            50.0,
+            0.0
+          ]
+        },
+        {
+          "id": "p1",
+          "position": [
+            43.3,
+            25.0
+          ]
+        },
+        {
+          "id": "p2",
+          "position": [
+            25.0,
+            43.3
+          ]
+        },
+        {
+          "id": "p3",
+          "position": [
+            0.0,
+            50.0
+          ]
+        },
+        {
+          "id": "p4",
+          "position": [
+            -25.0,
+            43.3
+          ]
+        },
+        {
+          "id": "p5",
+          "position": [
+            -43.3,
+            25.0
+          ]
+        },
+        {
+          "id": "p6",
+          "position": [
+            -50.0,
+            0.0
+          ]
+        },
+        {
+          "id": "p7",
+          "position": [
+            -43.3,
+            -25.0
+          ]
+        },
+        {
+          "id": "p8",
+          "position": [
+            -25.0,
+            -43.3
+          ]
+        },
+        {
+          "id": "p9",
+          "position": [
+            -0.0,
+            -50.0
+          ]
+        },
+        {
+          "id": "p10",
+          "position": [
+            25.0,
+            -43.3
+          ]
+        },
+        {
+          "id": "p11",
+          "position": [
+            43.3,
+            -25.0
+          ]
+        }
+      ],
+      "kerbs": [
+        {
+          "side": "left",
+          "start": 0.9,
+          "length": 0.2
+        },
+        {
+          "side": "right",
+          "start": 0.4,
+          "length": 0.2
+        }
+      ]
+    }
+  ]
+}

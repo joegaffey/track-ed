@@ -68,7 +68,7 @@ Kerb spans are forward arcs in section-local arc-length fractions. `start` is th
 - A span on a closed section MUST be shorter than the full loop. Use two spans if a full loop is required.
 - Spans on the same side MUST NOT overlap. Wrapped intervals are compared on the circle.
 
-Kerb geometry is clipped around junction asphalt and other kerb spans during the bake, so a span may approach a junction without crossing the road surface.
+Kerb geometry runs continuously to the authored span ends. Kerbs from adjacent sections may overlap each other and junction asphalt at a shared junction.
 
 Each contiguous kerb run is divided into equal-length red/white elements. Every element starts flat at `flatHeight` and rises along the direction of travel to a single raised corner at `cornerHeight`, then drops at a forward-facing riser before the next element. A span may override `flatHeight` and/or `cornerHeight`; otherwise the global profile applies. The effective `cornerHeight` MUST be greater than the effective `flatHeight`.
 

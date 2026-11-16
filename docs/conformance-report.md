@@ -67,7 +67,7 @@ Merging two loose branch ends into one centreline passed: 67668 B `.sima`, 894 v
 
 The `project@3` venue fixture with two disjoint closed sections and a dead-ended open spur passed (with authored kerbs): 609928 B `.sima`, 9460 vertices, 2980 triangles, `Two Loops and Spur (Track)`, `validate ok`.
 
-The `project@3` junction fixture with a closed loop and an open spur attached at an interior loop control point passed (with authored kerbs): 352588 B `.sima`, 5460 vertices, 1695 triangles, `Loop and Spur Junction (Track)`, `validate ok`.
+The `project@3` junction fixture with a closed loop and an open spur attached at an interior loop control point passed (with authored kerbs): 365836 B `.sima`, 5670 vertices, 1755 triangles, `Loop and Spur Junction (Track)`, `validate ok`.
 
 ## Kerb conformance (v1-G3)
 
@@ -75,14 +75,15 @@ Two checked-in venue fixtures now author kerb spans across straights, corners, a
 
 | Fixture | `track.sima` | Vertices | Triangles | Surfaces | Inspect | Validate |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
-| `venue-loop-spur-junction` | 352588 B | 5460 | 1695 | 5 | `venue-loop-spur-junction (Track)` | ok |
+| `venue-loop-spur-junction` | 365836 B | 5670 | 1755 | 5 | `venue-loop-spur-junction (Track)` | ok |
 | `venue-two-loops-spur` | 609928 B | 9460 | 2980 | 5 | `venue-two-loops-spur (Track)` | ok |
+| `venue-wrapped-kerb` | 296584 B | 4505 | 1601 | 5 | `venue-wrapped-kerb (Track)` | ok |
 
-The loop-spur fixture has 1107 kerb triangles; the two-loop venue has 1834. Each contiguous kerb run is split into equal-length elements with a flat approach and one raised corner per element. Collision triangle counts equal the visual totals, confirming that kerb tops, risers, sides, and end caps are included. Junction-adjacent kerb segments are clipped before export, so no kerb top covers junction asphalt.
+The loop-spur fixture has 1167 kerb triangles with continuous junction overlaps; the wrapped-kerb fixture has 447. Browser regression: opening `venue-wrapped-kerb` in Kerbs mode shows `0.900 – 0.100 (wraps)` and validates cleanly. Each contiguous kerb run is split into equal-length elements with a flat approach and one raised corner per element. Collision triangle counts equal the visual totals, confirming that kerb tops, risers, sides, and end caps are included. Section kerbs are no longer clipped at junctions; overlaps between adjacent section kerbs are intentional and included in collision.
 
 ## Slice 4 full-fixture rerun
 
-All 17 checked-in project fixtures were parsed, baked, validated in-process, exported to `track.glb` + `track.json`, and compiled with the Lapster debug binary. Every fixture produced `inspect` output ending in `(Track)` and `validate` output `ok`.
+All 18 checked-in project fixtures were parsed, baked, validated in-process, exported to `track.glb` + `track.json`, and compiled with the Lapster debug binary. Every fixture produced `inspect` output ending in `(Track)` and `validate` output `ok`.
 
 | Fixture | `.sima` | Vertices | Triangles | Length | Result |
 | --- | ---: | ---: | ---: | ---: | --- |
@@ -101,8 +102,9 @@ All 17 checked-in project fixtures were parsed, baked, validated in-process, exp
 | `loop-with-branch-90-spline` | 84188 B | 1119 | 740 | 371.36 m | ok |
 | `loop-with-branch-90-spline-terrain` | 166948 B | 2274 | 1432 | 371.36 m | ok |
 | `loop-with-branch-90-spline-terrain-follow` | 166952 B | 2274 | 1432 | 371.36 m | ok |
-| `venue-loop-spur-junction` | 352588 B | 5460 | 1695 | 444.37 m | ok |
+| `venue-loop-spur-junction` | 365836 B | 5670 | 1755 | 444.37 m | ok |
 | `venue-two-loops-spur` | 609928 B | 9460 | 2980 | 813.65 m | ok |
+| `venue-wrapped-kerb` | 296584 B | 4505 | 1601 | 313.85 m | ok |
 
 The venue length is the sum of all section lengths. Kerb fixtures add two surfaces and a separate kerb graph; ground node names, manifest fields, and spawn/collision include rules are unchanged from `@1`. The two-loop venue has two disjoint spline loops plus a dead-ended open spur; the junction venue has a closed loop with an open spur attached at an interior control point.
 

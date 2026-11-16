@@ -180,50 +180,17 @@ describe("authorable kerbs", () => {
     expect(report.kerbTopology!.tJunctions).toHaveLength(0);
   });
 
-  it("keeps kerb tops off junction asphalt", () => {
+  it("runs kerbs continuously across junction approaches", () => {
     const track = bakeProject(parse(junctionFixture));
-    const ground = track.surfaceGraph;
-    const kerbs = track.kerbGraph;
-    expect(kerbs).toBeDefined();
-
-    const asphalt: Array<{
-      a: [number, number];
-      b: [number, number];
-      c: [number, number];
-    }> = [];
-    for (let triangle = 0; triangle < ground.indices.length / 3; triangle += 1) {
-      if (ground.triangleSurfaces[triangle] !== 0) {
-        continue;
-      }
-      const a = ground.positions[ground.indices[triangle * 3]!]!;
-      const b = ground.positions[ground.indices[triangle * 3 + 1]!]!;
-      const c = ground.positions[ground.indices[triangle * 3 + 2]!]!;
-      asphalt.push({ a: [a[0], a[2]], b: [b[0], b[2]], c: [c[0], c[2]] });
-    }
-    expect(asphalt.length).toBeGreaterThan(0);
-
-    for (let triangle = 0; triangle < kerbs!.indices.length / 3; triangle += 1) {
-      const a = kerbs!.positions[kerbs!.indices[triangle * 3]!]!;
-      const b = kerbs!.positions[kerbs!.indices[triangle * 3 + 1]!]!;
-      const c = kerbs!.positions[kerbs!.indices[triangle * 3 + 2]!]!;
-      const abx = b[0] - a[0];
-      const abz = b[2] - a[2];
-      const acx = c[0] - a[0];
-      const acz = c[2] - a[2];
-      const normalY = abz * acx - abx * acz;
-      if (normalY <= 0.02) {
-        continue;
-      }
-      const centroid: [number, number] = [
-        (a[0] + b[0] + c[0]) / 3,
-        (a[2] + b[2] + c[2]) / 3,
-      ];
-      for (const groundTriangle of asphalt) {
-        expect(
-          pointInTriangle(centroid, groundTriangle.a, groundTriangle.b, groundTriangle.c),
-        ).toBe(false);
-      }
-    }
+    expect(track.kerbGraph).toBeDefined();
+    expect(track.kerbGraph!.indices.length).toBeGreaterThan(0);
+    expect(validateBakedTrack(track).ok).toBe(true);
+    const positions = track.kerbGraph!.positions;
+    expect(
+      positions.some(
+        (position) => position[0] > 70 && position[0] < 85 && position[2] > 1 && position[2] < 10,
+      ),
+    ).toBe(true);
   });
 
   it("applies global and per-span kerb heights", () => {

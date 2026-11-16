@@ -98,9 +98,9 @@ Kerb rules:
 
 - **K1** Kerb triangles MUST be non-degenerate and MUST NOT duplicate one another.
 - **K2** After welding, the kerb graph MUST NOT contain T-junctions.
-- **K3** Kerb surfaces MUST use declared `kerb_*` surfaces and MUST be separate from the ground surface graph. Collision policy is declared by the export profile; v1 exports all kerb faces as solid.
+- **K3** Kerb surfaces MUST use declared `kerb_*` surfaces and MUST be separate from the ground surface graph. Collision policy is declared by the export profile; v1 exports all ordinary kerb faces as solid.
 - **K4** Each contiguous kerb run MUST use equal-length elements with a flat leading edge and one raised corner per element. The raised corner MUST be higher than the flat edge. Riser faces MUST point along the direction of travel.
-- Kerb spans MAY terminate at junction mouths. Their exposed ends MUST be capped, and no kerb top may cover junction asphalt.
+- Kerb spans MAY overlap junction asphalt and other section kerbs at shared junctions. Exposed span ends MUST be capped.
 - Kerb base heights MUST follow the same ground/terrain height source as the adjacent road and shoulder.
 
 ## Profile obligations

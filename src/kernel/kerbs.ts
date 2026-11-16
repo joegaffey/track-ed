@@ -6,9 +6,9 @@ import {
   type Vec2,
 } from "./geometry";
 import { MeshBuilder } from "./mesh";
-import { clipConvexPolygon, leftNormal, normalize2, sub2 } from "./math2";
+import { leftNormal, normalize2, scale2, sub2 } from "./math2";
 import type { Project, ProjectCenterline, ProjectKerbSpan } from "./project";
-import { sampleCenterline } from "./spline";
+import { fractionAtControlPoint, sampleCenterline } from "./spline";
 import {
   buildPointTerrainSampler,
   rawTerrainHeight,
@@ -18,203 +18,22 @@ import {
   KERB_WHITE_SURFACE,
 } from "./surfaces";
 
-export const KERB_WIDTH = 0.8;
-export const DEFAULT_KERB_FLAT_HEIGHT = 0.06;
-export const DEFAULT_KERB_CORNER_HEIGHT = 0.155;
-export const KERB_ELEMENT_LENGTH = 2;
-export const KERB_SAMPLE_SPACING = 2;
+import {
+  KERB_ELEMENT_LENGTH,
+  KERB_SAMPLE_SPACING,
+  KERB_WIDTH,
+  roadsideRunsFromProject,
+} from "./roadside";
 
-const ASPHALT_SURFACE = 0;
-const ASPHALT_CELL_SIZE = 4;
-const KERB_CELL_SIZE = 2;
-const OVERLAP_EPSILON = 1e-7;
 const MIN_SEGMENT_LENGTH = 1e-6;
 
-interface GroundTriangle {
-  a: Vec2;
-  b: Vec2;
-  c: Vec2;
-  minX: number;
-  minZ: number;
-  maxX: number;
-  maxZ: number;
-}
-
-function cellKey(x: number, z: number, size: number): string {
-  return `${Math.floor(x / size)}:${Math.floor(z / size)}`;
-}
-
-function triangleCells(triangle: GroundTriangle, size: number): string[] {
-  const cells: string[] = [];
-  const minX = Math.floor(triangle.minX / size);
-  const minZ = Math.floor(triangle.minZ / size);
-  const maxX = Math.floor(triangle.maxX / size);
-  const maxZ = Math.floor(triangle.maxZ / size);
-  for (let x = minX; x <= maxX; x += 1) {
-    for (let z = minZ; z <= maxZ; z += 1) {
-      cells.push(`${x}:${z}`);
-    }
-  }
-  return cells;
-}
-
-function cross2(a: Vec2, b: Vec2): number {
-  return a[0] * b[1] - a[1] * b[0];
-}
-
-function pointInTriangle(point: Vec2, a: Vec2, b: Vec2, c: Vec2): boolean {
-  const ab = sub2(b, a);
-  const bc = sub2(c, b);
-  const ca = sub2(a, c);
-  const ap = sub2(point, a);
-  const bp = sub2(point, b);
-  const cp = sub2(point, c);
-  const d1 = cross2(ab, ap);
-  const d2 = cross2(bc, bp);
-  const d3 = cross2(ca, cp);
-  const hasNegative = d1 < -1e-9 || d2 < -1e-9 || d3 < -1e-9;
-  const hasPositive = d1 > 1e-9 || d2 > 1e-9 || d3 > 1e-9;
-  return !(hasNegative && hasPositive);
-}
-
-class AsphaltIndex {
-  private readonly cells = new Map<string, GroundTriangle[]>();
-
-  constructor(graph: SurfaceGraph) {
-    const positions = graph.positions;
-    const triangleCount = Math.floor(graph.indices.length / 3);
-    for (let triangle = 0; triangle < triangleCount; triangle += 1) {
-      if (graph.triangleSurfaces[triangle] !== ASPHALT_SURFACE) {
-        continue;
-      }
-      const a = positions[graph.indices[triangle * 3]!]!;
-      const b = positions[graph.indices[triangle * 3 + 1]!]!;
-      const c = positions[graph.indices[triangle * 3 + 2]!]!;
-      const ground: GroundTriangle = {
-        a: [a[0], a[2]],
-        b: [b[0], b[2]],
-        c: [c[0], c[2]],
-        minX: Math.min(a[0], b[0], c[0]),
-        minZ: Math.min(a[2], b[2], c[2]),
-        maxX: Math.max(a[0], b[0], c[0]),
-        maxZ: Math.max(a[2], b[2], c[2]),
-      };
-      for (const key of triangleCells(ground, ASPHALT_CELL_SIZE)) {
-        const bucket = this.cells.get(key);
-        if (bucket) {
-          bucket.push(ground);
-        } else {
-          this.cells.set(key, [ground]);
-        }
-      }
-    }
-  }
-
-  contains(point: Vec2): boolean {
-    const bucket = this.cells.get(cellKey(point[0], point[1], ASPHALT_CELL_SIZE));
-    if (!bucket) {
-      return false;
-    }
-    for (const triangle of bucket) {
-      if (
-        point[0] < triangle.minX - 1e-9 ||
-        point[0] > triangle.maxX + 1e-9 ||
-        point[1] < triangle.minZ - 1e-9 ||
-        point[1] > triangle.maxZ + 1e-9
-      ) {
-        continue;
-      }
-      if (pointInTriangle(point, triangle.a, triangle.b, triangle.c)) {
-        return true;
-      }
-    }
-    return false;
-  }
-}
-
-interface QuadRecord {
-  points: Vec2[];
-  minX: number;
-  minZ: number;
-  maxX: number;
-  maxZ: number;
-}
-
-class KerbOccupancy {
-  private readonly cells = new Map<string, QuadRecord[]>();
-
-  overlaps(points: Vec2[]): boolean {
-    const minX = Math.min(...points.map((point) => point[0]));
-    const minZ = Math.min(...points.map((point) => point[1]));
-    const maxX = Math.max(...points.map((point) => point[0]));
-    const maxZ = Math.max(...points.map((point) => point[1]));
-    const minCellX = Math.floor(minX / KERB_CELL_SIZE);
-    const minCellZ = Math.floor(minZ / KERB_CELL_SIZE);
-    const maxCellX = Math.floor(maxX / KERB_CELL_SIZE);
-    const maxCellZ = Math.floor(maxZ / KERB_CELL_SIZE);
-    const checked = new Set<QuadRecord>();
-    for (let x = minCellX; x <= maxCellX; x += 1) {
-      for (let z = minCellZ; z <= maxCellZ; z += 1) {
-        const bucket = this.cells.get(`${x}:${z}`);
-        if (!bucket) {
-          continue;
-        }
-        for (const quad of bucket) {
-          if (checked.has(quad)) {
-            continue;
-          }
-          checked.add(quad);
-          if (
-            maxX < quad.minX - 1e-9 ||
-            minX > quad.maxX + 1e-9 ||
-            maxZ < quad.minZ - 1e-9 ||
-            minZ > quad.maxZ + 1e-9
-          ) {
-            continue;
-          }
-          const clipped = clipConvexPolygon(points, quad.points);
-          if (clipped.length >= 3) {
-            let area = 0;
-            for (let index = 0; index < clipped.length; index += 1) {
-              const current = clipped[index]!;
-              const next = clipped[(index + 1) % clipped.length]!;
-              area += current[0] * next[1] - next[0] * current[1];
-            }
-            if (Math.abs(area) / 2 > OVERLAP_EPSILON) {
-              return true;
-            }
-          }
-        }
-      }
-    }
-    return false;
-  }
-
-  add(points: Vec2[]): void {
-    const record: QuadRecord = {
-      points: points.map((point) => [point[0], point[1]]),
-      minX: Math.min(...points.map((point) => point[0])),
-      minZ: Math.min(...points.map((point) => point[1])),
-      maxX: Math.max(...points.map((point) => point[0])),
-      maxZ: Math.max(...points.map((point) => point[1])),
-    };
-    const minCellX = Math.floor(record.minX / KERB_CELL_SIZE);
-    const minCellZ = Math.floor(record.minZ / KERB_CELL_SIZE);
-    const maxCellX = Math.floor(record.maxX / KERB_CELL_SIZE);
-    const maxCellZ = Math.floor(record.maxZ / KERB_CELL_SIZE);
-    for (let x = minCellX; x <= maxCellX; x += 1) {
-      for (let z = minCellZ; z <= maxCellZ; z += 1) {
-        const key = `${x}:${z}`;
-        const bucket = this.cells.get(key);
-        if (bucket) {
-          bucket.push(record);
-        } else {
-          this.cells.set(key, [record]);
-        }
-      }
-    }
-  }
-}
+export {
+  KERB_WIDTH,
+  DEFAULT_KERB_FLAT_HEIGHT,
+  DEFAULT_KERB_CORNER_HEIGHT,
+  KERB_ELEMENT_LENGTH,
+  KERB_SAMPLE_SPACING,
+} from "./roadside";
 
 interface Station {
   inner: Vec2;
@@ -370,20 +189,22 @@ function stationsForSpan(
   project: Project,
   bounds: Bounds,
   section: ProjectCenterline,
-  span: ProjectKerbSpan,
+  sideName: "left" | "right",
+  start: number,
+  length: number,
 ): Station[] {
   const sampled = sampleCenterline(section.points as Vec2[], section.closed, section.spline);
-  const sliced = sliceSpanPolyline(sampled, section.closed, span.start, span.length);
+  const sliced = sliceSpanPolyline(sampled, section.closed, start, length);
   const points = resamplePolyline(sliced, KERB_SAMPLE_SPACING);
   if (points.length < 2) {
     return [];
   }
-  const side = span.side === "left" ? 1 : -1;
+  const side = sideName === "left" ? 1 : -1;
   const inner = offsetPolyline(points, false, side, project.road.halfWidth);
   const outer = offsetPolyline(points, false, side, project.road.halfWidth + KERB_WIDTH);
   if (inner.length !== points.length || outer.length !== points.length) {
     throw new BakeError(
-      `kerb span ${section.id} [${span.start.toFixed(3)} + ${span.length.toFixed(3)}] could not be offset`,
+      `kerb span ${section.id} [${start.toFixed(3)} + ${length.toFixed(3)}] could not be offset`,
     );
   }
   for (let index = 0; index < points.length - 1; index += 1) {
@@ -396,7 +217,7 @@ function stationsForSpan(
       Math.hypot(d[0] - c[0], d[1] - c[1]) <= MIN_SEGMENT_LENGTH
     ) {
       throw new BakeError(
-        `kerb span ${section.id} [${span.start.toFixed(3)} + ${span.length.toFixed(3)}] collapses; widen the turn or reduce the kerb width`,
+        `kerb span ${section.id} [${start.toFixed(3)} + ${length.toFixed(3)}] collapses; widen the turn or reduce the kerb width`,
       );
     }
   }
@@ -405,7 +226,7 @@ function stationsForSpan(
     polylineSelfIntersections(outer, false).length > 0
   ) {
     throw new BakeError(
-      `kerb span ${section.id} [${span.start.toFixed(3)} + ${span.length.toFixed(3)}] self-intersects; widen the turn or reduce the kerb width`,
+      `kerb span ${section.id} [${start.toFixed(3)} + ${length.toFixed(3)}] self-intersects; widen the turn or reduce the kerb width`,
     );
   }
 
@@ -481,6 +302,9 @@ function addOrientedTriangle(
     normal[0] * desiredNormal[0] +
     normal[1] * desiredNormal[1] +
     normal[2] * desiredNormal[2];
+  if (Math.hypot(normal[0], normal[1], normal[2]) <= 1e-9) {
+    return;
+  }
   const ia = builder.addVertex3(a);
   const ib = builder.addVertex3(b);
   const ic = builder.addVertex3(c);
@@ -528,22 +352,27 @@ function outerTopAt(station: Station, height: number, minimumY: number): Vec3 {
 
 function buildRun(
   builder: MeshBuilder,
-  segments: Segment[],
+  runStations: Station[],
+  sideSign: 1 | -1,
   flatHeight: number,
   cornerHeight: number,
-): void {
-  if (segments.length === 0) {
-    return;
+  colorPhase = 0,
+): number {
+  if (runStations.length < 2) {
+    return 0;
   }
-  const first = segments[0]!;
-  const last = segments[segments.length - 1]!;
+  const first = { start: runStations[0]!, end: runStations[1]! };
+  const last = {
+    start: runStations[runStations.length - 2]!,
+    end: runStations[runStations.length - 1]!,
+  };
   const runLength = last.end.distance - first.start.distance;
   if (runLength <= MIN_SEGMENT_LENGTH) {
-    return;
+    return 0;
   }
   const elementCount = Math.max(1, Math.round(runLength / KERB_ELEMENT_LENGTH));
   const elementLength = runLength / elementCount;
-  const stations = [first.start, ...segments.map((segment) => segment.end)];
+  const stations = runStations;
   let stationIndex = 0;
   const stationAt = (distance: number): Station => {
     while (
@@ -570,7 +399,7 @@ function buildRun(
     startBase.outerBase,
     startOuterTop,
     startBase.innerTop,
-    KERB_RED_SURFACE,
+    colorPhase % 2 === 0 ? KERB_RED_SURFACE : KERB_WHITE_SURFACE,
     [-firstDirection[0], 0, -firstDirection[1]],
   );
 
@@ -581,66 +410,92 @@ function buildRun(
     surfaceId: number;
   } | null = null;
 
+  const outerHeightAt = (t: number): number =>
+    flatHeight + (cornerHeight - flatHeight) * Math.max(0, Math.min(1, t));
+
   for (let element = 0; element < elementCount; element += 1) {
     const startDistance = first.start.distance + element * elementLength;
     const endDistance = startDistance + elementLength;
-    const start = stationAt(startDistance);
-    const end = stationAt(endDistance);
-    const startBase = basePositions(start, flatHeight);
-    const endBase = basePositions(end, flatHeight);
-    const elementStartTop = outerTopAt(start, flatHeight, startBase.innerTopY - 0.02);
-    const elementEndTop = outerTopAt(end, cornerHeight, endBase.innerTopY + 0.02);
-    const direction = normalize2(sub2(end.inner, start.inner));
-    const normal = leftNormal(direction);
-    const outward: Vec3 = [normal[0] * first.side, 0, normal[1] * first.side];
-    const inward: Vec3 = [-outward[0], 0, -outward[2]];
-    const surfaceId = element % 2 === 0 ? KERB_RED_SURFACE : KERB_WHITE_SURFACE;
+    const surfaceId =
+      (colorPhase + element) % 2 === 0 ? KERB_RED_SURFACE : KERB_WHITE_SURFACE;
+    const uniqueBoundaries = [startDistance, endDistance];
 
-    if (previous) {
-      addOrientedTriangle(
+    let elementStartTop: Vec3 | null = null;
+    let elementEndTop: Vec3 | null = null;
+    let elementEndInnerTop: Vec3 | null = null;
+    let elementDirection: Vec2 | null = null;
+
+    for (let index = 0; index < uniqueBoundaries.length - 1; index += 1) {
+      const fromDistance = uniqueBoundaries[index]!;
+      const toDistance = uniqueBoundaries[index + 1]!;
+      const from = stationAt(fromDistance);
+      const to = stationAt(toDistance);
+      const fromBase = basePositions(from, flatHeight);
+      const toBase = basePositions(to, flatHeight);
+      const t0 = (fromDistance - startDistance) / elementLength;
+      const t1 = (toDistance - startDistance) / elementLength;
+      const fromTop = outerTopAt(from, outerHeightAt(t0), fromBase.innerTopY - 0.02);
+      const toTop = outerTopAt(to, outerHeightAt(t1), toBase.innerTopY - 0.02);
+      const direction = normalize2(sub2(to.inner, from.inner));
+      const normal = leftNormal(direction);
+      const outward: Vec3 = [normal[0] * sideSign, 0, normal[1] * sideSign];
+      const inward: Vec3 = [-outward[0], 0, -outward[2]];
+
+      if (index === 0) {
+        elementStartTop = fromTop;
+        if (previous) {
+          addOrientedTriangle(
+            builder,
+            previous.innerTop,
+            previous.outerTop,
+            fromTop,
+            previous.surfaceId,
+            [previous.direction[0], 0, previous.direction[1]],
+          );
+        }
+      }
+
+      addOrientedQuad(
         builder,
-        previous.innerTop,
-        previous.outerTop,
-        elementStartTop,
-        previous.surfaceId,
-        [previous.direction[0], 0, previous.direction[1]],
+        fromBase.innerTop,
+        fromTop,
+        toTop,
+        toBase.innerTop,
+        surfaceId,
+        [0, 1, 0],
       );
+      addOrientedQuad(
+        builder,
+        fromBase.innerBase,
+        toBase.innerBase,
+        toBase.innerTop,
+        fromBase.innerTop,
+        surfaceId,
+        inward,
+      );
+      addOrientedQuad(
+        builder,
+        fromBase.outerBase,
+        fromTop,
+        toTop,
+        toBase.outerBase,
+        surfaceId,
+        outward,
+      );
+
+      elementEndTop = toTop;
+      elementEndInnerTop = toBase.innerTop;
+      elementDirection = direction;
     }
 
-    addOrientedQuad(
-      builder,
-      startBase.innerTop,
-      elementStartTop,
-      elementEndTop,
-      endBase.innerTop,
-      surfaceId,
-      [0, 1, 0],
-    );
-    addOrientedQuad(
-      builder,
-      startBase.innerBase,
-      endBase.innerBase,
-      endBase.innerTop,
-      startBase.innerTop,
-      surfaceId,
-      inward,
-    );
-    addOrientedQuad(
-      builder,
-      startBase.outerBase,
-      elementStartTop,
-      elementEndTop,
-      endBase.outerBase,
-      surfaceId,
-      outward,
-    );
-
-    previous = {
-      innerTop: endBase.innerTop,
-      outerTop: elementEndTop,
-      direction,
-      surfaceId,
-    };
+    if (elementEndTop && elementEndInnerTop && elementDirection) {
+      previous = {
+        innerTop: elementEndInnerTop,
+        outerTop: elementEndTop,
+        direction: elementDirection,
+        surfaceId,
+      };
+    }
   }
 
   if (previous) {
@@ -655,85 +510,54 @@ function buildRun(
       [previous.direction[0], 0, previous.direction[1]],
     );
   }
+  return elementCount;
 }
 
 export function buildKerbGraph(
   project: Project,
-  groundGraph: SurfaceGraph,
   bounds: Bounds,
 ): SurfaceGraph | undefined {
-  const spans = project.centerlines.flatMap((section) =>
-    (section.kerbs ?? []).map((span) => ({ section, span })),
-  );
-  if (spans.length === 0) {
+  const runs = roadsideRunsFromProject(project);
+  if (runs.length === 0) {
     return undefined;
   }
 
-  const asphalt = new AsphaltIndex(groundGraph);
-  const occupancy = new KerbOccupancy();
   const builder = new MeshBuilder();
-  const globalFlatHeight = project.kerbs?.flatHeight ?? DEFAULT_KERB_FLAT_HEIGHT;
-  const globalCornerHeight = project.kerbs?.cornerHeight ?? DEFAULT_KERB_CORNER_HEIGHT;
-
-  for (const { section, span } of spans) {
-    const flatHeight = span.flatHeight ?? globalFlatHeight;
-    const cornerHeight = span.cornerHeight ?? globalCornerHeight;
-    if (cornerHeight <= flatHeight) {
+  for (const run of runs) {
+    if (run.profile.kind !== "kerb") {
+      throw new BakeError(`unsupported roadside surface kind "${run.kind}"`);
+    }
+    const profile = run.profile;
+    if (profile.cornerHeight <= profile.flatHeight) {
       throw new BakeError(
-        `kerb span ${section.id} [${span.start.toFixed(3)} + ${span.length.toFixed(3)}] cornerHeight must be greater than flatHeight`,
+        `kerb run "${run.id}" cornerHeight must be greater than flatHeight`,
       );
     }
-    const stations = stationsForSpan(project, bounds, section, span);
-    if (stations.length < 2) {
-      continue;
-    }
-
-    const segments: Segment[] = [];
-    for (let index = 0; index < stations.length - 1; index += 1) {
-      const start = stations[index]!;
-      const end = stations[index + 1]!;
-      const direction = sub2(end.inner, start.inner);
-      const normal = leftNormal(direction);
-      const side = span.side === "left" ? 1 : -1;
-      const outward: Vec2 = [normal[0] * side, normal[1] * side];
-      const probes: Vec2[] = [
-        [start.inner[0] + outward[0] * 0.1, start.inner[1] + outward[1] * 0.1],
-        [end.inner[0] + outward[0] * 0.1, end.inner[1] + outward[1] * 0.1],
-        start.outer,
-        end.outer,
-        [(start.outer[0] + end.outer[0]) / 2, (start.outer[1] + end.outer[1]) / 2],
-        [
-          (start.inner[0] + start.outer[0] + end.inner[0] + end.outer[0]) / 4,
-          (start.inner[1] + start.outer[1] + end.inner[1] + end.outer[1]) / 4,
-        ],
-      ];
-      const top: Vec2[] = [
-        [start.inner[0], start.inner[1]],
-        [start.outer[0], start.outer[1]],
-        [end.outer[0], end.outer[1]],
-        [end.inner[0], end.inner[1]],
-      ];
-      if (
-        probes.some((point) => asphalt.contains(point)) ||
-        occupancy.overlaps(top)
-      ) {
+    for (const leg of run.legs) {
+      const section = project.centerlines.find(
+        (candidate) => candidate.id === leg.section,
+      );
+      if (!section) {
+        throw new BakeError(`kerb run "${run.id}" references an unknown section`);
+      }
+      const stations = stationsForSpan(
+        project,
+        bounds,
+        section,
+        run.side,
+        leg.start,
+        leg.length,
+      );
+      if (stations.length < 2) {
         continue;
       }
-      occupancy.add(top);
-      segments.push({ start, end, side });
-    }
-
-    let runStart = 0;
-    while (runStart < segments.length) {
-      let runEnd = runStart + 1;
-      while (
-        runEnd < segments.length &&
-        segments[runEnd]!.start === segments[runEnd - 1]!.end
-      ) {
-        runEnd += 1;
-      }
-      buildRun(builder, segments.slice(runStart, runEnd), flatHeight, cornerHeight);
-      runStart = runEnd;
+      buildRun(
+        builder,
+        stations,
+        run.side === "left" ? 1 : -1,
+        profile.flatHeight,
+        profile.cornerHeight,
+      );
     }
   }
 

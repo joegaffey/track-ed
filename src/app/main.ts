@@ -127,10 +127,6 @@ app.innerHTML = `
           <button class="edit-button" id="add-junction-button" type="button">Add junction</button>
           <button class="edit-button" id="split-loop-button" type="button">Split loop</button>
         </div>
-        <div class="edit-field" id="attach-field" hidden>
-          <label for="attach-fraction">attach <span id="attach-value">0.000</span></label>
-          <input type="range" id="attach-fraction" min="0" max="0.999" step="0.001" />
-        </div>
         <div class="junction-list" id="junction-list"></div>
         <p class="edit-hint">
           Drag control points. Double-click a centreline to insert a point. Delete removes the
@@ -157,15 +153,10 @@ app.innerHTML = `
           <label for="spawn-centerline">centreline</label>
           <select id="spawn-centerline"></select>
         </div>
-        <div class="edit-field">
-          <label for="spawn-fraction">fraction <span id="spawn-fraction-value">0.000</span></label>
-          <input type="range" id="spawn-fraction" min="0" max="0.999" step="0.001" />
-        </div>
-        <div class="edit-field">
-          <label for="spawn-lateral">lateral <span id="spawn-lateral-value">0.0 m</span></label>
-          <input type="range" id="spawn-lateral" min="-5" max="5" step="0.1" />
-        </div>
-        <p class="edit-hint">Drag the spawn arrow to move it along its centreline.</p>
+        <p class="edit-hint">
+          Drag the spawn arrow to set its position along the selected centreline.
+          Lateral position stays at the authored project value until starting-grid support is added.
+        </p>
       </section>
       <section class="panel">
         <h2>Terrain points</h2>
@@ -278,17 +269,10 @@ const openButton = document.querySelector<HTMLButtonElement>("#open-button")!;
 const frameButton = document.querySelector<HTMLButtonElement>("#frame-button")!;
 const newButton = document.querySelector<HTMLButtonElement>("#new-button")!;
 const openFile = document.querySelector<HTMLInputElement>("#open-file")!;
-const attachField = document.querySelector<HTMLDivElement>("#attach-field")!;
-const attachFraction = document.querySelector<HTMLInputElement>("#attach-fraction")!;
-const attachValue = document.querySelector<HTMLSpanElement>("#attach-value")!;
 const sectionList = document.querySelector<HTMLDivElement>("#section-list")!;
 const junctionList = document.querySelector<HTMLDivElement>("#junction-list")!;
 const editStatus = document.querySelector<HTMLDivElement>("#edit-status")!;
 const spawnCenterline = document.querySelector<HTMLSelectElement>("#spawn-centerline")!;
-const spawnFraction = document.querySelector<HTMLInputElement>("#spawn-fraction")!;
-const spawnFractionValue = document.querySelector<HTMLSpanElement>("#spawn-fraction-value")!;
-const spawnLateral = document.querySelector<HTMLInputElement>("#spawn-lateral")!;
-const spawnLateralValue = document.querySelector<HTMLSpanElement>("#spawn-lateral-value")!;
 const terrainMode = document.querySelector<HTMLSelectElement>("#terrain-mode")!;
 const addTerrainPointButton = document.querySelector<HTMLButtonElement>("#add-terrain-point")!;
 const deleteTerrainPointButton =
@@ -327,9 +311,6 @@ let selectedPoint: ControlPointPick | null = null;
 let undoStack: Project[] = [];
 let redoStack: Project[] = [];
 let drag: DragState = null;
-let sliderStart: Project | null = null;
-let spawnFractionStart: Project | null = null;
-let spawnLateralStart: Project | null = null;
 let selectedTerrainPoint: number | null = null;
 let addTerrainPointMode = false;
 let selectedKerbSpan: { sectionId: string; index: number } | null = null;
@@ -546,16 +527,6 @@ function updateAuthoringUI(): void {
   addJunctionButton.title = sectionVenue
     ? "Create a dead-ended section joined at the selected control point."
     : "Create a junction and spur at the selected main-loop control point.";
-  const legacyBranch = project
-    ? branchesOf(project).find(
-        (candidate) => candidate.attach && "to" in candidate.attach,
-      )
-    : undefined;
-  attachField.hidden = !legacyBranch;
-  if (legacyBranch?.attach && "fraction" in legacyBranch.attach) {
-    attachFraction.value = String(legacyBranch.attach.fraction);
-    attachValue.textContent = legacyBranch.attach.fraction.toFixed(3);
-  }
   const selectedSection = selectedPoint
     ? project?.centerlines[selectedPoint.centerlineIndex]
     : undefined;
@@ -653,13 +624,6 @@ function updateSpawnUI(source: Project): void {
   }
   spawnCenterline.value = source.spawn.centerline;
 
-  spawnFraction.value = String(source.spawn.fraction);
-  spawnFractionValue.textContent = source.spawn.fraction.toFixed(3);
-
-  spawnLateral.min = String(-source.road.halfWidth);
-  spawnLateral.max = String(source.road.halfWidth);
-  spawnLateral.value = String(source.spawn.lateral);
-  spawnLateralValue.textContent = `${source.spawn.lateral.toFixed(1)} m`;
 }
 
 function showFatal(title: string, details: string[]): void {
@@ -1291,7 +1255,6 @@ function loadProject(input: unknown, frame: boolean): void {
   kerbEditStart = null;
   addTerrainPointMode = false;
   drag = null;
-  sliderStart = null;
   renderProject(project, { frame });
   updateAuthoringUI();
 }
@@ -1311,7 +1274,6 @@ function undo(): void {
   kerbEditStart = null;
   addTerrainPointMode = false;
   drag = null;
-  sliderStart = null;
   syncBranchStart(project);
   renderProject(project, { frame: false });
   updateAuthoringUI();
@@ -1332,7 +1294,6 @@ function redo(): void {
   kerbEditStart = null;
   addTerrainPointMode = false;
   drag = null;
-  sliderStart = null;
   syncBranchStart(project);
   renderProject(project, { frame: false });
   updateAuthoringUI();
@@ -3181,44 +3142,6 @@ openFile.addEventListener("change", async () => {
   loadProject(parsedValue, true);
 });
 
-attachFraction.addEventListener("input", () => {
-  if (!project) {
-    return;
-  }
-  const legacyBranch = branchesOf(project).find(
-    (candidate) => candidate.attach && "to" in candidate.attach,
-  );
-  if (!legacyBranch?.attach || !("fraction" in legacyBranch.attach)) {
-    return;
-  }
-  if (!sliderStart) {
-    sliderStart = cloneProject(project);
-  }
-  const previous = cloneProject(project);
-  moveBranchAttach(project, Number(attachFraction.value));
-  if (!renderProject(project, { frame: false })) {
-    project = previous;
-    renderProject(project, { frame: false });
-    setEditStatus(
-      "Attach move blocked: the branch would cross the main loop or become invalid.",
-      "error",
-    );
-  }
-  updateAuthoringUI();
-});
-
-attachFraction.addEventListener("change", () => {
-  if (!sliderStart) {
-    return;
-  }
-  const start = sliderStart;
-  sliderStart = null;
-  if (project && JSON.stringify(start) !== JSON.stringify(project)) {
-    pushUndo(start);
-  }
-  updateAuthoringUI();
-});
-
 spawnCenterline.addEventListener("change", () => {
   if (!project || spawnCenterline.value === project.spawn.centerline) {
     return;
@@ -3227,62 +3150,6 @@ spawnCenterline.addEventListener("change", () => {
   project.spawn.centerline = spawnCenterline.value;
   pushUndo(before);
   renderProject(project, { frame: false });
-  updateAuthoringUI();
-});
-
-spawnFraction.addEventListener("input", () => {
-  if (!project) {
-    return;
-  }
-  if (!spawnFractionStart) {
-    spawnFractionStart = cloneProject(project);
-  }
-  project.spawn.fraction = Number(spawnFraction.value);
-  scheduleOverlayUpdate();
-  scheduleRender();
-  updateAuthoringUI();
-});
-
-spawnFraction.addEventListener("change", () => {
-  if (!spawnFractionStart) {
-    return;
-  }
-  flushPendingRender();
-  const start = spawnFractionStart;
-  spawnFractionStart = null;
-  if (project && JSON.stringify(start) !== JSON.stringify(project)) {
-    pushUndo(start);
-  }
-  updateAuthoringUI();
-});
-
-spawnLateral.addEventListener("input", () => {
-  if (!project) {
-    return;
-  }
-  if (!spawnLateralStart) {
-    spawnLateralStart = cloneProject(project);
-  }
-  const lateral = Math.max(
-    -project.road.halfWidth,
-    Math.min(project.road.halfWidth, Number(spawnLateral.value)),
-  );
-  project.spawn.lateral = lateral;
-  scheduleOverlayUpdate();
-  scheduleRender();
-  updateAuthoringUI();
-});
-
-spawnLateral.addEventListener("change", () => {
-  if (!spawnLateralStart) {
-    return;
-  }
-  flushPendingRender();
-  const start = spawnLateralStart;
-  spawnLateralStart = null;
-  if (project && JSON.stringify(start) !== JSON.stringify(project)) {
-    pushUndo(start);
-  }
   updateAuthoringUI();
 });
 
