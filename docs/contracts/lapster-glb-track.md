@@ -73,6 +73,7 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 ## Lapster GLB conventions
 
 - Ground GLB scene nodes MUST be named `surface_asphalt`, `surface_dirt`, `surface_grass`.
+- Non-grass surface materials MUST embed a deterministic solid-colour `image/png` texture (1x1 is sufficient) as `baseColorTexture`. Lapster's GLB track importer supplies white vertex colours to GLB track meshes, so a texture is required for asphalt, dirt, and kerb colours to appear in the Lapster viewer. Grass is intentionally left textureless because Lapster applies its grass shader by mesh/material name.
 - Kerb GLB scene nodes MUST be named `surface_kerb_red` and `surface_kerb_white`.
 - Each node MUST use a material with the matching surface name.
 - `visual.include` MUST be `["surface_*"]` and non-empty.

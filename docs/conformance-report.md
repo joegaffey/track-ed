@@ -67,7 +67,7 @@ Merging two loose branch ends into one centreline passed: 67668 B `.sima`, 894 v
 
 The `project@3` venue fixture with two disjoint closed sections and a dead-ended open spur passed (with authored kerbs): 609928 B `.sima`, 9460 vertices, 2980 triangles, `Two Loops and Spur (Track)`, `validate ok`.
 
-The `project@3` junction fixture with a closed loop and an open spur attached at an interior loop control point passed (with authored kerbs): 365836 B `.sima`, 5670 vertices, 1755 triangles, `Loop and Spur Junction (Track)`, `validate ok`.
+The `project@3` junction fixture with a closed loop and an open spur attached at an interior loop control point passed (with authored kerbs): 366220 B `.sima`, 5670 vertices, 1755 triangles, `Loop and Spur Junction (Track)`, `validate ok`.
 
 ## Kerb conformance (v1-G3)
 
@@ -75,7 +75,7 @@ Two checked-in venue fixtures now author kerb spans across straights, corners, a
 
 | Fixture | `track.sima` | Vertices | Triangles | Surfaces | Inspect | Validate |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
-| `venue-loop-spur-junction` | 365836 B | 5670 | 1755 | 5 | `venue-loop-spur-junction (Track)` | ok |
+| `venue-loop-spur-junction` | 366220 B | 5670 | 1755 | 5 | `venue-loop-spur-junction (Track)` | ok |
 | `venue-two-loops-spur` | 609928 B | 9460 | 2980 | 5 | `venue-two-loops-spur (Track)` | ok |
 | `venue-wrapped-kerb` | 296584 B | 4505 | 1601 | 5 | `venue-wrapped-kerb (Track)` | ok |
 
@@ -102,7 +102,7 @@ All 18 checked-in project fixtures were parsed, baked, validated in-process, exp
 | `loop-with-branch-90-spline` | 84188 B | 1119 | 740 | 371.36 m | ok |
 | `loop-with-branch-90-spline-terrain` | 166948 B | 2274 | 1432 | 371.36 m | ok |
 | `loop-with-branch-90-spline-terrain-follow` | 166952 B | 2274 | 1432 | 371.36 m | ok |
-| `venue-loop-spur-junction` | 365836 B | 5670 | 1755 | 444.37 m | ok |
+| `venue-loop-spur-junction` | 366220 B | 5670 | 1755 | 444.37 m | ok |
 | `venue-two-loops-spur` | 609928 B | 9460 | 2980 | 813.65 m | ok |
 | `venue-wrapped-kerb` | 296584 B | 4505 | 1601 | 313.85 m | ok |
 
