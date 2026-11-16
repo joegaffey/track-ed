@@ -90,6 +90,12 @@ The full bake for those synthetic venues was 2.0 s, 9.7 s, and 31.1 s respective
 
 The closed-loop split gap search remains the slowest authoring operation because each candidate gap is baked and validated. It is under 1 s on the current fixtures, so no further optimization is required for Slice 4.
 
+## Edit scheduling
+
+Continuous point and terrain edits now update only the centreline, control-point, and terrain-point overlays per animation frame, while full bakes are deferred until the pointer pauses or is released. Discrete slider edits use a 150 ms trailing delay with a 300 ms maximum wait. Export is disabled while a bake is pending, and every drag flushes synchronously on release before join/merge validation and the undo decision.
+
+A continuous 3-second drag on `venue-two-loops-spur` held 60 fps with no full bakes until release; the final bake still validated, enabled export, and produced one undo entry.
+
 ## Comparison against the current Lapster builder
 
 The current Lapster builder (Rust + wgpu) already provides:

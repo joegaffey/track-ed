@@ -262,6 +262,79 @@ let selectedTerrainPoint: number | null = null;
 let addTerrainPointMode = false;
 let bakeValid = false;
 
+const RENDER_DELAY_MS = 150;
+const RENDER_MAX_WAIT_MS = 300;
+let renderTimer: number | null = null;
+let renderFirstScheduledAt = 0;
+
+function cancelPendingRender(): void {
+  if (renderTimer !== null) {
+    window.clearTimeout(renderTimer);
+    renderTimer = null;
+  }
+  renderFirstScheduledAt = 0;
+}
+
+function scheduleRender(options: { maxWait?: number } = {}): void {
+  if (!project) {
+    return;
+  }
+  exportButton.disabled = true;
+  const now = performance.now();
+  if (renderTimer === null) {
+    renderFirstScheduledAt = now;
+  } else {
+    window.clearTimeout(renderTimer);
+  }
+  const maxWait = options.maxWait ?? RENDER_MAX_WAIT_MS;
+  const elapsed = now - renderFirstScheduledAt;
+  const wait = Math.max(0, Math.min(RENDER_DELAY_MS, maxWait - elapsed));
+  renderTimer = window.setTimeout(() => {
+    renderTimer = null;
+    renderFirstScheduledAt = 0;
+    if (project) {
+      renderProject(project, { frame: false });
+    }
+  }, wait);
+}
+
+function scheduleDragRender(): void {
+  scheduleRender({ maxWait: Number.POSITIVE_INFINITY });
+}
+
+function flushPendingRender(): boolean {
+  if (renderTimer === null) {
+    return bakeValid;
+  }
+  cancelPendingRender();
+  return project ? renderProject(project, { frame: false }) : false;
+}
+
+let overlayFrame: number | null = null;
+
+function cancelOverlayUpdate(): void {
+  if (overlayFrame !== null) {
+    window.cancelAnimationFrame(overlayFrame);
+    overlayFrame = null;
+  }
+}
+
+function scheduleOverlayUpdate(): void {
+  if (!project || !view || overlayFrame !== null) {
+    return;
+  }
+  overlayFrame = window.requestAnimationFrame(() => {
+    overlayFrame = null;
+    if (!project || !view || !currentTrack) {
+      return;
+    }
+    view.updateOverlays(
+      overlayCenterlines(project, currentTrack.bounds),
+      overlayTerrainPoints(project),
+    );
+  });
+}
+
 function cloneProject(source: Project): Project {
   return structuredClone(source);
 }
@@ -426,7 +499,8 @@ function updateAuthoringUI(): void {
         ? "Open the selected closed loop with a road-width gap."
         : "Split the selected open section into two capped sections."
       : "Section splitting requires track-ed/project@3.";
-  exportButton.disabled = !bakeValid || currentReport === null || !currentReport.ok;
+  exportButton.disabled =
+    renderTimer !== null || !bakeValid || currentReport === null || !currentReport.ok;
   if (project) {
     updateSpawnUI(project);
     updateTerrainPointsUI(project);
@@ -812,6 +886,8 @@ function renderProject(
   input: unknown,
   options: { frame?: boolean } = {},
 ): boolean {
+  cancelPendingRender();
+  cancelOverlayUpdate();
   const parsed = parseProject(
     isInternalProject(input) ? serializeProject(input) : input,
   );
@@ -885,6 +961,8 @@ function renderProject(
 }
 
 function loadProject(input: unknown, frame: boolean): void {
+  cancelPendingRender();
+  cancelOverlayUpdate();
   const parsed = parseProject(input);
   if (!parsed.project) {
     showFatal(
@@ -910,6 +988,8 @@ function undo(): void {
   if (!project || undoStack.length === 0) {
     return;
   }
+  cancelPendingRender();
+  cancelOverlayUpdate();
   const previous = undoStack.pop()!;
   redoStack.push(cloneProject(project));
   project = previous;
@@ -927,6 +1007,8 @@ function redo(): void {
   if (!project || redoStack.length === 0) {
     return;
   }
+  cancelPendingRender();
+  cancelOverlayUpdate();
   const next = redoStack.pop()!;
   undoStack.push(cloneProject(project));
   project = next;
@@ -1928,7 +2010,8 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         }
         const delta = (drag.startClientY - event.clientY) * drag.unitsPerPixel;
         terrainPoint.height = Math.max(-100, Math.min(100, drag.startHeight + delta));
-        renderProject(project, { frame: false });
+        scheduleOverlayUpdate();
+        scheduleDragRender();
         return;
       }
 
@@ -1973,7 +2056,8 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         } else {
           branch.points[drag.pointIndex] = [ground[0], ground[1]];
           syncBranchStart(project);
-          renderProject(project, { frame: false });
+          scheduleOverlayUpdate();
+          scheduleDragRender();
         }
 
         const isEndpoint =
@@ -2043,7 +2127,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
           return;
         }
         project.spawn.fraction = Math.max(0, Math.min(0.999, fraction));
-        renderProject(project, { frame: false });
+        scheduleDragRender();
         return;
       }
 
@@ -2128,6 +2212,9 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
     canvas.style.cursor = "default";
     const currentDrag = drag;
     drag = null;
+    if (project) {
+      flushPendingRender();
+    }
 
     if (currentDrag.kind === "point" && project) {
       const branch = project.centerlines[currentDrag.centerlineIndex];
@@ -2375,7 +2462,7 @@ spawnFraction.addEventListener("input", () => {
     spawnFractionStart = cloneProject(project);
   }
   project.spawn.fraction = Number(spawnFraction.value);
-  renderProject(project, { frame: false });
+  scheduleRender();
   updateAuthoringUI();
 });
 
@@ -2383,6 +2470,7 @@ spawnFraction.addEventListener("change", () => {
   if (!spawnFractionStart) {
     return;
   }
+  flushPendingRender();
   const start = spawnFractionStart;
   spawnFractionStart = null;
   if (project && JSON.stringify(start) !== JSON.stringify(project)) {
@@ -2403,7 +2491,7 @@ spawnLateral.addEventListener("input", () => {
     Math.min(project.road.halfWidth, Number(spawnLateral.value)),
   );
   project.spawn.lateral = lateral;
-  renderProject(project, { frame: false });
+  scheduleRender();
   updateAuthoringUI();
 });
 
@@ -2411,6 +2499,7 @@ spawnLateral.addEventListener("change", () => {
   if (!spawnLateralStart) {
     return;
   }
+  flushPendingRender();
   const start = spawnLateralStart;
   spawnLateralStart = null;
   if (project && JSON.stringify(start) !== JSON.stringify(project)) {

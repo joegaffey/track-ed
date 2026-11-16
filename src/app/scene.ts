@@ -57,6 +57,10 @@ export interface TrackView {
     centerlines: readonly CentrelineOverlayData[],
     terrainPoints: readonly TerrainPointOverlayData[],
   ): void;
+  updateOverlays(
+    centerlines: readonly CentrelineOverlayData[],
+    terrainPoints: readonly TerrainPointOverlayData[],
+  ): void;
   frame(): void;
   setWireframeVisible(visible: boolean): void;
   setBoundaryVisible(visible: boolean): void;
@@ -226,6 +230,8 @@ export function createTrackView(
     line: THREE.Line | THREE.LineLoop;
     centerlineIndex: number;
   }> = [];
+  let centerlineOverlayGroup: THREE.Group | null = null;
+  let terrainPointOverlayGroup: THREE.Group | null = null;
 
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
@@ -285,11 +291,115 @@ export function createTrackView(
     joinTargetMarker.visible = true;
   };
 
+  const buildCenterlineOverlays = (): void => {
+    if (!centerlineOverlayGroup) {
+      return;
+    }
+    disposeObject(centerlineOverlayGroup);
+    centerlineOverlayGroup.clear();
+    linePickables = [];
+
+    for (let centerlineIndex = 0; centerlineIndex < centerlines.length; centerlineIndex += 1) {
+      const centerline = centerlines[centerlineIndex]!;
+      if (centerline.points.length === 0) {
+        continue;
+      }
+      const color = centerline.closed ? MAIN_CENTERLINE_COLOR : BRANCH_CENTERLINE_COLOR;
+      const linePoints = centerline.linePoints ?? centerline.points;
+      const linePositions = new Float32Array(linePoints.length * 3);
+      const pointPositions = new Float32Array(centerline.points.length * 3);
+      for (let i = 0; i < linePoints.length; i += 1) {
+        const point = linePoints[i]!;
+        linePositions[i * 3] = point[0];
+        linePositions[i * 3 + 1] = (centerline.lineHeights?.[i] ?? 0) + 0.14;
+        linePositions[i * 3 + 2] = point[1];
+      }
+      for (let i = 0; i < centerline.points.length; i += 1) {
+        const point = centerline.points[i]!;
+        pointPositions[i * 3] = point[0];
+        pointPositions[i * 3 + 1] = (centerline.pointHeights?.[i] ?? 0) + 0.16;
+        pointPositions[i * 3 + 2] = point[1];
+      }
+
+      const lineGeometry = new THREE.BufferGeometry();
+      lineGeometry.setAttribute("position", new THREE.BufferAttribute(linePositions, 3));
+      const lineMaterial = new THREE.LineBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.95,
+        depthTest: false,
+        depthWrite: false,
+      });
+      const line = centerline.closed
+        ? new THREE.LineLoop(lineGeometry, lineMaterial)
+        : new THREE.Line(lineGeometry, lineMaterial);
+      line.name = `centerline-${centerline.id}`;
+      line.renderOrder = 3;
+      centerlineOverlayGroup.add(line);
+      linePickables.push({ line, centerlineIndex });
+
+      const pointGeometry = new THREE.BufferGeometry();
+      pointGeometry.setAttribute("position", new THREE.BufferAttribute(pointPositions, 3));
+      const controlPoints = new THREE.Points(
+        pointGeometry,
+        new THREE.PointsMaterial({
+          color,
+          size: 8,
+          sizeAttenuation: false,
+          depthTest: false,
+        }),
+      );
+      controlPoints.name = `centerline-points-${centerline.id}`;
+      controlPoints.renderOrder = 4;
+      centerlineOverlayGroup.add(controlPoints);
+    }
+  };
+
+  const buildTerrainPointOverlays = (): void => {
+    if (!terrainPointOverlayGroup) {
+      return;
+    }
+    disposeObject(terrainPointOverlayGroup);
+    terrainPointOverlayGroup.clear();
+    if (terrainPoints.length === 0) {
+      return;
+    }
+    const pointData = new Float32Array(terrainPoints.length * 3);
+    for (let i = 0; i < terrainPoints.length; i += 1) {
+      const point = terrainPoints[i]!;
+      pointData[i * 3] = point.position[0];
+      pointData[i * 3 + 1] = point.height + 0.3;
+      pointData[i * 3 + 2] = point.position[1];
+    }
+    const pointGeometry = new THREE.BufferGeometry();
+    pointGeometry.setAttribute("position", new THREE.BufferAttribute(pointData, 3));
+    const pointMarkers = new THREE.Points(
+      pointGeometry,
+      new THREE.PointsMaterial({
+        color: 0xff5cd6,
+        size: 10,
+        sizeAttenuation: false,
+        depthTest: false,
+      }),
+    );
+    pointMarkers.name = "terrain-points";
+    pointMarkers.renderOrder = 5;
+    terrainPointOverlayGroup.add(pointMarkers);
+  };
+
   const buildContent = (): void => {
     disposeObject(content);
     content.clear();
     surfaceMesh = null;
     linePickables = [];
+
+    centerlineOverlayGroup = new THREE.Group();
+    centerlineOverlayGroup.name = "centerline-overlays";
+    centerlineOverlayGroup.visible = centerlineVisible;
+    content.add(centerlineOverlayGroup);
+    terrainPointOverlayGroup = new THREE.Group();
+    terrainPointOverlayGroup.name = "terrain-point-overlays";
+    content.add(terrainPointOverlayGroup);
 
     const surfaces = [...track.surfaces].sort((a, b) => a.id - b.id);
     const materialIndexById = new Map(surfaces.map((surface, index) => [surface.id, index]));
@@ -403,65 +513,7 @@ export function createTrackView(
     tJunctions.visible = tJunctionsVisible;
     content.add(tJunctions);
 
-    for (let centerlineIndex = 0; centerlineIndex < centerlines.length; centerlineIndex += 1) {
-      const centerline = centerlines[centerlineIndex]!;
-      if (centerline.points.length === 0) {
-        continue;
-      }
-      const color = centerline.closed ? MAIN_CENTERLINE_COLOR : BRANCH_CENTERLINE_COLOR;
-      const linePoints = centerline.linePoints ?? centerline.points;
-      const linePositions = new Float32Array(linePoints.length * 3);
-      const pointPositions = new Float32Array(centerline.points.length * 3);
-      for (let i = 0; i < linePoints.length; i += 1) {
-        const point = linePoints[i]!;
-        linePositions[i * 3] = point[0];
-        linePositions[i * 3 + 1] = (centerline.lineHeights?.[i] ?? 0) + 0.14;
-        linePositions[i * 3 + 2] = point[1];
-      }
-      for (let i = 0; i < centerline.points.length; i += 1) {
-        const point = centerline.points[i]!;
-        pointPositions[i * 3] = point[0];
-        pointPositions[i * 3 + 1] = (centerline.pointHeights?.[i] ?? 0) + 0.16;
-        pointPositions[i * 3 + 2] = point[1];
-      }
-
-      const lineGeometry = new THREE.BufferGeometry();
-      lineGeometry.setAttribute("position", new THREE.BufferAttribute(linePositions, 3));
-      const lineMaterial = new THREE.LineBasicMaterial({
-        color,
-        transparent: true,
-        opacity: 0.95,
-        depthTest: false,
-        depthWrite: false,
-      });
-      const line = centerline.closed
-        ? new THREE.LineLoop(lineGeometry, lineMaterial)
-        : new THREE.Line(lineGeometry, lineMaterial);
-      line.name = `centerline-${centerline.id}`;
-      line.renderOrder = 3;
-      line.visible = centerlineVisible;
-      content.add(line);
-      linePickables.push({ line, centerlineIndex });
-
-      const pointGeometry = new THREE.BufferGeometry();
-      pointGeometry.setAttribute("position", new THREE.BufferAttribute(pointPositions, 3));
-      const controlPoints = new THREE.Points(
-        pointGeometry,
-        new THREE.PointsMaterial({
-          color,
-          size: 8,
-          sizeAttenuation: false,
-          depthTest: false,
-        }),
-      );
-      controlPoints.name = `centerline-points-${centerline.id}`;
-      controlPoints.renderOrder = 4;
-      controlPoints.visible = centerlineVisible;
-      content.add(controlPoints);
-    }
-    centerlineGroup = content.children.filter(
-      (child) => child.name.startsWith("centerline"),
-    ) as THREE.Object3D[];
+    buildCenterlineOverlays();
 
     const collisionMaterial = new THREE.MeshBasicMaterial({
       color: 0x38bdf8,
@@ -477,29 +529,7 @@ export function createTrackView(
     collision.visible = collisionVisible;
     content.add(collision);
 
-    if (terrainPoints.length > 0) {
-      const pointData = new Float32Array(terrainPoints.length * 3);
-      for (let i = 0; i < terrainPoints.length; i += 1) {
-        const point = terrainPoints[i]!;
-        pointData[i * 3] = point.position[0];
-        pointData[i * 3 + 1] = point.height + 0.3;
-        pointData[i * 3 + 2] = point.position[1];
-      }
-      const pointGeometry = new THREE.BufferGeometry();
-      pointGeometry.setAttribute("position", new THREE.BufferAttribute(pointData, 3));
-      const pointMarkers = new THREE.Points(
-        pointGeometry,
-        new THREE.PointsMaterial({
-          color: 0xff5cd6,
-          size: 10,
-          sizeAttenuation: false,
-          depthTest: false,
-        }),
-      );
-      pointMarkers.name = "terrain-points";
-      pointMarkers.renderOrder = 5;
-      content.add(pointMarkers);
-    }
+    buildTerrainPointOverlays();
 
     const spawn = track.spawns[0];
     if (spawn) {
@@ -535,8 +565,6 @@ export function createTrackView(
     updateJoinTargetMarker();
   };
 
-  let centerlineGroup: THREE.Object3D[] = [];
-
   let wireframeVisible = true;
   let boundaryVisible = true;
   let tJunctionsVisible = true;
@@ -545,8 +573,8 @@ export function createTrackView(
 
   const setCenterlineVisibility = (visible: boolean): void => {
     centerlineVisible = visible;
-    for (const object of centerlineGroup) {
-      object.visible = visible;
+    if (centerlineOverlayGroup) {
+      centerlineOverlayGroup.visible = visible;
     }
   };
 
@@ -588,6 +616,15 @@ export function createTrackView(
       centerlines = nextCenterlines;
       terrainPoints = nextTerrainPoints;
       buildContent();
+    },
+    updateOverlays(nextCenterlines, nextTerrainPoints): void {
+      centerlines = nextCenterlines;
+      terrainPoints = nextTerrainPoints;
+      buildCenterlineOverlays();
+      buildTerrainPointOverlays();
+      updateSelectionMarker();
+      updateTerrainSelectionMarker();
+      updateJoinTargetMarker();
     },
     frame,
     setWireframeVisible(visible: boolean): void {
