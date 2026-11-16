@@ -10,12 +10,12 @@ track-ed bundles the following runtime dependencies. Their licenses are compatib
 | `polygon-clipping` | 0.15.7 | MIT | https://github.com/mfogel/polygon-clipping |
 | `three` | 0.187.0 | MIT | https://github.com/mrdoob/three.js |
 
-## Lapster procedural prop geometry
+## Lapster procedural geometry and textures
 
 - Source: https://github.com/joegaffey/lapster
 - Reference commit: `20547ab`
 - License: MIT OR Apache-2.0
 - Used in: `src/export/lapster/glb.ts` and `src/app/scene.ts`
-- Ported: concrete barrier block dimensions and material, blue/white tyre stack dimensions and materials, and conifer tree tier layout/colors from `crates/sim-render/src/track_editor.rs`.
+- Ported: concrete barrier block dimensions and material, blue/white tyre stack dimensions and materials, conifer tree tier layout/colors, the deterministic tarmac/grass texture generators, and the distant mountain height/noise profile from `crates/sim-render/src/track_editor.rs`.
 
 Development-only tooling (`vite`, `vitest`, `typescript`, `@types/three`) is not part of the shipped application bundle. Full license texts are available in each package under `node_modules/` after `npm install`.

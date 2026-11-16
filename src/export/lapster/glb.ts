@@ -1,13 +1,37 @@
 import type { BakedTrack, Prop, Quat, Surface, Vec3 } from "../../model/baked-track";
 
 const SURFACE_COLORS: Record<string, [number, number, number]> = {
-  asphalt: [0.28, 0.31, 0.35],
-  dirt: [0.55, 0.37, 0.23],
+  asphalt: [0.045, 0.045, 0.05],
+  dirt: [0.48, 0.345, 0.208],
   grass: [0.18, 0.4, 0.22],
   kerb_red: [0.7, 0.14, 0.14],
   kerb_white: [0.93, 0.93, 0.93],
   wall: [0.46, 0.48, 0.5],
 };
+
+type TextureKind = "solid" | "tarmac" | "grass";
+
+const SURFACE_TEXTURES: Record<string, TextureKind> = {
+  asphalt: "tarmac",
+  dirt: "tarmac",
+  grass: "grass",
+};
+
+const TARMAC_TEXTURE_GAIN: Record<string, number> = {
+  asphalt: 2.2,
+  dirt: 0.9,
+};
+
+const OUTLINE_MATERIALS = new Set([
+  "kerb_red",
+  "kerb_white",
+  "wall",
+  "concrete",
+  "tire_blue",
+  "tire_white",
+  "tree_trunk",
+  "tree_foliage",
+]);
 
 // Ported from Lapster's procedural prop materials and dimensions
 // (crates/sim-render/src/track_editor.rs, MIT OR Apache-2.0).
@@ -582,40 +606,49 @@ function pngChunk(type: string, data: Uint8Array): Uint8Array {
   return result;
 }
 
-function solidColorPng(color: [number, number, number]): Uint8Array {
-  const rgba = new Uint8Array([
-    0,
-    Math.round(linearToSrgb(color[0]) * 255),
-    Math.round(linearToSrgb(color[1]) * 255),
-    Math.round(linearToSrgb(color[2]) * 255),
-    255,
-  ]);
-  const header = new Uint8Array(13);
-  const headerView = new DataView(header.buffer);
-  headerView.setUint32(0, 1, false);
-  headerView.setUint32(4, 1, false);
-  header[8] = 8;
-  header[9] = 6;
-  header[10] = 0;
-  header[11] = 0;
-  header[12] = 0;
-  const compressed = new Uint8Array(2 + 5 + rgba.length + 4);
+function zlibStored(bytes: Uint8Array): Uint8Array {
+  const blockCount = Math.max(1, Math.ceil(bytes.length / 65535));
+  const compressed = new Uint8Array(2 + bytes.length + blockCount * 5 + 4);
   compressed[0] = 0x78;
   compressed[1] = 0x01;
-  compressed[2] = 0x01;
-  compressed[3] = rgba.length & 0xff;
-  compressed[4] = (rgba.length >>> 8) & 0xff;
-  compressed[5] = ~rgba.length & 0xff;
-  compressed[6] = (~rgba.length >>> 8) & 0xff;
-  compressed.set(rgba, 7);
-  const adler = adler32(rgba);
-  compressed[compressed.length - 4] = (adler >>> 24) & 0xff;
-  compressed[compressed.length - 3] = (adler >>> 16) & 0xff;
-  compressed[compressed.length - 2] = (adler >>> 8) & 0xff;
-  compressed[compressed.length - 1] = adler & 0xff;
+  let output = 2;
+  let offset = 0;
+  for (let block = 0; block < blockCount; block += 1) {
+    const length = Math.min(65535, bytes.length - offset);
+    compressed[output++] = block === blockCount - 1 ? 0x01 : 0x00;
+    compressed[output++] = length & 0xff;
+    compressed[output++] = (length >>> 8) & 0xff;
+    compressed[output++] = ~length & 0xff;
+    compressed[output++] = (~length >>> 8) & 0xff;
+    compressed.set(bytes.subarray(offset, offset + length), output);
+    output += length;
+    offset += length;
+  }
+  const adler = adler32(bytes);
+  compressed[output++] = (adler >>> 24) & 0xff;
+  compressed[output++] = (adler >>> 16) & 0xff;
+  compressed[output++] = (adler >>> 8) & 0xff;
+  compressed[output++] = adler & 0xff;
+  return compressed.subarray(0, output);
+}
+
+function pngFromRgba(width: number, height: number, rgba: Uint8Array): Uint8Array {
+  const scanline = 1 + width * 4;
+  const raw = new Uint8Array(height * scanline);
+  for (let y = 0; y < height; y += 1) {
+    const source = y * width * 4;
+    raw[y * scanline] = 0;
+    raw.set(rgba.subarray(source, source + width * 4), y * scanline + 1);
+  }
+  const header = new Uint8Array(13);
+  const headerView = new DataView(header.buffer);
+  headerView.setUint32(0, width, false);
+  headerView.setUint32(4, height, false);
+  header[8] = 8;
+  header[9] = 6;
   const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
   const ihdr = pngChunk("IHDR", header);
-  const idat = pngChunk("IDAT", compressed);
+  const idat = pngChunk("IDAT", zlibStored(raw));
   const iend = pngChunk("IEND", new Uint8Array(0));
   const png = new Uint8Array(
     signature.length + ihdr.length + idat.length + iend.length,
@@ -625,6 +658,146 @@ function solidColorPng(color: [number, number, number]): Uint8Array {
     png.set(part, offset);
     offset += part.length;
   }
+  return png;
+}
+
+function solidColorPng(color: [number, number, number]): Uint8Array {
+  return pngFromRgba(
+    1,
+    1,
+    new Uint8Array([
+      Math.round(linearToSrgb(color[0]) * 255),
+      Math.round(linearToSrgb(color[1]) * 255),
+      Math.round(linearToSrgb(color[2]) * 255),
+      255,
+    ]),
+  );
+}
+
+// Ported from Lapster's procedural tarmac/grass textures
+// (crates/sim-render/src/track_editor.rs, MIT OR Apache-2.0).
+const TEXTURE_SIZE = 256;
+const TARMAC_TILE_METERS = 7;
+const texturePngs = new Map<string, Uint8Array>();
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = clamp01((value - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
+}
+
+function srgbToLinear(value: number): number {
+  const clamped = clamp01(value);
+  return clamped <= 0.04045
+    ? clamped / 12.92
+    : Math.pow((clamped + 0.055) / 1.055, 2.4);
+}
+
+function textureHash(x: number, y: number, seed: number): number {
+  let hash =
+    (Math.imul(x, 0x9e3779b1) ^ Math.imul(y, 0x85ebca77) ^ seed) >>> 0;
+  hash = (hash ^ (hash >>> 15)) >>> 0;
+  hash = Math.imul(hash, 0x2c1b3c6d) >>> 0;
+  hash = (hash ^ (hash >>> 12)) >>> 0;
+  hash = Math.imul(hash, 0x297a2d39) >>> 0;
+  hash = (hash ^ (hash >>> 15)) >>> 0;
+  return hash / 0xffffffff;
+}
+
+function valueNoise(u: number, v: number, cells: number, seed: number): number {
+  const x = u * cells;
+  const y = v * cells;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const tx = x - x0;
+  const ty = y - y0;
+  const sx = tx * tx * (3 - 2 * tx);
+  const sy = ty * ty * (3 - 2 * ty);
+  const wrap = (value: number): number => ((value % cells) + cells) % cells;
+  const a = textureHash(wrap(x0), wrap(y0), seed);
+  const b = textureHash(wrap(x0 + 1), wrap(y0), seed);
+  const c = textureHash(wrap(x0), wrap(y0 + 1), seed);
+  const d = textureHash(wrap(x0 + 1), wrap(y0 + 1), seed);
+  const ab = a + (b - a) * sx;
+  const cd = c + (d - c) * sx;
+  return ab + (cd - ab) * sy;
+}
+
+function tarmacTexturePng(
+  color: [number, number, number],
+  gain: number,
+): Uint8Array {
+  const key = `tarmac:${color.join(",")}:${gain}`;
+  const cached = texturePngs.get(key);
+  if (cached) {
+    return cached;
+  }
+  const rgba = new Uint8Array(TEXTURE_SIZE * TEXTURE_SIZE * 4);
+  for (let y = 0; y < TEXTURE_SIZE; y += 1) {
+    for (let x = 0; x < TEXTURE_SIZE; x += 1) {
+      const u = x / TEXTURE_SIZE;
+      const v = y / TEXTURE_SIZE;
+      const coarse = valueNoise(u, v, 6, 0x1a2b3c4d);
+      const medium = valueNoise(u, v, 18, 0x5e6f7a8b);
+      const fine = valueNoise(u, v, 54, 0x9c0d1e2f);
+      const grain = textureHash(x, y, 0x31415926);
+      const patches = smoothstep(0.52, 0.82, coarse);
+      const shade =
+        (medium - 0.5) * 0.09 +
+        (fine - 0.5) * 0.045 +
+        (grain - 0.5) * 0.025 -
+        patches * 0.03;
+      const value = Math.max(0.62, Math.min(0.79, 0.71 + shade));
+      const cool = (medium - 0.5) * 0.02;
+      const offset = (y * TEXTURE_SIZE + x) * 4;
+      rgba[offset] = Math.round(
+        linearToSrgb(clamp01(color[0] * gain * srgbToLinear(value - cool))) * 255,
+      );
+      rgba[offset + 1] = Math.round(
+        linearToSrgb(clamp01(color[1] * gain * srgbToLinear(value))) * 255,
+      );
+      rgba[offset + 2] = Math.round(
+        linearToSrgb(clamp01(color[2] * gain * srgbToLinear(value + cool))) * 255,
+      );
+      rgba[offset + 3] = 255;
+    }
+  }
+  const png = pngFromRgba(TEXTURE_SIZE, TEXTURE_SIZE, rgba);
+  texturePngs.set(key, png);
+  return png;
+}
+
+function grassTexturePng(): Uint8Array {
+  const cached = texturePngs.get("grass");
+  if (cached) {
+    return cached;
+  }
+  const rgba = new Uint8Array(TEXTURE_SIZE * TEXTURE_SIZE * 4);
+  for (let y = 0; y < TEXTURE_SIZE; y += 1) {
+    for (let x = 0; x < TEXTURE_SIZE; x += 1) {
+      const u = x / TEXTURE_SIZE;
+      const v = y / TEXTURE_SIZE;
+      const coarse = valueNoise(u, v, 5, 0x2b3c4d5e);
+      const medium = valueNoise(u, v, 17, 0x6f7a8b9c);
+      const fine = valueNoise(u, v, 48, 0xa1b2c3d4);
+      const grain = textureHash(x, y, 0x0f1e2d3c);
+      const shade =
+        (coarse - 0.5) * 0.12 +
+        (medium - 0.5) * 0.07 +
+        (fine - 0.5) * 0.04 +
+        (grain - 0.5) * 0.025;
+      const offset = (y * TEXTURE_SIZE + x) * 4;
+      rgba[offset] = Math.round(Math.max(0, Math.min(255, 72 * (1 + shade))));
+      rgba[offset + 1] = Math.round(Math.max(0, Math.min(255, 107 * (1 + shade))));
+      rgba[offset + 2] = Math.round(Math.max(0, Math.min(255, 22 * (1 + shade))));
+      rgba[offset + 3] = 255;
+    }
+  }
+  const png = pngFromRgba(TEXTURE_SIZE, TEXTURE_SIZE, rgba);
+  texturePngs.set("grass", png);
   return png;
 }
 
@@ -750,6 +923,7 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
 
   const positionData = new Float32Array(graph.positions.length * 3);
   const normalData = computeNormals(graph.positions, graph.indices);
+  const uvData = new Float32Array(graph.positions.length * 2);
   const min: [number, number, number] = [Infinity, Infinity, Infinity];
   const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
 
@@ -758,6 +932,8 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
     positionData[i * 3] = position[0];
     positionData[i * 3 + 1] = position[1];
     positionData[i * 3 + 2] = position[2];
+    uvData[i * 2] = position[0] / TARMAC_TILE_METERS;
+    uvData[i * 2 + 1] = position[2] / TARMAC_TILE_METERS;
     min[0] = Math.min(min[0], position[0]);
     min[1] = Math.min(min[1], position[1]);
     min[2] = Math.min(min[2], position[2]);
@@ -772,6 +948,10 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
   );
   const normalView = addBufferView(
     new Uint8Array(normalData.buffer, normalData.byteOffset, normalData.byteLength),
+    ARRAY_BUFFER,
+  );
+  const uvView = addBufferView(
+    new Uint8Array(uvData.buffer, uvData.byteOffset, uvData.byteLength),
     ARRAY_BUFFER,
   );
 
@@ -790,6 +970,13 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
     componentType: POSITION_COMPONENT_TYPE,
     count: graph.positions.length,
     type: "VEC3",
+  });
+  const uvAccessor = accessors.length;
+  accessors.push({
+    bufferView: uvView,
+    componentType: POSITION_COMPONENT_TYPE,
+    count: graph.positions.length,
+    type: "VEC2",
   });
 
   const indexAccessors = new Map<number, number>();
@@ -825,36 +1012,47 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
   const images: Record<string, unknown>[] = [];
   const textures: Record<string, unknown>[] = [];
   const materialIndexByName = new Map<string, number>();
+  const textureIndexByKey = new Map<string, number>();
 
   const addMaterial = (
     name: string,
     color: [number, number, number],
     roughness: number,
-    textured: boolean,
+    textureKind: TextureKind,
   ): number => {
     const existing = materialIndexByName.get(name);
     if (existing !== undefined) {
       return existing;
     }
     const materialIndex = materials.length;
-    let baseColorTexture: { index: number } | undefined;
-    if (textured) {
-      const png = solidColorPng(color);
+    const textureKey =
+      textureKind === "solid"
+        ? `solid:${color.join(",")}`
+        : `${textureKind}:${color.join(",")}`;
+    let textureIndex = textureIndexByKey.get(textureKey);
+    if (textureIndex === undefined) {
+      const png =
+        textureKind === "tarmac"
+          ? tarmacTexturePng(color, TARMAC_TEXTURE_GAIN[name] ?? 1)
+          : textureKind === "grass"
+            ? grassTexturePng()
+            : solidColorPng(color);
       const imageView = addBufferView(png);
       const imageIndex = images.length;
       images.push({ bufferView: imageView, mimeType: "image/png" });
-      const textureIndex = textures.length;
+      textureIndex = textures.length;
       textures.push({ sampler: 0, source: imageIndex });
-      baseColorTexture = { index: textureIndex };
+      textureIndexByKey.set(textureKey, textureIndex);
     }
     materials.push({
       name,
       doubleSided: false,
+      ...(OUTLINE_MATERIALS.has(name) ? { extras: { outline: true } } : {}),
       pbrMetallicRoughness: {
-        baseColorFactor: [color[0], color[1], color[2], 1],
+        baseColorFactor: [1, 1, 1, 1],
         metallicFactor: 0,
         roughnessFactor: roughness,
-        ...(baseColorTexture ? { baseColorTexture } : {}),
+        baseColorTexture: { index: textureIndex },
       },
     });
     materialIndexByName.set(name, materialIndex);
@@ -870,7 +1068,7 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
       surface.name,
       surfaceColor(surface),
       surface.roughness,
-      surface.name !== "grass",
+      SURFACE_TEXTURES[surface.name] ?? "solid",
     );
     const meshIndex = meshes.length;
     meshes.push({
@@ -880,6 +1078,7 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
           attributes: {
             POSITION: positionAccessor,
             NORMAL: normalAccessor,
+            TEXCOORD_0: uvAccessor,
           },
           indices: indexAccessor,
           material: materialIndex,
@@ -936,6 +1135,16 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
         new Uint8Array(normals.buffer, normals.byteOffset, normals.byteLength),
         ARRAY_BUFFER,
       );
+      const uvData = new Float32Array(buffers.positions.length * 2);
+      for (let index = 0; index < buffers.positions.length; index += 1) {
+        const position = buffers.positions[index]!;
+        uvData[index * 2] = position[0] / TARMAC_TILE_METERS;
+        uvData[index * 2 + 1] = position[2] / TARMAC_TILE_METERS;
+      }
+      const uvView = addBufferView(
+        new Uint8Array(uvData.buffer, uvData.byteOffset, uvData.byteLength),
+        ARRAY_BUFFER,
+      );
       const positionAccessor = accessors.length;
       accessors.push({
         bufferView: positionView,
@@ -952,6 +1161,13 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
         count: buffers.positions.length,
         type: "VEC3",
       });
+      const uvAccessor = accessors.length;
+      accessors.push({
+        bufferView: uvView,
+        componentType: POSITION_COMPONENT_TYPE,
+        count: buffers.positions.length,
+        type: "VEC2",
+      });
       const indexData = new Uint32Array(buffers.indices);
       const indexView = addBufferView(
         new Uint8Array(indexData.buffer, indexData.byteOffset, indexData.byteLength),
@@ -964,7 +1180,7 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
         count: indexData.length,
         type: "SCALAR",
       });
-      const materialIndex = addMaterial(materialName, color, roughness, true);
+      const materialIndex = addMaterial(materialName, color, roughness, "solid");
       const meshIndex = meshes.length;
       meshes.push({
         name,
@@ -973,6 +1189,7 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
             attributes: {
               POSITION: positionAccessor,
               NORMAL: normalAccessor,
+              TEXCOORD_0: uvAccessor,
             },
             indices: indexAccessor,
             material: materialIndex,
@@ -1020,8 +1237,8 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
             {
               magFilter: 9729,
               minFilter: 9729,
-              wrapS: 33071,
-              wrapT: 33071,
+              wrapS: 10497,
+              wrapT: 10497,
             },
           ],
         }

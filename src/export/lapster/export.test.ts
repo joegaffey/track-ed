@@ -78,12 +78,35 @@ describe("lapster-glb-track@3", () => {
       "surface_grass",
     ]);
 
-    const materials = gltf.materials as Array<{ name: string }>;
+    const materials = gltf.materials as Array<{
+      name: string;
+      pbrMetallicRoughness: { baseColorTexture: { index: number } };
+    }>;
     expect(materials.map((material) => material.name)).toEqual([
       "asphalt",
       "dirt",
       "grass",
     ]);
+    expect(materials[0]!.pbrMetallicRoughness.baseColorTexture.index).toBe(0);
+    expect(materials[1]!.pbrMetallicRoughness.baseColorTexture.index).toBe(1);
+    expect(materials[2]!.pbrMetallicRoughness.baseColorTexture.index).toBe(2);
+
+    const images = gltf.images as Array<{ mimeType: string }>;
+    expect(images).toHaveLength(3);
+    expect(images.every((image) => image.mimeType === "image/png")).toBe(true);
+    const samplers = gltf.samplers as Array<{ wrapS: number; wrapT: number }>;
+    expect(samplers[0]).toMatchObject({ wrapS: 10497, wrapT: 10497 });
+
+    const meshes = gltf.meshes as Array<{
+      primitives: Array<{ attributes: Record<string, number> }>;
+    }>;
+    const accessors = gltf.accessors as Array<{ type: string; count: number }>;
+    for (const mesh of meshes) {
+      const uv = mesh.primitives[0]!.attributes.TEXCOORD_0;
+      expect(uv).toBeDefined();
+      expect(accessors[uv!]!.type).toBe("VEC2");
+      expect(accessors[uv!]!.count).toBeGreaterThan(0);
+    }
   });
 
   it("exports venue fixtures with multiple loops, dead ends, and junctions", () => {
@@ -138,13 +161,32 @@ describe("lapster-glb-track@3", () => {
     expect(nodes).toContain("prop_tire_white");
     expect(nodes).toContain("prop_block");
     expect(nodes).toContain("col_prop");
-    const materials = (gltf.materials as Array<{ name: string }>).map(
-      (material) => material.name,
-    );
+    const materialList = gltf.materials as Array<{
+      name: string;
+      extras?: { outline?: boolean };
+    }>;
+    const materials = materialList.map((material) => material.name);
     expect(materials).toContain("concrete");
     expect(materials).toContain("tire_blue");
     expect(materials).toContain("tire_white");
     expect(materials).toContain("tree_foliage");
+    for (const name of [
+      "kerb_red",
+      "kerb_white",
+      "wall",
+      "concrete",
+      "tire_blue",
+      "tire_white",
+      "tree_trunk",
+      "tree_foliage",
+    ]) {
+      expect(
+        materialList.find((material) => material.name === name)?.extras?.outline,
+      ).toBe(true);
+    }
+    expect(
+      materialList.find((material) => material.name === "asphalt")?.extras?.outline,
+    ).toBeUndefined();
     expect(bundle.manifest.visual.include).toEqual(["surface_*", "prop_*"]);
     expect(bundle.manifest.collision.include).toEqual(["surface_*", "col_*"]);
     expect(bundle.manifest.surfaces.map((surface) => surface.name)).toContain("wall");

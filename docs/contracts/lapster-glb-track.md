@@ -76,7 +76,9 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 ## Lapster GLB conventions
 
 - Ground GLB scene nodes MUST be named `surface_asphalt`, `surface_dirt`, `surface_grass`.
-- Non-grass surface materials MUST embed a deterministic solid-colour `image/png` texture (1x1 is sufficient) as `baseColorTexture`. Lapster's GLB track importer supplies white vertex colours to GLB track meshes, so a texture is required for asphalt, dirt, and kerb colours to appear in the Lapster viewer. Grass is intentionally left textureless because Lapster applies its grass shader by mesh/material name.
+- Asphalt and dirt materials MUST embed deterministic 256x256 procedural tarmac `image/png` textures tinted to the surface colour. Grass MUST embed a deterministic 256x256 procedural grass texture. Kerbs, walls, and props MUST embed deterministic solid-colour `image/png` textures. All material `baseColorFactor` values are white because tint is baked into the texture; Lapster's GLB track importer supplies white vertex colours to GLB track meshes.
+- Every visual mesh primitive MUST include `TEXCOORD_0` using repeat-wrapped planar XZ UVs; texture samplers use repeat wrapping.
+- Kerb, wall, concrete, tyre, and tree materials MUST set `extras.outline = true` so Lapster restores the OG editor's ink outlines. Asphalt, dirt, and grass materials omit the flag.
 - Kerb GLB scene nodes MUST be named `surface_kerb_red` and `surface_kerb_white`.
 - Wall GLB scene nodes MUST be named `surface_wall`.
 - Prop visual GLB scene nodes MUST be named `prop_*` (`prop_tree_trunk`, `prop_tree_foliage`, `prop_tire_blue`, `prop_tire_white`, `prop_block`).
@@ -169,7 +171,7 @@ Acceptance: the pack validates, `inspect` reports `Track`, the track viewer show
 ## Versioning
 
 - The profile version is `lapster-glb-track@3`.
-- Changes to node names, material names, manifest fields, or surface defaults require a version bump.
+- Changes to node names, material names, manifest fields, or surface defaults require a version bump. Texture content, UV accessors, and outline extras may evolve within `lapster-glb-track@3`.
 - `@2` extends `@1` with optional kerb nodes and surfaces; ground nodes and manifest fields are unchanged.
 - `@3` extends `@2` with optional wall, prop visual, and prop collision nodes. The manifest `visual.include` and `collision.include` patterns become conditional on the presence of walls/props.
 - Lapster owns `sim-track-glb-v1`; track-ed pins a copy of the schema.

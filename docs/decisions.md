@@ -168,6 +168,21 @@ Rationale: walls, kerbs, and prop runs all follow section splines and share the 
 
 Trade-off: walls are a fixed rectangular profile in this slice, and props use built-in low-poly meshes rather than an asset library. Both are deliberately narrow until the Lapster conformance loop and performance comparison justify more.
 
+## D19 — track-ed regenerates Lapster's texture style
+
+The Lapster profile now generates deterministic procedural tarmac and grass textures in track-ed rather than embedding 1x1 colour swatches.
+
+- Asphalt and dirt share the tarmac noise algorithm but bake their own tint and gain into separate textures.
+- Grass uses the OG editor's grass noise; Lapster routes it through its grass texture channel by material name.
+- Surface and prop primitives carry repeat-wrapped planar XZ `TEXCOORD_0` UVs.
+- Kerb, wall, concrete, tyre, and tree materials set `extras.outline = true`; Lapster's GLB track importer reads that extra and builds ink outlines.
+- Lapster adds a distant mountain backdrop around imported tracks and generates screen-door dither fringes at asphalt/dirt and dirt/grass boundaries. Tracks that already contain an OG `dither` material or `mountains` mesh keep their authored versions.
+- Toon shading needs no export flag: Lapster's track shader applies its toon ramp to every mesh.
+
+Rationale: the renderer already supported textures, toon shading, and outlines, but imported tracks only had flat colour swatches and no UVs. Regenerating the style in track-ed keeps the exporter self-contained and avoids coupling Lapster's asset compiler to the OG track editor's private Rust texture generators.
+
+Trade-off: the walls/props bundle grows from 1.7 MB to 2.4 MB because the two 256x256 procedural noise textures plus the tinted dirt variant are stored as uncompressed PNG data.
+
 ## Alternatives considered
 
 - **Build inside the Lapster repository** (`web/track-builder/`): cheaper integration and shared CI, but keeps the tool tied to Lapster and does not establish a consumer-neutral boundary. Reconsider if the multi-consumer goal fades.

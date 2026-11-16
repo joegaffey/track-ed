@@ -87,9 +87,9 @@ The loop-spur fixture has 1167 kerb triangles with continuous junction overlaps;
 
 | Fixture | `track.sima` | Vertices | Triangles | Surfaces | Inspect | Validate |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
-| `venue-walls-props` | 1653208 B | 28656 | 18897 | 6 | `venue-walls-props (Track)` | ok |
+| `venue-walls-props` | 2439704 B | 28656 | 18897 | 11 | `venue-walls-props (Track)` | ok |
 
-The bundle has 11 materials, 10 textures, 11 draw calls, and 4,773 collision triangles. `surface_wall` is exported as a separate wall graph; kerbs on the same side are suppressed under wall spans; props export as `prop_*` visual meshes using Lapster-derived block, tyre, and conifer geometry, plus a merged `col_prop` collision mesh using the `wall` material. Props default to solid collision and can opt out with `collision: "none"`; tree collision is trunk-only. The manifest uses `visual.include = ["surface_*", "prop_*"]` and `collision.include = ["surface_*", "col_*"]`. The track viewer and drive viewer loaded the bundle with no console errors; trees, tyres, blocks, and walls render, and the car spawns on the track.
+The bundle has 11 materials, 11 textures, 11 draw calls, and 4,773 collision triangles. Asphalt, dirt, and grass use deterministic procedural textures with `TEXCOORD_0`; kerbs, walls, concrete, tyres, and trees carry outline extras. `surface_wall` is exported as a separate wall graph; kerbs on the same side are suppressed under wall spans; props export as `prop_*` visual meshes using Lapster-derived block, tyre, and conifer geometry, plus a merged `col_prop` collision mesh using the `wall` material. Props default to solid collision and can opt out with `collision: "none"`; tree collision is trunk-only. The manifest uses `visual.include = ["surface_*", "prop_*"]` and `collision.include = ["surface_*", "col_*"]`. The track viewer and drive viewer loaded the bundle with no console errors; trees, tyres, blocks, and walls render, the car spawns on the track, and the asphalt/grass textures and kerb/wall/prop outlines match the OG track editor style. Lapster also adds distant mountain terrain and dithered material fringes at runtime, bringing the scene to 25,617 triangles, 33,033 vertices, 13 textures, and 14 draw calls.
 
 ## Slice 4 full-fixture rerun
 
@@ -115,7 +115,7 @@ All 19 checked-in project fixtures were parsed, baked, validated in-process, exp
 | `venue-loop-spur-junction` | 366220 B | 5670 | 1755 | 444.37 m | ok |
 | `venue-two-loops-spur` | 609928 B | 9460 | 2980 | 813.65 m | ok |
 | `venue-wrapped-kerb` | 296584 B | 4505 | 1601 | 313.85 m | ok |
-| `venue-walls-props` | 1653208 B | 28656 | 18897 | 371.36 m | ok |
+| `venue-walls-props` | 2439704 B | 28656 | 18897 | 371.36 m | ok |
 
 The venue length is the sum of all section lengths. Kerb fixtures add two surfaces and a separate kerb graph; wall/prop fixtures add the `wall` surface, prop visual nodes, and optional `col_prop` collision. Ground node names and spawn/collision rules are unchanged from `@1`. The two-loop venue has two disjoint spline loops plus a dead-ended open spur; the junction venue has a closed loop with an open spur attached at an interior control point.
 
