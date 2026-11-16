@@ -11,5 +11,10 @@ export const KERB_SURFACES: readonly Surface[] = [
   { id: 4, name: "kerb_white", friction: 0.9, roughness: 0.2 },
 ];
 
+export const WALL_SURFACES: readonly Surface[] = [
+  { id: 5, name: "wall", friction: 0.45, roughness: 0.65 },
+];
+
 export const KERB_RED_SURFACE = 3;
 export const KERB_WHITE_SURFACE = 4;
+export const WALL_SURFACE = 5;

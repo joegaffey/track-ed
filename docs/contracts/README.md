@@ -1,13 +1,14 @@
 # Contracts
 
-The v0 pipeline has three layers:
+The current pipeline has three layers:
 
 ```text
-track-ed/project@3  ->  BakedTrack v1  ->  lapster-glb-track@2
+track-ed/project@4  ->  BakedTrack v1  ->  lapster-glb-track@3
    venue sections          neutral model        export profile
 ```
 
-- `project-v3.md` — current venue-section authoring format. Owned by track-ed.
+- `project-v4.md` — current venue-section, wall, and prop authoring format. Owned by track-ed.
+- `project-v3.md` — legacy venue-section authoring format; upgraded to `project@4` on load.
 - `project-v2.md` — legacy `project@2` shared-junction graph.
 - `project.md` — legacy `project@1` authoring format.
 - `baked-track.md` — consumer-neutral contract between the kernel and every export profile. Owned by track-ed.
@@ -15,6 +16,7 @@ track-ed/project@3  ->  BakedTrack v1  ->  lapster-glb-track@2
 
 Executable schemas:
 
+- `schemas/project-v4.schema.json`
 - `schemas/project-v3.schema.json`
 - `schemas/project-v2.schema.json`
 - `schemas/project.schema.json`

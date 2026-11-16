@@ -12,7 +12,7 @@ Trade-off: another repository, CI, deploy, and contract to maintain. The v0 spik
 
 ## D2 — Lapster is the first consumer, not the definition
 
-The kernel and `BakedTrack` model are consumer-neutral. track-ed ships one export profile, currently `lapster-glb-track@2` (`@1` was the v0 profile).
+The kernel and `BakedTrack` model are consumer-neutral. track-ed ships one export profile, currently `lapster-glb-track@3` (`@1` was the v0 profile).
 
 Future consumers such as Assetto Corsa or rFactor 2 would be additional export profiles. v0 does not add a plugin system, exporter registry, or generic exporter interface.
 
@@ -124,31 +124,48 @@ Limits: `project@1` geometry can be viewed, baked, exported, and edited by dragg
 
 Kerbs are authored as section-local forward arcs (`side`, `start`, `length`) and baked into a separate `kerbGraph` rather than merged into the welded ground surface graph.
 
-- Spans are clipped against junction asphalt and against previously emitted kerb spans. Any exposed span end is capped.
-- Kerb geometry uses a fixed 0.8 m width and alternating red/white elements. Each contiguous kerb run is divided into equal-length elements, nominally 2 m, so blocks stay the same size even when a run is clipped by a junction.
+- Spans run continuously to their authored ends. Any exposed span end is capped.
+- Kerb geometry uses a fixed 0.8 m width and alternating red/white elements. Each contiguous kerb run is divided into equal-length elements, nominally 2 m.
 - Every element starts flat at `flatHeight` and rises to one raised corner at `cornerHeight`, producing the jagged profile. The next element drops back to flat at a riser. Riser faces point forward along the direction of travel so they are the exterior faces under front-face culling.
 - `flatHeight` and `cornerHeight` are authorable globally and per span. Defaults are 0.06 m and 0.155 m; the effective corner height MUST exceed the effective flat height.
 - Kerb surfaces are consumer-neutral `kerb_red` and `kerb_white` surfaces. The Lapster profile emits `surface_kerb_red` and `surface_kerb_white` nodes.
 - The v1 collision policy is **all kerb faces solid**. The profile omits `mountable`, so Lapster includes tops, sides, and end caps in collision.
-- Section split/merge operations remap, clip, and side-flip kerb spans.
+- Section split/merge operations remap, split, and side-flip kerb spans.
 - A span crossing a closed-section seam is represented directly by `start + length > 1`; there is no wrap flag. The bake samples `[start, 1]` then `[0, end]` as one continuous run.
 - Kerb authoring uses a Kerbs mode with dashed guide rails, drag-to-paint, and endpoint handles. Start/end sliders are removed; flat/corner dimensions remain numeric UI fields.
 
 Rationale: the ground graph's G3–G11 invariants assume an upward-facing, non-overlapping welded surface. Raised kerbs have vertical faces and intentionally occupy space above the shoulder. Keeping them in a separate graph preserves the existing ground invariants while allowing a distinct validation contract (K1–K3).
 
-Trade-off: kerbs are not welded into the ground mesh, so visual seams between kerb bases and shoulders rely on shared height sampling rather than shared vertices. Junction clipping uses the baked asphalt footprint and may leave capped gaps around junction mouths, which is preferable to a kerb crossing live tarmac.
+Trade-off: kerbs are not welded into the ground mesh, so visual seams between kerb bases and shoulders rely on shared height sampling rather than shared vertices. Junction overlaps are intentional and may place kerbs over live tarmac; this avoids gaps and joiners.
 
 ## D17 — Roadside runs are the shared bake abstraction
 
-Kerbs are normalized into consumer-neutral **roadside runs** before baking. A run carries the ordered legs, side, offset reference, junction policy, collision policy, and a surface profile. The current slice implements only `kind: "kerb"` with `mechanism: "surface"`; walls and instanced props can reuse the same leg/path/clipping layer without a parallel kerb-specific system.
+Kerbs are normalized into consumer-neutral **roadside runs** before baking. A run carries the ordered legs, side, offset reference, junction policy, collision policy, and a surface profile. `kind: "kerb"` and `kind: "wall"` both use `mechanism: "surface"`; instanced props remain outside the run model.
 
 - Existing section-local kerb arrays are converted into one-leg kerb runs by `roadsideRunsFromProject`.
 - Runs are not clipped against junction asphalt. Each section keeps its own continuous kerb run; overlapping geometry at shared junctions is intentional.
 - Exposed run ends remain capped.
 - Section kerbs run continuously to their authored ends and are allowed to overlap at shared junctions. No clipping, setback, or joiner is applied at junctions.
-- The shared run model is internal for this slice. `project@3` authoring stays unchanged until walls or cross-section chains need a schema migration.
+- The shared run model now drives both kerb and wall baking. `project@4` adds section-local wall spans but keeps the authoring shape close to kerbs.
 
 Rationale: walls need the same path, offset, junction, collision, and authoring semantics as kerbs. Keeping kerbs as a special bake path would force a second implementation later.
+
+## D18 — `project@4` adds walls and props
+
+Walls are section-local roadside spans, parallel to kerbs, and props are section-local runs along the spline.
+
+- Walls reuse the roadside-run path, offset, terrain sampling, and export plumbing as a separate `wallGraph`.
+- Wall spans use the same forward `start + length` semantics as kerbs, including closed-section seam wrapping.
+- Wall height defaults to `1.0 m`; wall thickness is fixed at `0.3 m`; wall offset defaults to `0 m` so the inner face sits on the tarmac edge.
+- Walls run continuously and may overlap at junctions. They are not clipped or joined.
+- Prop runs carry `kind`, side, forward `start + length`, offset, spacing, and collision policy. The kernel expands them into deterministic instances with lateral/longitudinal/yaw jitter, tree size variation, terrain height, and tangent-facing quaternions. Blocks stay equal-sized and evenly spaced with a gap.
+- The Lapster profile maps wall geometry to `surface_wall` and props to `prop_*` visuals plus a merged `col_prop` collision mesh using the `wall` material.
+- Prop visual geometry follows Lapster's procedural prop conventions: concrete barrier blocks, alternating blue/white tyre stacks, and tiered conifer trees.
+- `project@4` is the new authoring schema. `project@3` remains import-only and is upgraded to `project@4` on load. Trees, tyres, and blocks are authored as spline runs, not individual placed objects.
+
+Rationale: walls, kerbs, and prop runs all follow section splines and share the roadside-path problem. Keeping prop runs section-local matches Lapster's prop-line model and avoids a general scene-graph authoring tool.
+
+Trade-off: walls are a fixed rectangular profile in this slice, and props use built-in low-poly meshes rather than an asset library. Both are deliberately narrow until the Lapster conformance loop and performance comparison justify more.
 
 ## Alternatives considered
 

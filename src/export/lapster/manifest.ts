@@ -58,6 +58,17 @@ export function buildLapsterManifest(track: BakedTrack): LapsterManifest {
   }
 
   const asphalt = track.surfaces.find((surface) => surface.name === "asphalt");
+  const hasProps = (track.props?.length ?? 0) > 0;
+  const hasPropCollision = (track.props ?? []).some((prop) => prop.collision);
+  const surfaces = track.surfaces.map((surface) => ({ ...surface }));
+  if (hasPropCollision && !surfaces.some((surface) => surface.name === "wall")) {
+    surfaces.push({
+      id: 5,
+      name: "wall",
+      friction: 0.45,
+      roughness: 0.65,
+    });
+  }
   const manifest: LapsterManifest = {
     schema: "sim-track-glb-v1",
     kind: "track",
@@ -74,17 +85,17 @@ export function buildLapsterManifest(track: BakedTrack): LapsterManifest {
     },
     visual: {
       glb: "track.glb",
-      include: ["surface_*"],
+      include: hasProps ? ["surface_*", "prop_*"] : ["surface_*"],
       exclude: [],
       scale: 1,
       yaw_degrees: 0,
       offset: [0, 0, 0],
     },
     collision: {
-      include: ["surface_*"],
+      include: hasPropCollision ? ["surface_*", "col_*"] : ["surface_*"],
       exclude: [],
     },
-    surfaces: track.surfaces.map((surface) => ({
+    surfaces: surfaces.map((surface) => ({
       id: surface.id,
       name: surface.name,
       friction: surface.friction,

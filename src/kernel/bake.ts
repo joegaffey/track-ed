@@ -2,6 +2,7 @@ import { BakeError } from "./bake-error";
 import type {
   BakedTrack,
   Camera,
+  Prop,
   Quat,
   Spawn,
   Surface,
@@ -14,6 +15,7 @@ import {
   offsetPolyline,
   polylineSelfIntersections,
   samplePolyline,
+  segmentLengths,
   simplifyPolyline,
   type Vec2,
 } from "./geometry";
@@ -45,9 +47,13 @@ import {
   signedArea2,
   sub2,
 } from "./math2";
-import type { Project, ProjectCenterline } from "./project";
-import { DEFAULT_SURFACES, KERB_SURFACES } from "./surfaces";
-import { buildKerbGraph } from "./kerbs";
+import { isVenueSchema, type Project, type ProjectCenterline } from "./project";
+import { DEFAULT_SURFACES, KERB_SURFACES, WALL_SURFACES } from "./surfaces";
+import {
+  DEFAULT_PROP_OFFSETS,
+  DEFAULT_PROP_SPACING,
+} from "./roadside";
+import { buildKerbGraph, buildWallGraph } from "./kerbs";
 
 export { BakeError };
 
@@ -232,6 +238,143 @@ function applyTerrainMode(
   return surfaceGraph;
 }
 
+function groundHeightAt(
+  project: Project,
+  bounds: { min: Vec3; max: Vec3 },
+): (point: Vec2) => number {
+  if (project.terrain.mode !== "follow") {
+    return () => 0;
+  }
+  if (project.terrain.points && project.terrain.points.length > 0) {
+    return buildPointTerrainSampler(project.terrain.points, bounds);
+  }
+  if (project.terrain.elevation) {
+    const elevation = project.terrain.elevation;
+    return (point) => rawTerrainHeight(elevation, point);
+  }
+  return () => 0;
+}
+
+function propNoise(id: string, salt: number): number {
+  let hash = (0x811c9dc5 ^ salt) >>> 0;
+  for (let index = 0; index < id.length; index += 1) {
+    hash ^= id.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x7feb352d) >>> 0;
+  hash ^= hash >>> 15;
+  hash = Math.imul(hash, 0x846ca68b) >>> 0;
+  hash ^= hash >>> 16;
+  return (hash >>> 0) / 0xffffffff;
+}
+
+function sampleAtDistance(
+  points: readonly Vec2[],
+  closed: boolean,
+  distance: number,
+): { position: Vec2; tangent: Vec2 } | null {
+  const lengths = segmentLengths(points, closed);
+  const total = lengths.reduce((sum, length) => sum + length, 0);
+  if (total <= 1e-9) {
+    return null;
+  }
+  let target = distance;
+  if (closed) {
+    target = ((target % total) + total) % total;
+  } else {
+    target = Math.max(0, Math.min(total, target));
+  }
+  let travelled = 0;
+  for (let index = 0; index < lengths.length; index += 1) {
+    const length = lengths[index]!;
+    if (length <= 1e-9) {
+      continue;
+    }
+    if (travelled + length >= target - 1e-9) {
+      const a = points[index]!;
+      const b = points[(index + 1) % points.length]!;
+      const t = Math.max(0, Math.min(1, (target - travelled) / length));
+      return {
+        position: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t],
+        tangent: normalize2(sub2(b, a)),
+      };
+    }
+    travelled += length;
+  }
+  return null;
+}
+
+function bakeProps(
+  project: Project,
+  bounds: { min: Vec3; max: Vec3 },
+): Prop[] | undefined {
+  const heightAt = groundHeightAt(project, bounds);
+  const props: Prop[] = [];
+  for (const section of project.centerlines) {
+    const spans = section.props ?? [];
+    for (let spanIndex = 0; spanIndex < spans.length; spanIndex += 1) {
+      const span = spans[spanIndex]!;
+      if (span.length <= 1e-9) {
+        continue;
+      }
+      const sampled = sampleCenterline(
+        section.points as Vec2[],
+        section.closed,
+        section.spline,
+      );
+      const total = centerlineLength(sampled, section.closed);
+      if (total <= 1e-9) {
+        continue;
+      }
+      const spacing = span.spacing ?? DEFAULT_PROP_SPACING[span.kind];
+      const offsetDistance =
+        project.road.halfWidth +
+        (span.offset ?? DEFAULT_PROP_OFFSETS[span.kind]);
+      const sideSign = span.side === "left" ? 1 : -1;
+      const start = span.start * total;
+      const end = (span.start + span.length) * total;
+      let distance = start + spacing / 2;
+      let index = 0;
+      while (distance < end - 1e-9 && index < 10000) {
+        const sample = sampleAtDistance(sampled, section.closed, distance);
+        if (sample) {
+          const id = `${section.id}:prop:${spanIndex}:${index}`;
+          const noise = (salt: number): number => propNoise(id, salt);
+          const lateralJitter = (noise(1) * 2 - 1) * 0.08;
+          const longitudinalJitter = (noise(2) * 2 - 1) * 0.08;
+          const yawJitter = (noise(3) * 2 - 1) * 0.04;
+          const binormal = leftNormal(sample.tangent);
+          const offset = scale2(binormal, sideSign * offsetDistance);
+          const jitterX =
+            sample.tangent[0] * longitudinalJitter + binormal[0] * lateralJitter;
+          const jitterZ =
+            sample.tangent[1] * longitudinalJitter + binormal[1] * lateralJitter;
+          const x = sample.position[0] + offset[0] + jitterX;
+          const z = sample.position[1] + offset[1] + jitterZ;
+          const yaw =
+            Math.atan2(sample.tangent[0], sample.tangent[1]) + yawJitter;
+          const scale = span.kind === "tree" ? 0.85 + 0.3 * noise(4) : 1;
+          props.push({
+            id,
+            kind: span.kind,
+            position: [x, heightAt([x, z]), z],
+            rotation: [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)] as Quat,
+            scale,
+            collision:
+              span.collision === undefined
+                ? true
+                : span.collision === "solid",
+          });
+        }
+        distance += spacing;
+        index += 1;
+      }
+    }
+  }
+  return props.length > 0 ? props : undefined;
+}
+
 function sectionLength(centerline: ProjectCenterline): number {
   return centerlineLength(
     sampleCenterline(centerline.points as Vec2[], centerline.closed, centerline.spline),
@@ -247,11 +390,21 @@ function finishTrack(
   lengthOverride?: number,
 ): BakedTrack {
   const kerbGraph = buildKerbGraph(project, bounds);
+  const wallGraph = buildWallGraph(project, bounds);
+  const props = bakeProps(project, bounds);
   const surfaces: Surface[] = DEFAULT_SURFACES.map((surface) => ({ ...surface }));
   if (kerbGraph) {
     const kerbSurfaceIds = new Set(kerbGraph.triangleSurfaces);
     surfaces.push(
       ...KERB_SURFACES.filter((surface) => kerbSurfaceIds.has(surface.id)).map(
+        (surface) => ({ ...surface }),
+      ),
+    );
+  }
+  if (wallGraph) {
+    const wallSurfaceIds = new Set(wallGraph.triangleSurfaces);
+    surfaces.push(
+      ...WALL_SURFACES.filter((surface) => wallSurfaceIds.has(surface.id)).map(
         (surface) => ({ ...surface }),
       ),
     );
@@ -280,6 +433,14 @@ function finishTrack(
     minY = Math.min(minY, position[1]);
     maxY = Math.max(maxY, position[1]);
   }
+  for (const position of wallGraph?.positions ?? []) {
+    minY = Math.min(minY, position[1]);
+    maxY = Math.max(maxY, position[1]);
+  }
+  for (const prop of props ?? []) {
+    minY = Math.min(minY, prop.position[1]);
+    maxY = Math.max(maxY, prop.position[1]);
+  }
   if (!Number.isFinite(minY) || !Number.isFinite(maxY)) {
     minY = 0;
     maxY = 0;
@@ -297,6 +458,8 @@ function finishTrack(
     },
     surfaceGraph,
     ...(kerbGraph ? { kerbGraph } : {}),
+    ...(wallGraph ? { wallGraph } : {}),
+    ...(props ? { props } : {}),
     surfaces,
     spawns: [spawn],
     cameras: project.cameras.map(cameraFor),
@@ -910,7 +1073,7 @@ function bakeAllSections(project: Project): BakedTrack {
 }
 
 export function bakeProject(project: Project): BakedTrack {
-  if (project.schema === "track-ed/project@3") {
+  if (isVenueSchema(project.schema)) {
     return bakeAllSections(project);
   }
 

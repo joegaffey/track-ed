@@ -1,10 +1,10 @@
-# Contract — `lapster-glb-track@2`
+# Contract — `lapster-glb-track@3`
 
-Status: normative for v1. `@2` adds kerb nodes and surfaces; the manifest schema remains `sim-track-glb-v1`.
+Status: normative for v1. `@3` adds wall nodes, prop nodes, and prop collision nodes to `@2`; the manifest schema remains `sim-track-glb-v1`.
 
 ## Purpose
 
-`lapster-glb-track@2` is the current export profile. It maps a valid `BakedTrack` to two files consumed by Lapster's asset compiler:
+`lapster-glb-track@3` is the current export profile. It maps a valid `BakedTrack` to two files consumed by Lapster's asset compiler:
 
 - `track.glb`;
 - `track.json`, satisfying Lapster's `sim-track-glb-v1` manifest.
@@ -39,14 +39,14 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
   },
   "visual": {
     "glb": "track.glb",
-    "include": ["surface_*"],
+    "include": ["surface_*", "prop_*"],
     "exclude": [],
     "scale": 1.0,
     "yaw_degrees": 0.0,
     "offset": [0.0, 0.0, 0.0]
   },
   "collision": {
-    "include": ["surface_*"],
+    "include": ["surface_*", "col_*"],
     "exclude": []
   },
   "surfaces": [
@@ -54,7 +54,8 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
     { "id": 1, "name": "dirt", "friction": 0.7, "roughness": 1.0, "materials": ["dirt"] },
     { "id": 2, "name": "grass", "friction": 0.35, "roughness": 0.8, "materials": ["grass"] },
     { "id": 3, "name": "kerb_red", "friction": 0.9, "roughness": 0.2, "materials": ["kerb_red"] },
-    { "id": 4, "name": "kerb_white", "friction": 0.9, "roughness": 0.2, "materials": ["kerb_white"] }
+    { "id": 4, "name": "kerb_white", "friction": 0.9, "roughness": 0.2, "materials": ["kerb_white"] },
+    { "id": 5, "name": "wall", "friction": 0.45, "roughness": 0.65, "materials": ["wall"] }
   ],
   "default_surface": 0
 }
@@ -69,16 +70,22 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 - `surfaces` -> `surfaces`.
 - surface graph -> GLB visual and collision meshes without geometry changes.
 - `kerbGraph` -> additional `surface_kerb_*` GLB visual and collision meshes without geometry changes. When `kerbGraph` is absent, no kerb nodes or surfaces are emitted.
+- `wallGraph` -> additional `surface_wall` GLB visual and collision mesh without geometry changes. When `wallGraph` is absent, no wall node is emitted.
+- `BakedTrack.props` instances -> world-space `prop_*` visual meshes grouped by prop material. Prop geometry follows Lapster's procedural prop conventions: concrete barrier blocks, alternating blue/white tyre stacks, and conifer tree tiers. Props with `collision: true` also emit a merged `col_prop` collision mesh using the `wall` material. Tree collision uses the trunk cylinder only; canopies are visual-only. Props never alter the surface or roadside graphs.
 
 ## Lapster GLB conventions
 
 - Ground GLB scene nodes MUST be named `surface_asphalt`, `surface_dirt`, `surface_grass`.
 - Non-grass surface materials MUST embed a deterministic solid-colour `image/png` texture (1x1 is sufficient) as `baseColorTexture`. Lapster's GLB track importer supplies white vertex colours to GLB track meshes, so a texture is required for asphalt, dirt, and kerb colours to appear in the Lapster viewer. Grass is intentionally left textureless because Lapster applies its grass shader by mesh/material name.
 - Kerb GLB scene nodes MUST be named `surface_kerb_red` and `surface_kerb_white`.
-- Each node MUST use a material with the matching surface name.
-- `visual.include` MUST be `["surface_*"]` and non-empty.
+- Wall GLB scene nodes MUST be named `surface_wall`.
+- Prop visual GLB scene nodes MUST be named `prop_*` (`prop_tree_trunk`, `prop_tree_foliage`, `prop_tire_blue`, `prop_tire_white`, `prop_block`).
+- Prop materials MUST use Lapster's conventional names: `tree_trunk`, `tree_foliage`, `tire_blue`, `tire_white`, and `concrete`.
+- Prop collision GLB scene nodes MUST be named `col_*` (`col_prop`) and MUST use the `wall` material.
+- Each surface node MUST use a material with the matching surface name.
+- `visual.include` MUST be `["surface_*"]` when the track has no props, or `["surface_*", "prop_*"]` when it has props.
 - `visual.exclude` MUST be `[]`.
-- `collision.include` MUST be `["surface_*"]` and non-empty.
+- `collision.include` MUST be `["surface_*"]` when no prop has solid collision, or `["surface_*", "col_*"]` when at least one prop does.
 - `collision.exclude` MUST be `[]`.
 - v1 uses the same GLB nodes for visual and collision.
 - If visual detail diverges later, emit separate `col_*` nodes and include those for collision.
@@ -95,9 +102,11 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
   - dirt: id `1`, friction `0.7`, roughness `1.0`;
   - grass: id `2`, friction `0.35`, roughness `0.8`;
   - kerb_red: id `3`, friction `0.9`, roughness `0.2`;
-  - kerb_white: id `4`, friction `0.9`, roughness `0.2`.
+  - kerb_white: id `4`, friction `0.9`, roughness `0.2`;
+  - wall: id `5`, friction `0.45`, roughness `0.65`.
 - Kerb surfaces are emitted only when a kerb graph is present.
-- `mountable` is omitted in `@2`; Lapster treats omitted as `false`, so all kerb tops, risers, sides, and end caps participate in collision. This matches the v1 all-kerb-faces-solid decision.
+- The wall surface is emitted when a wall graph is present or when any prop has solid collision.
+- `mountable` is omitted in `@3`; Lapster treats omitted as `false`, so all kerb and wall faces participate in collision. This matches the v1 all-kerb-faces-solid decision.
 
 ## Spawn
 
@@ -159,7 +168,8 @@ Acceptance: the pack validates, `inspect` reports `Track`, the track viewer show
 
 ## Versioning
 
-- The profile version is `lapster-glb-track@2`.
+- The profile version is `lapster-glb-track@3`.
 - Changes to node names, material names, manifest fields, or surface defaults require a version bump.
 - `@2` extends `@1` with optional kerb nodes and surfaces; ground nodes and manifest fields are unchanged.
+- `@3` extends `@2` with optional wall, prop visual, and prop collision nodes. The manifest `visual.include` and `collision.include` patterns become conditional on the presence of walls/props.
 - Lapster owns `sim-track-glb-v1`; track-ed pins a copy of the schema.

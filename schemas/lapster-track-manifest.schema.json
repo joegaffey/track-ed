@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://track-ed.dev/schemas/lapster-track-manifest.schema.json",
   "title": "sim-track-glb-v1 track manifest",
-  "description": "Pinned Lapster GLB track manifest for the lapster-glb-track@2 export profile.",
+  "description": "Pinned Lapster GLB track manifest for the lapster-glb-track@3 export profile.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "kind", "name", "length", "spawn", "visual", "collision", "surfaces", "default_surface"],

@@ -17,6 +17,7 @@ export interface ValidationReport {
   violations: ValidationViolation[];
   topology: TopologyReport;
   kerbTopology?: TopologyReport;
+  wallTopology?: TopologyReport;
 }
 
 function isFiniteVec3(value: unknown): value is Vec3 {
@@ -77,6 +78,9 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
   ];
   if (track.kerbGraph) {
     graphs.push({ name: "kerb", graph: track.kerbGraph });
+  }
+  if (track.wallGraph) {
+    graphs.push({ name: "wall", graph: track.wallGraph });
   }
 
   for (const entry of graphs) {
@@ -275,9 +279,13 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
   const kerbTopology = track.kerbGraph
     ? analyzeSurfaceGraph(track.kerbGraph, track.bounds)
     : undefined;
-  const validateKerbTopology = (
+  const wallTopology = track.wallGraph
+    ? analyzeSurfaceGraph(track.wallGraph, track.bounds)
+    : undefined;
+  const validateRoadsideTopology = (
     source: TopologyReport | undefined,
     label: string,
+    rules: { degenerate: string; tJunction: string },
   ): void => {
     if (!source) {
       return;
@@ -285,7 +293,7 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
     if (source.degenerateTriangles.length > 0) {
       addError(
         violations,
-        "K1",
+        rules.degenerate,
         `${source.degenerateTriangles.length} degenerate ${label} triangle(s)`,
         { triangle: source.degenerateTriangles[0]! },
       );
@@ -293,7 +301,7 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
     if (source.duplicateTriangles.length > 0) {
       addError(
         violations,
-        "K1",
+        rules.degenerate,
         `${source.duplicateTriangles.length} duplicate ${label} triangle pair(s)`,
         { triangle: source.duplicateTriangles[0]![0] },
       );
@@ -301,16 +309,58 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
     if (source.tJunctions.length > 0) {
       addError(
         violations,
-        "K2",
+        rules.tJunction,
         `${source.tJunctions.length} ${label} T-junction(s) detected`,
         { edge: [source.tJunctions[0]!.edgeA, source.tJunctions[0]!.edgeB] },
       );
     }
   };
-  validateKerbTopology(kerbTopology, "kerb");
+  validateRoadsideTopology(kerbTopology, "kerb", {
+    degenerate: "K1",
+    tJunction: "K2",
+  });
+  validateRoadsideTopology(wallTopology, "wall", {
+    degenerate: "W1",
+    tJunction: "W2",
+  });
+
+  const propIds = new Set<string>();
+  for (let index = 0; index < (track.props?.length ?? 0); index += 1) {
+    const prop = track.props![index]!;
+    if (typeof prop.id !== "string" || prop.id.length === 0) {
+      addError(violations, "P1", `prop ${index} has an empty id`);
+    } else if (propIds.has(prop.id)) {
+      addError(violations, "P1", `duplicate prop id "${prop.id}"`);
+    } else {
+      propIds.add(prop.id);
+    }
+    if (!["tree", "tyre", "block"].includes(prop.kind)) {
+      addError(violations, "P1", `prop "${prop.id}" has an invalid kind`);
+    }
+    if (!isFiniteVec3(prop.position)) {
+      addError(violations, "P1", `prop "${prop.id}" has an invalid position`);
+    }
+    if (!isFiniteQuat(prop.rotation)) {
+      addError(violations, "P1", `prop "${prop.id}" has an invalid rotation`);
+    } else {
+      const [x, y, z, w] = prop.rotation;
+      if (Math.abs(Math.hypot(x, y, z, w) - 1) > 1e-6) {
+        addError(violations, "P1", `prop "${prop.id}" rotation is not normalized`);
+      }
+    }
+    if (!Number.isFinite(prop.scale) || prop.scale <= 0) {
+      addError(violations, "P1", `prop "${prop.id}" has an invalid scale`);
+    }
+    if (typeof prop.collision !== "boolean") {
+      addError(violations, "P1", `prop "${prop.id}" has an invalid collision flag`);
+    }
+  }
 
   const coveredSurfaces = new Set(topology.surfaceTriangleCounts.map(([id]) => id));
   for (const [id] of kerbTopology?.surfaceTriangleCounts ?? []) {
+    coveredSurfaces.add(id);
+  }
+  for (const [id] of wallTopology?.surfaceTriangleCounts ?? []) {
     coveredSurfaces.add(id);
   }
   for (const surface of track.surfaces) {
@@ -324,5 +374,6 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
     violations,
     topology,
     ...(kerbTopology ? { kerbTopology } : {}),
+    ...(wallTopology ? { wallTopology } : {}),
   };
 }

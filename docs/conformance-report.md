@@ -1,7 +1,7 @@
-# Conformance report — `lapster-glb-track@2`
+# Conformance report — `lapster-glb-track@3`
 
-Status: conformance passed, including v1-G3 kerbs. Outcome: continue the spike; do not promote to production yet.
-Date: 2026-11-16 (Slice 4 full-fixture rerun).
+Status: conformance passed, including v1-G3 kerbs and v1-G4 walls/props. Outcome: continue the spike; do not promote to production yet.
+Date: 2026-11-16 (Slice 4 full-fixture rerun plus walls/props conformance).
 
 ## Environment
 
@@ -81,9 +81,19 @@ Two checked-in venue fixtures now author kerb spans across straights, corners, a
 
 The loop-spur fixture has 1167 kerb triangles with continuous junction overlaps; the wrapped-kerb fixture has 447. Browser regression: opening `venue-wrapped-kerb` in Kerbs mode shows `0.900 – 0.100 (wraps)` and validates cleanly. Each contiguous kerb run is split into equal-length elements with a flat approach and one raised corner per element. Collision triangle counts equal the visual totals, confirming that kerb tops, risers, sides, and end caps are included. Section kerbs are no longer clipped at junctions; overlaps between adjacent section kerbs are intentional and included in collision.
 
+## Wall and prop conformance (v1-G4)
+
+`venue-walls-props` adds two continuous wall spans and tree, tyre, and block prop runs on a closed spline loop.
+
+| Fixture | `track.sima` | Vertices | Triangles | Surfaces | Inspect | Validate |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| `venue-walls-props` | 986648 B | 15644 | 12875 | 6 | `venue-walls-props (Track)` | ok |
+
+The bundle has 11 materials, 10 textures, 11 draw calls, and 3,563 collision triangles. `surface_wall` is exported as a separate wall graph; props export as `prop_*` visual meshes using Lapster-derived block, tyre, and conifer geometry, plus a merged `col_prop` collision mesh using the `wall` material. Props default to solid collision and can opt out with `collision: "none"`; tree collision is trunk-only. The manifest uses `visual.include = ["surface_*", "prop_*"]` and `collision.include = ["surface_*", "col_*"]`. The track viewer and drive viewer loaded the bundle with no console errors; trees, tyres, blocks, and walls render, and the car spawns on the track.
+
 ## Slice 4 full-fixture rerun
 
-All 18 checked-in project fixtures were parsed, baked, validated in-process, exported to `track.glb` + `track.json`, and compiled with the Lapster debug binary. Every fixture produced `inspect` output ending in `(Track)` and `validate` output `ok`.
+All 19 checked-in project fixtures were parsed, baked, validated in-process, exported to `track.glb` + `track.json`, and compiled with the Lapster debug binary. Every fixture produced `inspect` output ending in `(Track)` and `validate` output `ok`.
 
 | Fixture | `.sima` | Vertices | Triangles | Length | Result |
 | --- | ---: | ---: | ---: | ---: | --- |
@@ -105,8 +115,9 @@ All 18 checked-in project fixtures were parsed, baked, validated in-process, exp
 | `venue-loop-spur-junction` | 366220 B | 5670 | 1755 | 444.37 m | ok |
 | `venue-two-loops-spur` | 609928 B | 9460 | 2980 | 813.65 m | ok |
 | `venue-wrapped-kerb` | 296584 B | 4505 | 1601 | 313.85 m | ok |
+| `venue-walls-props` | 986648 B | 15644 | 12875 | 371.36 m | ok |
 
-The venue length is the sum of all section lengths. Kerb fixtures add two surfaces and a separate kerb graph; ground node names, manifest fields, and spawn/collision include rules are unchanged from `@1`. The two-loop venue has two disjoint spline loops plus a dead-ended open spur; the junction venue has a closed loop with an open spur attached at an interior control point.
+The venue length is the sum of all section lengths. Kerb fixtures add two surfaces and a separate kerb graph; wall/prop fixtures add the `wall` surface, prop visual nodes, and optional `col_prop` collision. Ground node names and spawn/collision rules are unchanged from `@1`. The two-loop venue has two disjoint spline loops plus a dead-ended open spur; the junction venue has a closed loop with an open spur attached at an interior control point.
 
 The fixture matrix is enforced by `src/kernel/fixture-matrix.test.ts`; venue export determinism and manifest length are covered in `src/export/lapster/export.test.ts`.
 
@@ -122,9 +133,9 @@ The fixture matrix is enforced by `src/kernel/fixture-matrix.test.ts`; venue exp
 ## Decision
 
 - v0 conformance passes.
-- v1-G1 splines, v1-G2 terrain, and v1-G3 kerbs pass conformance.
+- v1-G1 splines, v1-G2 terrain, v1-G3 kerbs, and v1-G4 walls/props pass conformance.
 - Outcome: **continue the spike**.
-- Production promotion is deferred until the remaining v1 gates in `docs/v1-roadmap.md` pass: props, re-conformance, performance, and comparison.
+- Production promotion is deferred until the remaining v1 gates in `docs/v1-roadmap.md` pass: banking/crown, final re-conformance, performance, and comparison.
 
 ## Remaining baseline work
 

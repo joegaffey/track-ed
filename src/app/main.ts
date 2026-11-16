@@ -5,8 +5,21 @@ import {
   DEFAULT_KERB_FLAT_HEIGHT,
   DEFAULT_KERB_CORNER_HEIGHT,
   KERB_WIDTH,
+  WALL_THICKNESS,
+  DEFAULT_WALL_HEIGHT,
+  DEFAULT_WALL_OFFSET,
+  DEFAULT_PROP_OFFSETS,
+  DEFAULT_PROP_SPACING,
 } from "../kernel/kerbs";
-import { parseProject, type Project, type ProjectKerbSpan } from "../kernel/project";
+import {
+  isVenueSchema,
+  parseProject,
+  type Project,
+  type ProjectKerbSpan,
+  type ProjectPropKind,
+  type ProjectPropSpan,
+  type ProjectWallSpan,
+} from "../kernel/project";
 import { samplePolyline, segmentLengths } from "../kernel/geometry";
 import { fractionAtControlPoint, sampleCenterline } from "../kernel/spline";
 import { buildPointTerrainSampler, rawTerrainHeight } from "../kernel/terrain";
@@ -28,12 +41,13 @@ import {
   type ControlPointPick,
   type KerbOverlayData,
   type KerbRailOverlayData,
+  type PropOverlayData,
   type TerrainPointOverlayData,
   type TrackView,
 } from "./scene";
 import type { BakedTrack, Spawn, Vec3 } from "../model/baked-track";
 import { mergeLooseBranchEnds } from "./branch-merge";
-import { convertProjectToV3 } from "./convert-project";
+import { convertProjectToLatest } from "./convert-project";
 import {
   addJunctionMember,
   addLooseSectionAtPoint,
@@ -69,7 +83,34 @@ type DragState =
       startProject: Project;
     }
   | {
-      kind: "kerb-entry" | "kerb-exit";
+      kind: "kerb-entry" | "kerb-exit" | "wall-entry" | "wall-exit";
+      sectionId: string;
+      spanIndex: number;
+      startProject: Project;
+    }
+  | {
+      kind: "wall-paint";
+      sectionId: string;
+      side: "left" | "right";
+      closed: boolean;
+      originFraction: number;
+      previousFraction: number;
+      signedLength: number;
+      startProject: Project;
+    }
+  | {
+      kind: "prop-paint";
+      sectionId: string;
+      side: "left" | "right";
+      propKind: ProjectPropKind;
+      closed: boolean;
+      originFraction: number;
+      previousFraction: number;
+      signedLength: number;
+      startProject: Project;
+    }
+  | {
+      kind: "prop-entry" | "prop-exit";
       sectionId: string;
       spanIndex: number;
       startProject: Project;
@@ -105,6 +146,8 @@ app.innerHTML = `
       <div class="mode-switch" role="group" aria-label="Editing mode">
         <button class="mode-button active" id="mode-points" type="button">Points</button>
         <button class="mode-button" id="mode-kerbs" type="button">Kerbs</button>
+        <button class="mode-button" id="mode-walls" type="button">Walls</button>
+        <button class="mode-button" id="mode-props" type="button">Props</button>
       </div>
       <div class="project-meta" id="project-meta"></div>
     </div>
@@ -215,6 +258,51 @@ app.innerHTML = `
         <div class="edit-status" id="kerb-status"></div>
       </section>
       <section class="panel">
+        <h2>Walls</h2>
+        <div class="edit-field">
+          <label for="wall-height">wall height (m)</label>
+          <input type="number" id="wall-height" min="0.1" step="0.05" />
+        </div>
+        <div class="edit-field">
+          <label for="wall-offset">offset from asphalt edge (m)</label>
+          <input type="number" id="wall-offset" min="0" step="0.05" />
+        </div>
+        <div class="junction-list" id="wall-list"></div>
+        <div class="edit-actions">
+          <button class="edit-button" id="wall-remove" type="button">Remove wall</button>
+        </div>
+        <p class="edit-hint">
+          Switch to Walls mode, then drag a dotted blue guide rail to paint a wall span.
+          Select a wall to edit its height and offset, or drag its endpoint handles.
+        </p>
+        <div class="edit-status" id="wall-status"></div>
+      </section>
+      <section class="panel">
+        <h2>Props</h2>
+        <div class="edit-actions">
+          <button class="edit-button active" id="prop-kind-tree" type="button">Trees</button>
+          <button class="edit-button" id="prop-kind-tyre" type="button">Tyres</button>
+          <button class="edit-button" id="prop-kind-block" type="button">Blocks</button>
+        </div>
+        <div class="junction-list" id="prop-list"></div>
+        <div class="edit-field" id="prop-offset-field" hidden>
+          <label for="prop-offset">offset from asphalt edge (m)</label>
+          <input type="number" id="prop-offset" min="0" step="0.1" />
+        </div>
+        <div class="edit-field" id="prop-spacing-field" hidden>
+          <label for="prop-spacing">spacing (m)</label>
+          <input type="number" id="prop-spacing" min="0.1" step="0.1" />
+        </div>
+        <div class="edit-actions">
+          <button class="edit-button" id="prop-remove" type="button">Remove run</button>
+        </div>
+        <p class="edit-hint">
+          Switch to Props mode, choose Trees, Tyres, or Blocks, then drag a dotted guide rail
+          to paint a run along the spline. Runs follow the section and are spaced automatically.
+        </p>
+        <div class="edit-status" id="prop-status"></div>
+      </section>
+      <section class="panel">
         <h2>Overlays</h2>
         <div class="toggle-list">
           <label class="toggle"><input type="checkbox" id="toggle-centerline" checked /> Centreline</label>
@@ -285,6 +373,8 @@ const terrainPointHeight = document.querySelector<HTMLInputElement>("#terrain-po
 const terrainPointStatus = document.querySelector<HTMLDivElement>("#terrain-point-status")!;
 const modePointsButton = document.querySelector<HTMLButtonElement>("#mode-points")!;
 const modeKerbsButton = document.querySelector<HTMLButtonElement>("#mode-kerbs")!;
+const modeWallsButton = document.querySelector<HTMLButtonElement>("#mode-walls")!;
+const modePropsButton = document.querySelector<HTMLButtonElement>("#mode-props")!;
 const kerbGlobalFlat = document.querySelector<HTMLInputElement>("#kerb-global-flat")!;
 const kerbGlobalCorner = document.querySelector<HTMLInputElement>("#kerb-global-corner")!;
 const kerbSpanHeights = document.querySelector<HTMLDivElement>("#kerb-span-heights")!;
@@ -296,6 +386,21 @@ const kerbSpanCorner = document.querySelector<HTMLInputElement>("#kerb-span-corn
 const kerbRemoveButton = document.querySelector<HTMLButtonElement>("#kerb-remove")!;
 const kerbList = document.querySelector<HTMLDivElement>("#kerb-list")!;
 const kerbStatus = document.querySelector<HTMLDivElement>("#kerb-status")!;
+const wallHeight = document.querySelector<HTMLInputElement>("#wall-height")!;
+const wallOffset = document.querySelector<HTMLInputElement>("#wall-offset")!;
+const wallList = document.querySelector<HTMLDivElement>("#wall-list")!;
+const wallRemoveButton = document.querySelector<HTMLButtonElement>("#wall-remove")!;
+const wallStatus = document.querySelector<HTMLDivElement>("#wall-status")!;
+const propKindTree = document.querySelector<HTMLButtonElement>("#prop-kind-tree")!;
+const propKindTyre = document.querySelector<HTMLButtonElement>("#prop-kind-tyre")!;
+const propKindBlock = document.querySelector<HTMLButtonElement>("#prop-kind-block")!;
+const propRemoveButton = document.querySelector<HTMLButtonElement>("#prop-remove")!;
+const propList = document.querySelector<HTMLDivElement>("#prop-list")!;
+const propOffsetField = document.querySelector<HTMLDivElement>("#prop-offset-field")!;
+const propOffset = document.querySelector<HTMLInputElement>("#prop-offset")!;
+const propSpacingField = document.querySelector<HTMLDivElement>("#prop-spacing-field")!;
+const propSpacing = document.querySelector<HTMLInputElement>("#prop-spacing")!;
+const propStatus = document.querySelector<HTMLDivElement>("#prop-status")!;
 
 const centerlineToggle = document.querySelector<HTMLInputElement>("#toggle-centerline")!;
 const wireframeToggle = document.querySelector<HTMLInputElement>("#toggle-wireframe")!;
@@ -314,8 +419,13 @@ let drag: DragState = null;
 let selectedTerrainPoint: number | null = null;
 let addTerrainPointMode = false;
 let selectedKerbSpan: { sectionId: string; index: number } | null = null;
+let selectedWallSpan: { sectionId: string; index: number } | null = null;
 let kerbEditStart: Project | null = null;
-let editorMode: "points" | "kerbs" = "points";
+let wallEditStart: Project | null = null;
+let selectedPropSpan: { sectionId: string; index: number } | null = null;
+let propEditStart: Project | null = null;
+let propPaintKind: ProjectPropKind = "tree";
+let editorMode: "points" | "kerbs" | "walls" | "props" = "points";
 let bakeValid = false;
 
 const RENDER_DELAY_MS = 150;
@@ -388,6 +498,7 @@ function scheduleOverlayUpdate(): void {
       overlayCenterlines(project, currentTrack.bounds),
       overlayTerrainPoints(project),
       overlayKerbs(project, currentTrack.bounds),
+      overlayProps(currentTrack),
     );
     let spawn: Spawn | null = null;
     try {
@@ -438,7 +549,7 @@ function mainOf(source: Project): Project["centerlines"][number] | undefined {
 }
 
 function syncBranchStart(source: Project): void {
-  if (source.schema === "track-ed/project@3") {
+  if (isVenueSchema(source.schema)) {
     syncSectionJunctions(source);
     return;
   }
@@ -518,7 +629,7 @@ function updateAuthoringUI(): void {
   undoButton.disabled = undoStack.length === 0;
   redoButton.disabled = redoStack.length === 0;
   deleteButton.disabled = selectedPoint === null;
-  const sectionVenue = project?.schema === "track-ed/project@3";
+  const sectionVenue = project ? isVenueSchema(project.schema) : false;
   addSectionButton.disabled = !sectionVenue || selectedPoint === null;
   addSectionButton.title = sectionVenue
     ? "Create an independent dead-ended section near the selected control point."
@@ -542,14 +653,14 @@ function updateAuthoringUI(): void {
       selectedPointIndex === selectedSection.points.length - 1);
   splitLoopButton.textContent = selectedSection?.closed ? "Split loop" : "Split section";
   splitLoopButton.disabled =
-    project?.schema !== "track-ed/project@3" ||
+    !(project && isVenueSchema(project.schema)) ||
     !selectedSection ||
     selectedPointId === undefined ||
     selectedEndpoint ||
     (project !== null &&
       isSectionPointInJunction(project, selectedSection.id, selectedPointId));
   splitLoopButton.title =
-    project?.schema === "track-ed/project@3"
+    project && isVenueSchema(project.schema)
       ? selectedSection?.closed
         ? "Open the selected closed loop with a road-width gap."
         : "Split the selected open section into two capped sections."
@@ -562,32 +673,36 @@ function updateAuthoringUI(): void {
     updateSectionList(project);
     updateJunctionList(project);
     updateKerbsUI(project);
+    updateWallsUI(project);
+    updatePropsUI(project);
   } else {
     sectionList.innerHTML = "";
     kerbList.innerHTML = "";
+    wallList.innerHTML = "";
+    propList.innerHTML = "";
   }
 }
 
 function updateModeUI(): void {
   modePointsButton.classList.toggle("active", editorMode === "points");
   modeKerbsButton.classList.toggle("active", editorMode === "kerbs");
+  modeWallsButton.classList.toggle("active", editorMode === "walls");
+  modePropsButton.classList.toggle("active", editorMode === "props");
   view?.setCenterlinesVisible(editorMode === "points" && centerlineToggle.checked);
 }
 
-function setEditorMode(mode: "points" | "kerbs"): void {
+function setEditorMode(mode: "points" | "kerbs" | "walls" | "props"): void {
   if (editorMode === mode) {
     return;
   }
   editorMode = mode;
   drag = null;
-  if (mode === "kerbs") {
-    setSelection(null);
-    setTerrainSelection(null);
-    addTerrainPointMode = false;
-    selectedKerbSpan = null;
-  } else {
-    selectedKerbSpan = null;
-  }
+  setSelection(null);
+  setTerrainSelection(null);
+  addTerrainPointMode = false;
+  selectedKerbSpan = null;
+  selectedWallSpan = null;
+  selectedPropSpan = null;
   updateModeUI();
   scheduleOverlayUpdate();
   updateAuthoringUI();
@@ -685,11 +800,18 @@ function renderStatus(track: BakedTrack, report: ValidationReport): void {
   const kerbTriangles = track.kerbGraph
     ? Math.floor(track.kerbGraph.indices.length / 3)
     : 0;
+  const wallVertices = track.wallGraph?.positions.length ?? 0;
+  const wallTriangles = track.wallGraph
+    ? Math.floor(track.wallGraph.indices.length / 3)
+    : 0;
   grid.append(
     metric("vertices", formatNumber(track.surfaceGraph.positions.length)),
     metric("triangles", formatNumber(topology.triangleCount)),
     metric("kerb vertices", formatNumber(kerbVertices)),
     metric("kerb triangles", formatNumber(kerbTriangles)),
+    metric("wall vertices", formatNumber(wallVertices)),
+    metric("wall triangles", formatNumber(wallTriangles)),
+    metric("props", formatNumber(track.props?.length ?? 0)),
     metric(
       "interior boundary edges",
       formatNumber(topology.interiorBoundaryEdges.length),
@@ -717,6 +839,16 @@ function renderStatus(track: BakedTrack, report: ValidationReport): void {
       (report.kerbTopology?.tJunctions.length ?? 0) > 0 ? "bad" : "good",
     ),
     metric(
+      "wall non-manifold",
+      formatNumber(report.wallTopology?.nonManifoldEdges.length ?? 0),
+      (report.wallTopology?.nonManifoldEdges.length ?? 0) > 0 ? "bad" : "good",
+    ),
+    metric(
+      "wall T-junctions",
+      formatNumber(report.wallTopology?.tJunctions.length ?? 0),
+      (report.wallTopology?.tJunctions.length ?? 0) > 0 ? "bad" : "good",
+    ),
+    metric(
       "degenerate triangles",
       formatNumber(topology.degenerateTriangles.length),
       topology.degenerateTriangles.length > 0 ? "bad" : "good",
@@ -735,8 +867,8 @@ function renderStatus(track: BakedTrack, report: ValidationReport): void {
     topology.interiorBoundaryEdges.length === 0 &&
     topology.nonManifoldEdges.length === 0 &&
     topology.tJunctions.length === 0
-      ? track.kerbGraph
-        ? "One welded ground graph plus a separate kerb graph. Kerb base edges are expected; ground open edges lie on the scene perimeter."
+      ? track.kerbGraph || track.wallGraph
+        ? "One welded ground graph plus separate roadside graphs. Roadside base edges are expected; ground open edges lie on the scene perimeter."
         : "One welded surface graph. The only open edges lie on the scene perimeter."
       : "Topology errors detected. Export is blocked until the MUST checks pass.";
   statusPanel.appendChild(note);
@@ -746,6 +878,9 @@ function renderLegend(track: BakedTrack, report: ValidationReport): void {
   surfaceLegend.innerHTML = "";
   const counts = new Map(report.topology.surfaceTriangleCounts);
   for (const [id, count] of report.kerbTopology?.surfaceTriangleCounts ?? []) {
+    counts.set(id, (counts.get(id) ?? 0) + count);
+  }
+  for (const [id, count] of report.wallTopology?.surfaceTriangleCounts ?? []) {
     counts.set(id, (counts.get(id) ?? 0) + count);
   }
   for (const surface of track.surfaces) {
@@ -856,6 +991,17 @@ function overlayTerrainPoints(source: Project): TerrainPointOverlayData[] {
   }));
 }
 
+function overlayProps(track: BakedTrack): PropOverlayData[] {
+  return (track.props ?? []).map((prop) => ({
+    id: prop.id,
+    kind: prop.kind,
+    position: prop.position,
+    rotation: prop.rotation,
+    scale: prop.scale,
+    selected: false,
+  }));
+}
+
 function kerbSpanIntervals(
   start: number,
   length: number,
@@ -904,13 +1050,15 @@ function kerbSpanContains(
   );
 }
 
-function kerbRailPoints(
+function roadsideRailPoints(
   source: Project,
   bounds: { min: Vec3; max: Vec3 },
   section: Project["centerlines"][number],
+  kind: "kerb" | "wall" | "prop",
   side: "left" | "right",
   start: number,
   length: number,
+  offsetFromEdge?: number,
 ): Vec3[][] {
   const heightAt = centerlineHeightSampler(source, bounds);
   const sampled = sampleCenterline(
@@ -918,7 +1066,9 @@ function kerbRailPoints(
     section.closed,
     section.spline,
   );
-  const offset = source.road.halfWidth + KERB_WIDTH / 2;
+  const defaultOffset =
+    kind === "kerb" ? KERB_WIDTH / 2 : DEFAULT_WALL_OFFSET + WALL_THICKNESS / 2;
+  const offset = source.road.halfWidth + (offsetFromEdge ?? defaultOffset);
   const sideSign = side === "left" ? 1 : -1;
   const pieces: Array<[number, number]> = [];
   if (!section.closed || start + length <= 1 + 1e-9) {
@@ -945,31 +1095,70 @@ function overlayKerbs(
   source: Project,
   bounds: { min: Vec3; max: Vec3 },
 ): KerbOverlayData {
-  if (editorMode !== "kerbs") {
+  const activeKind: "kerb" | "wall" | "prop" | null =
+    editorMode === "kerbs"
+      ? "kerb"
+      : editorMode === "walls"
+        ? "wall"
+        : editorMode === "props"
+          ? "prop"
+          : null;
+  if (!activeKind) {
     return { rails: [], spans: [] };
   }
   const rails: KerbRailOverlayData[] = [];
   for (const section of source.centerlines) {
     for (const side of ["left", "right"] as const) {
-      const [points] = kerbRailPoints(source, bounds, section, side, 0, 1);
+      const [points] = roadsideRailPoints(
+        source,
+        bounds,
+        section,
+        activeKind,
+        side,
+        0,
+        1,
+        activeKind === "prop" ? DEFAULT_PROP_OFFSETS[propPaintKind] : undefined,
+      );
       if (points && points.length >= 2) {
-        rails.push({ sectionId: section.id, side, points });
+        rails.push({ kind: activeKind, sectionId: section.id, side, points });
       }
     }
   }
 
   const spans: KerbOverlayData["spans"] = [];
   for (const section of source.centerlines) {
-    const sectionSpans = section.kerbs ?? [];
+    const sectionSpans =
+      activeKind === "kerb"
+        ? section.kerbs ?? []
+        : activeKind === "wall"
+          ? section.walls ?? []
+          : section.props ?? [];
     for (let spanIndex = 0; spanIndex < sectionSpans.length; spanIndex += 1) {
       const span = sectionSpans[spanIndex]!;
-      const pieces = kerbRailPoints(
+      const selectable =
+        activeKind === "kerb"
+          ? selectedKerbSpan?.sectionId === section.id &&
+            selectedKerbSpan.index === spanIndex
+          : activeKind === "wall"
+            ? selectedWallSpan?.sectionId === section.id &&
+              selectedWallSpan.index === spanIndex
+            : selectedPropSpan?.sectionId === section.id &&
+              selectedPropSpan.index === spanIndex;
+      const offset =
+        activeKind === "wall" && "offset" in span && span.offset !== undefined
+          ? span.offset + WALL_THICKNESS / 2
+          : activeKind === "prop" && "kind" in span
+            ? span.offset ?? DEFAULT_PROP_OFFSETS[span.kind]
+            : undefined;
+      const pieces = roadsideRailPoints(
         source,
         bounds,
         section,
+        activeKind,
         span.side,
         span.start,
         span.length,
+        offset,
       );
       const first = pieces[0];
       const last = pieces[pieces.length - 1];
@@ -977,12 +1166,11 @@ function overlayKerbs(
         continue;
       }
       spans.push({
+        kind: activeKind,
         sectionId: section.id,
         spanIndex,
         side: span.side,
-        selected:
-          selectedKerbSpan?.sectionId === section.id &&
-          selectedKerbSpan.index === spanIndex,
+        selected: selectable,
         pieces,
         entry: first[0]!,
         exit: last[last.length - 1]!,
@@ -991,7 +1179,12 @@ function overlayKerbs(
   }
 
   let preview: KerbOverlayData["preview"] = null;
-  if (drag?.kind === "kerb-paint" && project) {
+  if (
+    (drag?.kind === "kerb-paint" ||
+      drag?.kind === "wall-paint" ||
+      drag?.kind === "prop-paint") &&
+    project
+  ) {
     const activeDrag = drag;
     const section = project.centerlines.find(
       (candidate) => candidate.id === activeDrag.sectionId,
@@ -1002,18 +1195,31 @@ function overlayKerbs(
         signed >= 0 ? activeDrag.originFraction : activeDrag.previousFraction;
       const length = Math.abs(signed);
       if (length > 1e-5) {
-        const pieces = kerbRailPoints(
+        const kind =
+          activeDrag.kind === "kerb-paint"
+            ? "kerb"
+            : activeDrag.kind === "wall-paint"
+              ? "wall"
+              : "prop";
+        const offset =
+          activeDrag.kind === "prop-paint"
+            ? DEFAULT_PROP_OFFSETS[activeDrag.propKind]
+            : undefined;
+        const pieces = roadsideRailPoints(
           project,
           bounds,
           section,
+          kind,
           activeDrag.side,
           start,
           length,
+          offset,
         );
         const first = pieces[0];
         const last = pieces[pieces.length - 1];
         if (first && last && first.length > 0 && last.length > 0) {
           preview = {
+            kind,
             pieces,
             entry: first[0]!,
             exit: last[last.length - 1]!,
@@ -1025,6 +1231,7 @@ function overlayKerbs(
 
   return { rails, spans, preview };
 }
+
 
 function serializeProject(source: Project): unknown {
   if (source.schema === "track-ed/project@1") {
@@ -1048,9 +1255,9 @@ function serializeProject(source: Project): unknown {
     };
   }
 
-  if (source.schema === "track-ed/project@3") {
+  if (isVenueSchema(source.schema)) {
     return {
-      schema: "track-ed/project@3",
+      schema: source.schema,
       name: source.name,
       generator: source.generator,
       road: source.road,
@@ -1075,6 +1282,12 @@ function serializeProject(source: Project): unknown {
         ...(centerline.spline ? { spline: centerline.spline } : {}),
         ...(centerline.kerbs && centerline.kerbs.length > 0
           ? { kerbs: centerline.kerbs }
+          : {}),
+        ...(centerline.walls && centerline.walls.length > 0
+          ? { walls: centerline.walls }
+          : {}),
+        ...(centerline.props && centerline.props.length > 0
+          ? { props: centerline.props }
           : {}),
       })),
     };
@@ -1109,7 +1322,7 @@ function updateMeta(source: Project): void {
     <strong>${source.name}</strong>
     <span class="meta-separator">/</span>
     <span>${source.centerlines.length} ${
-      source.schema === "track-ed/project@3" ? "section" : "centreline"
+      isVenueSchema(source.schema) ? "section" : "centreline"
     }${source.centerlines.length === 1 ? "" : "s"}</span>
     <span class="meta-separator">/</span>
     <span>${source.road.halfWidth} m asphalt · ${source.road.shoulderHalfWidth} m shoulder</span>
@@ -1201,6 +1414,7 @@ function renderProject(
       overlayTerrainPoints(project),
       report.kerbTopology,
       overlayKerbs(project, baked.bounds),
+      overlayProps(baked),
     );
     const canvas = viewport.querySelector<HTMLCanvasElement>("canvas");
     if (canvas) {
@@ -1214,6 +1428,7 @@ function renderProject(
       overlayTerrainPoints(project),
       report.kerbTopology,
       overlayKerbs(project, baked.bounds),
+      overlayProps(baked),
     );
   }
   view.setSelectedPoint(selectedPoint);
@@ -1245,14 +1460,18 @@ function loadProject(input: unknown, frame: boolean): void {
     );
     return;
   }
-  const converted = convertProjectToV3(parsed.project);
+  const converted = convertProjectToLatest(parsed.project);
   project = converted.ok ? converted.project : parsed.project;
   undoStack = [];
   redoStack = [];
   selectedPoint = null;
   selectedTerrainPoint = null;
   selectedKerbSpan = null;
+  selectedWallSpan = null;
+  selectedPropSpan = null;
   kerbEditStart = null;
+  wallEditStart = null;
+  propEditStart = null;
   addTerrainPointMode = false;
   drag = null;
   renderProject(project, { frame });
@@ -1271,7 +1490,11 @@ function undo(): void {
   selectedPoint = null;
   selectedTerrainPoint = null;
   selectedKerbSpan = null;
+  selectedWallSpan = null;
+  selectedPropSpan = null;
   kerbEditStart = null;
+  wallEditStart = null;
+  propEditStart = null;
   addTerrainPointMode = false;
   drag = null;
   syncBranchStart(project);
@@ -1291,7 +1514,11 @@ function redo(): void {
   selectedPoint = null;
   selectedTerrainPoint = null;
   selectedKerbSpan = null;
+  selectedWallSpan = null;
+  selectedPropSpan = null;
   kerbEditStart = null;
+  wallEditStart = null;
+  propEditStart = null;
   addTerrainPointMode = false;
   drag = null;
   syncBranchStart(project);
@@ -1479,7 +1706,7 @@ function kerbPaintSpan(
 }
 
 function updateKerbsUI(source: Project): void {
-  const editable = source.schema === "track-ed/project@3";
+  const editable = isVenueSchema(source.schema);
   if (
     selectedKerbSpan &&
     !findKerbSpan(source, selectedKerbSpan.sectionId, selectedKerbSpan.index)
@@ -1525,9 +1752,9 @@ function updateKerbsUI(source: Project): void {
     const empty = document.createElement("div");
     empty.className = "junction-empty";
     empty.textContent =
-      source.schema === "track-ed/project@3"
+      isVenueSchema(source.schema)
         ? "No kerb spans. Switch to Kerbs mode and drag a dotted guide rail."
-        : "Kerb authoring requires track-ed/project@3.";
+        : "Kerb authoring requires track-ed/project@3 or project@4.";
     kerbList.appendChild(empty);
   }
 
@@ -1625,6 +1852,381 @@ function editSelectedKerbSpan(
   updateMeta(project);
 }
 
+function findWallSpan(
+  source: Project,
+  sectionId: string,
+  spanIndex: number,
+): { section: Project["centerlines"][number]; span: ProjectWallSpan } | null {
+  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
+  const span = section?.walls?.[spanIndex];
+  return section && span ? { section, span } : null;
+}
+
+function findWallSpanAt(
+  source: Project,
+  sectionId: string,
+  side: "left" | "right",
+  fraction: number,
+): number | null {
+  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
+  if (!section) {
+    return null;
+  }
+  const spans = section.walls ?? [];
+  for (let index = 0; index < spans.length; index += 1) {
+    const span = spans[index]!;
+    if (
+      span.side === side &&
+      kerbSpanContains(span.start, span.length, fraction, section.closed)
+    ) {
+      return index;
+    }
+  }
+  return null;
+}
+
+function wallPaintSpan(
+  drag: Extract<NonNullable<DragState>, { kind: "wall-paint" }>,
+): { start: number; length: number } | null {
+  const length = Math.abs(drag.signedLength);
+  if (length <= 1e-5) {
+    return null;
+  }
+  const start =
+    drag.signedLength >= 0 ? drag.originFraction : drag.previousFraction;
+  return {
+    start: ((start % 1) + 1) % 1,
+    length: Math.min(1 - 1e-9, length),
+  };
+}
+
+function updateWallsUI(source: Project): void {
+  const editable = isVenueSchema(source.schema);
+  if (
+    selectedWallSpan &&
+    !findWallSpan(source, selectedWallSpan.sectionId, selectedWallSpan.index)
+  ) {
+    selectedWallSpan = null;
+  }
+
+  wallList.innerHTML = "";
+  let spanCount = 0;
+  for (const section of source.centerlines) {
+    const spans = section.walls ?? [];
+    for (let index = 0; index < spans.length; index += 1) {
+      spanCount += 1;
+      const span = spans[index]!;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className =
+        selectedWallSpan?.sectionId === section.id && selectedWallSpan.index === index
+          ? "section-row selected"
+          : "section-row";
+      const label = document.createElement("div");
+      label.className = "section-label";
+      const title = document.createElement("strong");
+      title.textContent = `${section.id} · ${span.side}`;
+      const detail = document.createElement("span");
+      const rawEnd = span.start + span.length;
+      const end = section.closed ? rawEnd % 1 : rawEnd;
+      const wraps = section.closed && rawEnd > 1 + 1e-9;
+      detail.textContent = `${span.start.toFixed(3)} – ${end.toFixed(3)}${
+        wraps ? " (wraps)" : ""
+      } · ${(span.height ?? DEFAULT_WALL_HEIGHT).toFixed(2)} m`;
+      label.append(title, detail);
+      row.append(label);
+      row.addEventListener("click", () => {
+        selectedWallSpan = { sectionId: section.id, index };
+        scheduleOverlayUpdate();
+        updateWallsUI(source);
+      });
+      wallList.appendChild(row);
+    }
+  }
+  if (spanCount === 0) {
+    const empty = document.createElement("div");
+    empty.className = "junction-empty";
+    empty.textContent = isVenueSchema(source.schema)
+      ? "No wall spans. Switch to Walls mode and drag a dotted blue guide rail."
+      : "Wall authoring requires track-ed/project@3 or project@4.";
+    wallList.appendChild(empty);
+  }
+
+  const selected = selectedWallSpan
+    ? findWallSpan(source, selectedWallSpan.sectionId, selectedWallSpan.index)
+    : null;
+  const height = selected?.span.height ?? DEFAULT_WALL_HEIGHT;
+  const offset = selected?.span.offset ?? DEFAULT_WALL_OFFSET;
+  if (document.activeElement !== wallHeight) {
+    wallHeight.value = String(height);
+  }
+  if (document.activeElement !== wallOffset) {
+    wallOffset.value = String(offset);
+  }
+  wallHeight.disabled = !editable || selected === null;
+  wallOffset.disabled = !editable || selected === null;
+  wallRemoveButton.disabled = !editable || selected === null;
+  wallStatus.textContent = selected
+    ? `Editing ${selected.section.id} · ${selected.span.side} wall span.`
+    : spanCount > 0
+      ? `${spanCount} wall span${spanCount === 1 ? "" : "s"}.`
+      : "No wall spans.";
+}
+
+function removeWallSpan(): void {
+  if (!project || !selectedWallSpan) {
+    return;
+  }
+  const located = findWallSpan(project, selectedWallSpan.sectionId, selectedWallSpan.index);
+  if (!located) {
+    return;
+  }
+  const before = cloneProject(project);
+  located.section.walls!.splice(selectedWallSpan.index, 1);
+  if (located.section.walls!.length === 0) {
+    delete located.section.walls;
+  }
+  selectedWallSpan = null;
+  if (!renderProject(project, { frame: false })) {
+    project = before;
+    renderProject(project, { frame: false });
+    setWallStatus("The wall change does not bake.", "error");
+    return;
+  }
+  pushUndo(before);
+  setWallStatus("Removed wall span.", "ok");
+  scheduleOverlayUpdate();
+}
+
+function setWallStatus(message: string, tone: "ok" | "error" | "" = ""): void {
+  wallStatus.textContent = message;
+  wallStatus.className = `edit-status ${tone}`.trim();
+}
+
+function editSelectedWallSpan(
+  mutate: (span: ProjectWallSpan) => void,
+): void {
+  if (!project || !selectedWallSpan) {
+    return;
+  }
+  const located = findWallSpan(project, selectedWallSpan.sectionId, selectedWallSpan.index);
+  if (!located) {
+    return;
+  }
+  if (!wallEditStart) {
+    wallEditStart = cloneProject(project);
+  }
+  mutate(located.span);
+  scheduleRender();
+  scheduleOverlayUpdate();
+  updateWallsUI(project);
+  updateMeta(project);
+}
+
+function findPropSpan(
+  source: Project,
+  sectionId: string,
+  spanIndex: number,
+): { section: Project["centerlines"][number]; span: ProjectPropSpan } | null {
+  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
+  const span = section?.props?.[spanIndex];
+  return section && span ? { section, span } : null;
+}
+
+function findPropSpanAt(
+  source: Project,
+  sectionId: string,
+  side: "left" | "right",
+  kind: ProjectPropKind,
+  fraction: number,
+): number | null {
+  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
+  if (!section) {
+    return null;
+  }
+  const spans = section.props ?? [];
+  for (let index = 0; index < spans.length; index += 1) {
+    const span = spans[index]!;
+    if (
+      span.kind === kind &&
+      span.side === side &&
+      kerbSpanContains(span.start, span.length, fraction, section.closed)
+    ) {
+      return index;
+    }
+  }
+  return null;
+}
+
+function propPaintSpan(
+  drag: Extract<NonNullable<DragState>, { kind: "prop-paint" }>,
+): { start: number; length: number } | null {
+  const length = Math.abs(drag.signedLength);
+  if (length <= 1e-5) {
+    return null;
+  }
+  const start =
+    drag.signedLength >= 0 ? drag.originFraction : drag.previousFraction;
+  return {
+    start: ((start % 1) + 1) % 1,
+    length: Math.min(1 - 1e-9, length),
+  };
+}
+
+function updatePropsUI(source: Project): void {
+  const editable = source.schema === "track-ed/project@4";
+  if (
+    selectedPropSpan &&
+    !findPropSpan(source, selectedPropSpan.sectionId, selectedPropSpan.index)
+  ) {
+    selectedPropSpan = null;
+  }
+
+  propList.innerHTML = "";
+  let spanCount = 0;
+  for (const section of source.centerlines) {
+    const spans = section.props ?? [];
+    for (let index = 0; index < spans.length; index += 1) {
+      spanCount += 1;
+      const span = spans[index]!;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className =
+        selectedPropSpan?.sectionId === section.id && selectedPropSpan.index === index
+          ? "section-row selected"
+          : "section-row";
+      const label = document.createElement("div");
+      label.className = "section-label";
+      const title = document.createElement("strong");
+      title.textContent = `${span.kind} · ${section.id} · ${span.side}`;
+      const detail = document.createElement("span");
+      const rawEnd = span.start + span.length;
+      const end = section.closed ? rawEnd % 1 : rawEnd;
+      const wraps = section.closed && rawEnd > 1 + 1e-9;
+      const offset = span.offset ?? DEFAULT_PROP_OFFSETS[span.kind];
+      const spacing = span.spacing ?? DEFAULT_PROP_SPACING[span.kind];
+      detail.textContent = `${span.start.toFixed(3)} – ${end.toFixed(3)}${
+        wraps ? " (wraps)" : ""
+      } · ${offset.toFixed(1)} m out · ${spacing.toFixed(1)} m apart`;
+      label.append(title, detail);
+      row.append(label);
+      row.addEventListener("click", () => {
+        selectedPropSpan = { sectionId: section.id, index };
+        propPaintKind = span.kind;
+        scheduleOverlayUpdate();
+        updatePropsUI(source);
+      });
+      propList.appendChild(row);
+    }
+  }
+  if (spanCount === 0) {
+    const empty = document.createElement("div");
+    empty.className = "junction-empty";
+    empty.textContent = editable
+      ? "No prop runs. Switch to Props mode and drag a dotted guide rail."
+      : "Prop runs require track-ed/project@4.";
+    propList.appendChild(empty);
+  }
+
+  const selected = selectedPropSpan
+    ? findPropSpan(source, selectedPropSpan.sectionId, selectedPropSpan.index)
+    : null;
+  const offset = selected?.span.offset ?? DEFAULT_PROP_OFFSETS[propPaintKind];
+  const spacing = selected?.span.spacing ?? DEFAULT_PROP_SPACING[propPaintKind];
+  propOffsetField.hidden = selected === null;
+  propSpacingField.hidden = selected === null;
+  if (document.activeElement !== propOffset) {
+    propOffset.value = String(offset);
+  }
+  if (document.activeElement !== propSpacing) {
+    propSpacing.value = String(spacing);
+  }
+  propOffset.disabled = !editable || selected === null;
+  propSpacing.disabled = !editable || selected === null;
+  propRemoveButton.disabled = !editable || selected === null;
+
+  for (const [button, kind] of [
+    [propKindTree, "tree"],
+    [propKindTyre, "tyre"],
+    [propKindBlock, "block"],
+  ] as const) {
+    button.classList.toggle("active", propPaintKind === kind);
+    button.disabled = !editable;
+  }
+
+  propStatus.textContent = selected
+    ? `Editing ${selected.span.kind} run on ${selected.section.id} · ${selected.span.side}.`
+    : spanCount > 0
+      ? `${spanCount} prop run${spanCount === 1 ? "" : "s"}. Painting ${propPaintKind}.`
+      : `No prop runs. Painting ${propPaintKind}.`;
+}
+
+function removePropSpan(): void {
+  if (!project || !selectedPropSpan) {
+    return;
+  }
+  const located = findPropSpan(project, selectedPropSpan.sectionId, selectedPropSpan.index);
+  if (!located) {
+    return;
+  }
+  const before = cloneProject(project);
+  located.section.props!.splice(selectedPropSpan.index, 1);
+  if (located.section.props!.length === 0) {
+    delete located.section.props;
+  }
+  selectedPropSpan = null;
+  if (!renderProject(project, { frame: false })) {
+    project = before;
+    renderProject(project, { frame: false });
+    setPropStatus("The prop run does not bake.", "error");
+    return;
+  }
+  pushUndo(before);
+  setPropStatus("Removed prop run.", "ok");
+  scheduleOverlayUpdate();
+}
+
+function setPropStatus(message: string, tone: "ok" | "error" | "" = ""): void {
+  propStatus.textContent = message;
+  propStatus.className = `edit-status ${tone}`.trim();
+}
+
+function editSelectedPropSpan(mutate: (span: ProjectPropSpan) => void): void {
+  if (!project || !selectedPropSpan) {
+    return;
+  }
+  const located = findPropSpan(project, selectedPropSpan.sectionId, selectedPropSpan.index);
+  if (!located) {
+    return;
+  }
+  if (!propEditStart) {
+    propEditStart = cloneProject(project);
+  }
+  mutate(located.span);
+  scheduleRender();
+  scheduleOverlayUpdate();
+  updatePropsUI(project);
+}
+
+function finishPropSpanEdit(): void {
+  if (!propEditStart) {
+    return;
+  }
+  const start = propEditStart;
+  propEditStart = null;
+  if (!flushPendingRender()) {
+    project = start;
+    renderProject(project, { frame: false });
+    setPropStatus("The prop run does not bake.", "error");
+    updateAuthoringUI();
+    return;
+  }
+  if (project && JSON.stringify(start) !== JSON.stringify(project)) {
+    pushUndo(start);
+  }
+  updateAuthoringUI();
+}
+
 function updateJunctionList(source: Project): void {
   junctionList.innerHTML = "";
   if (source.junctions.length === 0) {
@@ -1648,7 +2250,7 @@ function updateJunctionList(source: Project): void {
           "junction" in branch.endAttach &&
           branch.endAttach.junction === junction.id),
     ).length;
-    if (source.schema === "track-ed/project@3") {
+    if (isVenueSchema(source.schema)) {
       const memberCount = junction.members?.length ?? 1;
       label.textContent = `${junction.id} · ${memberCount} section${
         memberCount === 1 ? "" : "s"
@@ -1795,7 +2397,7 @@ function addJunction(): void {
   if (!project) {
     return;
   }
-  if (project.schema === "track-ed/project@3") {
+  if (isVenueSchema(project.schema)) {
     addSectionJunctionAtSelected();
     return;
   }
@@ -1897,7 +2499,7 @@ function removeJunction(junctionId: string): void {
   if (!junction) {
     return;
   }
-  if (project.schema === "track-ed/project@3") {
+  if (isVenueSchema(project.schema)) {
     const before = cloneProject(project);
     const result = removeJunctionWithGap(project, junctionId);
     if (!result.ok) {
@@ -1968,7 +2570,7 @@ function findJoinTarget(
   pointIndex: number,
   position: Vec2,
 ): ControlPointPick | null {
-  if (source.schema === "track-ed/project@3") {
+  if (isVenueSchema(source.schema)) {
     const dragged = source.centerlines[branchIndex];
     if (!dragged || dragged.closed || !isLooseSectionEnd(source, dragged.id, pointIndex)) {
       return null;
@@ -2402,6 +3004,132 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         }
         return;
       }
+      if (editorMode === "walls") {
+        const handle = trackView.pickKerbHandle(point.x, point.y);
+        if (handle && handle.kind === "wall") {
+          event.stopPropagation();
+          event.preventDefault();
+          selectedWallSpan = { sectionId: handle.sectionId, index: handle.spanIndex };
+          drag = {
+            kind: handle.handle === "entry" ? "wall-entry" : "wall-exit",
+            sectionId: handle.sectionId,
+            spanIndex: handle.spanIndex,
+            startProject: cloneProject(project),
+          };
+          trackView.setControlsEnabled(false);
+          canvas.setPointerCapture(event.pointerId);
+          canvas.style.cursor = "grabbing";
+          scheduleOverlayUpdate();
+          updateWallsUI(project);
+          return;
+        }
+        const rail = trackView.pickKerbRail(point.x, point.y);
+        if (rail && rail.kind === "wall") {
+          const section = project.centerlines.find(
+            (candidate) => candidate.id === rail.sectionId,
+          );
+          if (!section) {
+            return;
+          }
+          const spanIndex = findWallSpanAt(
+            project,
+            rail.sectionId,
+            rail.side,
+            rail.fraction,
+          );
+          if (spanIndex !== null) {
+            event.stopPropagation();
+            event.preventDefault();
+            selectedWallSpan = { sectionId: rail.sectionId, index: spanIndex };
+            scheduleOverlayUpdate();
+            updateWallsUI(project);
+            return;
+          }
+          event.stopPropagation();
+          event.preventDefault();
+          drag = {
+            kind: "wall-paint",
+            sectionId: rail.sectionId,
+            side: rail.side,
+            closed: section.closed,
+            originFraction: rail.fraction,
+            previousFraction: rail.fraction,
+            signedLength: 0,
+            startProject: cloneProject(project),
+          };
+          trackView.setControlsEnabled(false);
+          canvas.setPointerCapture(event.pointerId);
+          canvas.style.cursor = "crosshair";
+          scheduleOverlayUpdate();
+          return;
+        }
+        return;
+      }
+
+      if (editorMode === "props") {
+        const handle = trackView.pickKerbHandle(point.x, point.y);
+        if (handle && handle.kind === "prop") {
+          event.stopPropagation();
+          event.preventDefault();
+          selectedPropSpan = { sectionId: handle.sectionId, index: handle.spanIndex };
+          drag = {
+            kind: handle.handle === "entry" ? "prop-entry" : "prop-exit",
+            sectionId: handle.sectionId,
+            spanIndex: handle.spanIndex,
+            startProject: cloneProject(project),
+          };
+          trackView.setControlsEnabled(false);
+          canvas.setPointerCapture(event.pointerId);
+          canvas.style.cursor = "grabbing";
+          scheduleOverlayUpdate();
+          updatePropsUI(project);
+          return;
+        }
+        const rail = trackView.pickKerbRail(point.x, point.y);
+        if (rail && rail.kind === "prop") {
+          const section = project.centerlines.find(
+            (candidate) => candidate.id === rail.sectionId,
+          );
+          if (!section) {
+            return;
+          }
+          const spanIndex = findPropSpanAt(
+            project,
+            rail.sectionId,
+            rail.side,
+            propPaintKind,
+            rail.fraction,
+          );
+          if (spanIndex !== null) {
+            event.stopPropagation();
+            event.preventDefault();
+            selectedPropSpan = { sectionId: rail.sectionId, index: spanIndex };
+            scheduleOverlayUpdate();
+            updatePropsUI(project);
+            return;
+          }
+          event.stopPropagation();
+          event.preventDefault();
+          drag = {
+            kind: "prop-paint",
+            sectionId: rail.sectionId,
+            side: rail.side,
+            propKind: propPaintKind,
+            closed: section.closed,
+            originFraction: rail.fraction,
+            previousFraction: rail.fraction,
+            signedLength: 0,
+            startProject: cloneProject(project),
+          };
+          trackView.setControlsEnabled(false);
+          canvas.setPointerCapture(event.pointerId);
+          canvas.style.cursor = "crosshair";
+          scheduleOverlayUpdate();
+          return;
+        }
+        return;
+      }
+
       const terrainPointIndex = trackView.pickTerrainPoint(point.x, point.y);
       if (terrainPointIndex !== null) {
         event.stopPropagation();
@@ -2455,7 +3183,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
           "junction" in hitAttach
         ) {
           resolveJunctionAnchor(hitAttach.junction);
-        } else if (hitCenterline && project.schema === "track-ed/project@3") {
+        } else if (hitCenterline && isVenueSchema(project.schema)) {
           const hitPointId = hitCenterline.pointIds[hit.pointIndex];
           const junction = project.junctions.find((candidate) =>
             (candidate.members ?? []).some(
@@ -2626,6 +3354,171 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         return;
       }
 
+      if (drag.kind === "wall-paint") {
+        const activeDrag = drag;
+        const section = project.centerlines.find(
+          (candidate) => candidate.id === activeDrag.sectionId,
+        );
+        if (!section) {
+          return;
+        }
+        const fraction = nearestPolylineFraction(section, ground);
+        if (fraction === null) {
+          return;
+        }
+        if (activeDrag.closed) {
+          let delta = fraction - activeDrag.previousFraction;
+          if (delta > 0.5) {
+            delta -= 1;
+          } else if (delta < -0.5) {
+            delta += 1;
+          }
+          activeDrag.signedLength += delta;
+          activeDrag.previousFraction = fraction;
+        } else {
+          activeDrag.signedLength = fraction - activeDrag.originFraction;
+          activeDrag.previousFraction = fraction;
+        }
+        scheduleOverlayUpdate();
+        return;
+      }
+
+      if (drag.kind === "wall-entry" || drag.kind === "wall-exit") {
+        const activeDrag = drag;
+        const section = project.centerlines.find(
+          (candidate) => candidate.id === activeDrag.sectionId,
+        );
+        const span = section?.walls?.[activeDrag.spanIndex];
+        if (!section || !span) {
+          return;
+        }
+        const fraction = nearestPolylineFraction(section, ground);
+        if (fraction === null) {
+          return;
+        }
+        const minimum = 0.002;
+        let start = span.start;
+        let length = span.length;
+        if (activeDrag.kind === "wall-entry") {
+          const exit = kerbSpanEnd(span.start, span.length);
+          const forward = section.closed
+            ? (exit - fraction + 1) % 1
+            : exit - fraction;
+          if (forward <= minimum || forward >= 1) {
+            return;
+          }
+          start = fraction;
+          length = forward;
+        } else {
+          const forward = section.closed
+            ? (fraction - span.start + 1) % 1
+            : fraction - span.start;
+          if (forward <= minimum || forward >= 1) {
+            return;
+          }
+          length = forward;
+        }
+        if (!section.closed && start + length > 1 + 1e-9) {
+          return;
+        }
+        const overlaps = (section.walls ?? []).some(
+          (candidate, index) =>
+            index !== activeDrag.spanIndex &&
+            candidate.side === span.side &&
+            kerbSpansOverlap(
+              start,
+              length,
+              candidate.start,
+              candidate.length,
+              section.closed,
+            ),
+        );
+        if (overlaps) {
+          return;
+        }
+        span.start = start;
+        span.length = length;
+        scheduleOverlayUpdate();
+        scheduleDragRender();
+        updateWallsUI(project);
+        return;
+      }
+
+      if (drag.kind === "prop-paint") {
+        const activeDrag = drag;
+        const section = project.centerlines.find(
+          (candidate) => candidate.id === activeDrag.sectionId,
+        );
+        if (!section) {
+          return;
+        }
+        const fraction = nearestPolylineFraction(section, ground);
+        if (fraction === null) {
+          return;
+        }
+        if (activeDrag.closed) {
+          let delta = fraction - activeDrag.previousFraction;
+          if (delta > 0.5) {
+            delta -= 1;
+          } else if (delta < -0.5) {
+            delta += 1;
+          }
+          activeDrag.signedLength += delta;
+          activeDrag.previousFraction = fraction;
+        } else {
+          activeDrag.signedLength = fraction - activeDrag.originFraction;
+          activeDrag.previousFraction = fraction;
+        }
+        scheduleOverlayUpdate();
+        return;
+      }
+
+      if (drag.kind === "prop-entry" || drag.kind === "prop-exit") {
+        const activeDrag = drag;
+        const section = project.centerlines.find(
+          (candidate) => candidate.id === activeDrag.sectionId,
+        );
+        const span = section?.props?.[activeDrag.spanIndex];
+        if (!section || !span) {
+          return;
+        }
+        const fraction = nearestPolylineFraction(section, ground);
+        if (fraction === null) {
+          return;
+        }
+        const minimum = 0.002;
+        let start = span.start;
+        let length = span.length;
+        if (activeDrag.kind === "prop-entry") {
+          const exit = kerbSpanEnd(span.start, span.length);
+          const forward = section.closed
+            ? (exit - fraction + 1) % 1
+            : exit - fraction;
+          if (forward <= minimum || forward >= 1) {
+            return;
+          }
+          start = fraction;
+          length = forward;
+        } else {
+          const forward = section.closed
+            ? (fraction - span.start + 1) % 1
+            : fraction - span.start;
+          if (forward <= minimum || forward >= 1) {
+            return;
+          }
+          length = forward;
+        }
+        if (!section.closed && start + length > 1 + 1e-9) {
+          return;
+        }
+        span.start = start;
+        span.length = length;
+        scheduleOverlayUpdate();
+        scheduleDragRender();
+        updatePropsUI(project);
+        return;
+      }
+
       if (drag.kind === "terrain-point") {
         const terrainPoint = project.terrain.points?.[drag.index];
         if (!terrainPoint) {
@@ -2687,7 +3580,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
           !branch.closed &&
           (drag.pointIndex === 0 || drag.pointIndex === branch.points.length - 1);
         const canJoin =
-          project.schema === "track-ed/project@3"
+          isVenueSchema(project.schema)
             ? isEndpoint && isLooseSectionEnd(project, branch.id, drag.pointIndex)
             : drag.pointIndex === branch.points.length - 1;
         if (canJoin) {
@@ -2702,10 +3595,10 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
           if (target) {
             const targetCenterline = project.centerlines[target.centerlineIndex];
             const isLoopClose =
-              project.schema === "track-ed/project@3" &&
+              isVenueSchema(project.schema) &&
               targetCenterline?.id === branch.id;
             const isMergeTarget =
-              project.schema === "track-ed/project@3" &&
+              isVenueSchema(project.schema) &&
               targetCenterline !== undefined &&
               !isLoopClose &&
               isLooseSectionEnd(project, targetCenterline.id, target.pointIndex);
@@ -2804,6 +3697,74 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
       canvas.style.cursor = "default";
       pickInfo.textContent =
         "Drag a dotted kerb rail to paint a span. Select a span to show endpoint handles.";
+      return;
+    }
+
+    if (editorMode === "walls") {
+      const handle = trackView.pickKerbHandle(point.x, point.y);
+      if (handle && handle.kind === "wall") {
+        canvas.style.cursor = "grab";
+        pickInfo.innerHTML = `
+          <div class="pick-row"><span>wall handle</span><strong>${handle.handle}</strong></div>
+          <div class="pick-row"><span>section</span><strong>${handle.sectionId}</strong></div>
+        `;
+        return;
+      }
+      const rail = trackView.pickKerbRail(point.x, point.y);
+      if (rail && rail.kind === "wall") {
+        const section = project?.centerlines.find(
+          (candidate) => candidate.id === rail.sectionId,
+        );
+        const spanIndex = section
+          ? findWallSpanAt(project!, rail.sectionId, rail.side, rail.fraction)
+          : null;
+        canvas.style.cursor = spanIndex === null ? "crosshair" : "pointer";
+        pickInfo.innerHTML = `
+          <div class="pick-row"><span>wall rail</span><strong>${rail.sectionId} · ${rail.side}</strong></div>
+          <div class="pick-row"><span>fraction</span><strong>${rail.fraction.toFixed(3)}</strong></div>
+        `;
+        return;
+      }
+      canvas.style.cursor = "default";
+      pickInfo.textContent =
+        "Drag a dotted wall rail to paint a span. Select a wall to edit height and offset.";
+      return;
+    }
+
+    if (editorMode === "props") {
+      const handle = trackView.pickKerbHandle(point.x, point.y);
+      if (handle && handle.kind === "prop") {
+        canvas.style.cursor = "grab";
+        pickInfo.innerHTML = `
+          <div class="pick-row"><span>prop run handle</span><strong>${handle.handle}</strong></div>
+          <div class="pick-row"><span>section</span><strong>${handle.sectionId}</strong></div>
+        `;
+        return;
+      }
+      const rail = trackView.pickKerbRail(point.x, point.y);
+      if (rail && rail.kind === "prop") {
+        const section = project?.centerlines.find(
+          (candidate) => candidate.id === rail.sectionId,
+        );
+        const spanIndex = section
+          ? findPropSpanAt(
+              project!,
+              rail.sectionId,
+              rail.side,
+              propPaintKind,
+              rail.fraction,
+            )
+          : null;
+        canvas.style.cursor = spanIndex === null ? "crosshair" : "pointer";
+        pickInfo.innerHTML = `
+          <div class="pick-row"><span>prop rail</span><strong>${rail.sectionId} · ${rail.side}</strong></div>
+          <div class="pick-row"><span>kind</span><strong>${propPaintKind}</strong></div>
+        `;
+        return;
+      }
+      canvas.style.cursor = "default";
+      pickInfo.textContent =
+        "Drag a dotted prop rail to paint a run. Select a run to edit offset and spacing.";
       return;
     }
 
@@ -2953,6 +3914,159 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
       return;
     }
 
+    if (currentDrag.kind === "wall-paint" && project) {
+      const painted = wallPaintSpan(currentDrag);
+      if (!painted) {
+        scheduleOverlayUpdate();
+        updateAuthoringUI();
+        return;
+      }
+      const section = project.centerlines.find(
+        (candidate) => candidate.id === currentDrag.sectionId,
+      );
+      if (!section) {
+        return;
+      }
+      if (!section.closed && painted.start + painted.length > 1 + 1e-9) {
+        setWallStatus("The wall span must stay within this open section.", "error");
+        scheduleOverlayUpdate();
+        return;
+      }
+      const overlaps = (section.walls ?? []).some(
+        (span) =>
+          span.side === currentDrag.side &&
+          kerbSpansOverlap(
+            painted.start,
+            painted.length,
+            span.start,
+            span.length,
+            section.closed,
+          ),
+      );
+      if (overlaps) {
+        setWallStatus("Walls on the same side cannot overlap.", "error");
+        scheduleOverlayUpdate();
+        return;
+      }
+      const before = currentDrag.startProject;
+      section.walls = [
+        ...(section.walls ?? []),
+        { side: currentDrag.side, start: painted.start, length: painted.length },
+      ].sort((a, b) => a.side.localeCompare(b.side) || a.start - b.start);
+      selectedWallSpan = {
+        sectionId: section.id,
+        index: section.walls.findIndex(
+          (span) =>
+            span.side === currentDrag.side &&
+            span.start === painted.start &&
+            span.length === painted.length,
+        ),
+      };
+      if (!renderProject(project, { frame: false })) {
+        project = before;
+        selectedWallSpan = null;
+        renderProject(project, { frame: false });
+        setWallStatus("The painted wall span does not bake.", "error");
+        scheduleOverlayUpdate();
+        return;
+      }
+      pushUndo(before);
+      setWallStatus("Painted wall span.", "ok");
+      scheduleOverlayUpdate();
+      updateAuthoringUI();
+      return;
+    }
+
+    if (currentDrag.kind === "wall-entry" || currentDrag.kind === "wall-exit") {
+      if (project && !bakeValid) {
+        project = currentDrag.startProject;
+        renderProject(project, { frame: false });
+        setWallStatus("Wall resize rejected: the track would become invalid.", "error");
+      } else if (
+        project &&
+        JSON.stringify(currentDrag.startProject) !== JSON.stringify(project)
+      ) {
+        pushUndo(currentDrag.startProject);
+      }
+      scheduleOverlayUpdate();
+      updateAuthoringUI();
+      return;
+    }
+
+    if (currentDrag.kind === "prop-paint" && project) {
+      const painted = propPaintSpan(currentDrag);
+      if (!painted) {
+        scheduleOverlayUpdate();
+        updateAuthoringUI();
+        return;
+      }
+      const section = project.centerlines.find(
+        (candidate) => candidate.id === currentDrag.sectionId,
+      );
+      if (!section) {
+        return;
+      }
+      if (!section.closed && painted.start + painted.length > 1 + 1e-9) {
+        setPropStatus("The prop run must stay within this open section.", "error");
+        scheduleOverlayUpdate();
+        return;
+      }
+      const before = currentDrag.startProject;
+      section.props = [
+        ...(section.props ?? []),
+        {
+          kind: currentDrag.propKind,
+          side: currentDrag.side,
+          start: painted.start,
+          length: painted.length,
+        },
+      ].sort(
+        (a, b) =>
+          a.side.localeCompare(b.side) ||
+          a.kind.localeCompare(b.kind) ||
+          a.start - b.start,
+      );
+      selectedPropSpan = {
+        sectionId: section.id,
+        index: section.props.findIndex(
+          (span) =>
+            span.kind === currentDrag.propKind &&
+            span.side === currentDrag.side &&
+            span.start === painted.start &&
+            span.length === painted.length,
+        ),
+      };
+      if (!renderProject(project, { frame: false })) {
+        project = before;
+        selectedPropSpan = null;
+        renderProject(project, { frame: false });
+        setPropStatus("The painted prop run does not bake.", "error");
+        scheduleOverlayUpdate();
+        return;
+      }
+      pushUndo(before);
+      setPropStatus("Painted prop run.", "ok");
+      scheduleOverlayUpdate();
+      updateAuthoringUI();
+      return;
+    }
+
+    if (currentDrag.kind === "prop-entry" || currentDrag.kind === "prop-exit") {
+      if (project && !bakeValid) {
+        project = currentDrag.startProject;
+        renderProject(project, { frame: false });
+        setPropStatus("Prop run resize rejected: the track would become invalid.", "error");
+      } else if (
+        project &&
+        JSON.stringify(currentDrag.startProject) !== JSON.stringify(project)
+      ) {
+        pushUndo(currentDrag.startProject);
+      }
+      scheduleOverlayUpdate();
+      updateAuthoringUI();
+      return;
+    }
+
     if (currentDrag.kind === "point" && project) {
       const branch = project.centerlines[currentDrag.centerlineIndex];
       if (
@@ -2969,7 +4083,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         );
         if (target) {
           const targetCenterline = project.centerlines[target.centerlineIndex];
-          if (project.schema === "track-ed/project@3" && targetCenterline) {
+          if (isVenueSchema(project.schema) && targetCenterline) {
             const isLoopClose = targetCenterline.id === branch.id;
             const isMergeTarget =
               !isLoopClose &&
@@ -3280,6 +4394,102 @@ kerbRemoveButton.addEventListener("click", removeKerbSpan);
 
 modePointsButton.addEventListener("click", () => setEditorMode("points"));
 modeKerbsButton.addEventListener("click", () => setEditorMode("kerbs"));
+modeWallsButton.addEventListener("click", () => setEditorMode("walls"));
+modePropsButton.addEventListener("click", () => setEditorMode("props"));
+
+wallHeight.addEventListener("input", () => {
+  if (!project || !selectedWallSpan) {
+    return;
+  }
+  const requested = Number(wallHeight.value);
+  if (!Number.isFinite(requested) || requested <= 0) {
+    return;
+  }
+  editSelectedWallSpan((span) => {
+    span.height = requested;
+  });
+});
+wallOffset.addEventListener("input", () => {
+  if (!project || !selectedWallSpan) {
+    return;
+  }
+  const requested = Number(wallOffset.value);
+  if (!Number.isFinite(requested) || requested < 0) {
+    return;
+  }
+  editSelectedWallSpan((span) => {
+    span.offset = requested;
+  });
+});
+wallHeight.addEventListener("change", finishWallEdit);
+wallOffset.addEventListener("change", finishWallEdit);
+wallRemoveButton.addEventListener("click", removeWallSpan);
+
+function finishWallEdit(): void {
+  if (!wallEditStart) {
+    return;
+  }
+  const start = wallEditStart;
+  wallEditStart = null;
+  if (!flushPendingRender()) {
+    project = start;
+    renderProject(project, { frame: false });
+    setWallStatus("The wall span does not bake. Adjust or remove it.", "error");
+    updateAuthoringUI();
+    return;
+  }
+  if (project && JSON.stringify(start) !== JSON.stringify(project)) {
+    pushUndo(start);
+  }
+  updateAuthoringUI();
+}
+
+for (const [button, kind] of [
+  [propKindTree, "tree"],
+  [propKindTyre, "tyre"],
+  [propKindBlock, "block"],
+] as const) {
+  button.addEventListener("click", () => {
+    if (project && project.schema !== "track-ed/project@4") {
+      setPropStatus("Props require track-ed/project@4.", "error");
+      return;
+    }
+    if (editorMode !== "props") {
+      setEditorMode("props");
+    }
+    propPaintKind = kind;
+    updateModeUI();
+    scheduleOverlayUpdate();
+    updateAuthoringUI();
+  });
+}
+propRemoveButton.addEventListener("click", removePropSpan);
+propOffset.addEventListener("input", () => {
+  if (!project || !selectedPropSpan) {
+    return;
+  }
+  const value = Number(propOffset.value);
+  if (!Number.isFinite(value) || value < 0) {
+    return;
+  }
+  editSelectedPropSpan((span) => {
+    span.offset = value;
+  });
+});
+propSpacing.addEventListener("input", () => {
+  if (!project || !selectedPropSpan) {
+    return;
+  }
+  const value = Number(propSpacing.value);
+  if (!Number.isFinite(value) || value <= 0) {
+    return;
+  }
+  editSelectedPropSpan((span) => {
+    span.spacing = value;
+  });
+});
+propOffset.addEventListener("change", finishPropSpanEdit);
+propSpacing.addEventListener("change", finishPropSpanEdit);
 
 centerlineToggle.addEventListener("change", () => {
   view?.setCenterlinesVisible(editorMode === "points" && centerlineToggle.checked);
@@ -3349,17 +4559,25 @@ window.addEventListener("keydown", (event) => {
     if (editorMode === "kerbs" && selectedKerbSpan) {
       event.preventDefault();
       removeKerbSpan();
+    } else if (editorMode === "walls" && selectedWallSpan) {
+      event.preventDefault();
+      removeWallSpan();
+    } else if (editorMode === "props" && selectedPropSpan) {
+      event.preventDefault();
+      removePropSpan();
     } else if (selectedPoint) {
       event.preventDefault();
       deleteSelectedPoint();
     }
   }
   if (event.key === "Escape") {
-    if (editorMode === "kerbs") {
+    if (editorMode === "kerbs" || editorMode === "walls" || editorMode === "props") {
       event.preventDefault();
       drag = null;
       view?.setControlsEnabled(true);
       selectedKerbSpan = null;
+      selectedWallSpan = null;
+      selectedPropSpan = null;
       scheduleOverlayUpdate();
       updateAuthoringUI();
     }

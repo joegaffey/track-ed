@@ -8,9 +8,14 @@ export type ConvertResult =
   | { ok: true; project: Project }
   | { ok: false; message: string };
 
-export function convertProjectToV3(source: Project): ConvertResult {
-  if (source.schema === "track-ed/project@3") {
+export function convertProjectToLatest(source: Project): ConvertResult {
+  if (source.schema === "track-ed/project@4") {
     return { ok: true, project: structuredClone(source) };
+  }
+  if (source.schema === "track-ed/project@3") {
+    const project = structuredClone(source);
+    project.schema = "track-ed/project@4";
+    return { ok: true, project };
   }
   if (source.schema === "track-ed/project@1") {
     return {
@@ -75,6 +80,8 @@ export function convertProjectToV3(source: Project): ConvertResult {
     delete converted.endAttach;
     return converted;
   });
-  project.schema = "track-ed/project@3";
+  project.schema = "track-ed/project@4";
   return { ok: true, project };
 }
+
+export const convertProjectToV3 = convertProjectToLatest;

@@ -1,6 +1,6 @@
 # Contract — `BakedTrack` v1
 
-Status: normative for v1. `kerbGraph` is an additive optional graph.
+Status: normative for v1. `kerbGraph`, `wallGraph`, and `props` are additive optional fields.
 
 ## Purpose
 
@@ -13,7 +13,7 @@ The TypeScript reference is `src/model/baked-track.ts`. This document defines th
 - The kernel produces `BakedTrack`.
 - An export profile consumes `BakedTrack`.
 - `BakedTrack` MUST NOT contain consumer-specific fields: no `.sima`, pack chunks, rkyv, importer node names, game surface IDs, or game-specific metadata.
-- The model is not persisted. `track-ed/project@3` is the current authoring format; `project@1` and `project@2` are legacy inputs.
+- The model is not persisted. `track-ed/project@4` is the current authoring format; `project@1`, `project@2`, and `project@3` are legacy inputs.
 
 ## Shape
 
@@ -28,6 +28,8 @@ interface BakedTrack {
   bounds: { min: Vec3; max: Vec3 };
   surfaceGraph: SurfaceGraph;
   kerbGraph?: SurfaceGraph;
+  wallGraph?: SurfaceGraph;
+  props?: Prop[];
   surfaces: Surface[];
   spawns: Spawn[];
   cameras: Camera[];
@@ -58,6 +60,17 @@ interface Camera {
   target: Vec3;
   fovY: number;
 }
+
+type PropKind = "tree" | "tyre" | "block";
+
+interface Prop {
+  id: string;
+  kind: PropKind;
+  position: Vec3;
+  rotation: Quat;
+  scale: number;
+  collision: boolean;
+}
 ```
 
 ## Normative rules
@@ -67,11 +80,13 @@ interface Camera {
 - **BM3** `triangleSurfaces.length` MUST equal `indices.length / 3`. Every id MUST exist in `surfaces`.
 - **BM4** `surfaces[].id` MUST be unique. `surfaces[].name` MUST be unique and non-empty.
 - **BM5** `bounds` MUST enclose every position.
-- **BM6** `length` MUST be the track length in metres. For `project@3` it is the sum of all section lengths; for legacy single-main-loop projects it is the main-loop arc length. Spline sections are measured on the sampled polyline. Branches and dead ends are included for `project@3`.
+- **BM6** `length` MUST be the track length in metres. For `project@3`/`project@4` it is the sum of all section lengths; for legacy single-main-loop projects it is the main-loop arc length. Spline sections are measured on the sampled polyline. Branches and dead ends are included for venue projects.
 - **BM7** `spawns` MUST contain at least one spawn. Rotations MUST be normalized and face the centreline tangent.
 - **BM8** `cameras` MAY be empty.
 - **BM9** `surfaceGraph` MUST satisfy geometry requirements G3–G11 from `SPEC.md` before any profile may export it. `kerbGraph`, when present, MUST satisfy K1–K3.
 - **BM9a** `kerbGraph` is separate from `surfaceGraph` and does not change the welded ground graph. It contains raised kerb tops, sides, and end caps. Kerb triangles MAY have non-vertical or vertical normals.
+- **BM9b** `wallGraph` is separate from `surfaceGraph` and `kerbGraph`. It contains continuous wall faces with the declared `wall` surface. Wall triangles MAY be vertical. Exposed wall ends MUST be capped.
+- **BM9c** `props` is optional. The kernel expands authored prop runs into deterministic instances with terrain-sampled base heights; each instance MUST have a unique id, a supported kind, a finite world position, a normalized rotation, a positive scale, and a boolean collision policy. Tree collision is limited to the trunk; canopies are visual-only. Props MUST NOT be added to `surfaceGraph` or either roadside graph.
 - **BM10** The model MUST be deterministic: the same project yields the same positions, indices, surface ids, and ordering.
 - **BM11** No timestamps, generated-by strings, or environment-dependent values may appear in the model.
 - **BM12** The model is not persisted.
@@ -93,6 +108,14 @@ The kernel MUST validate, and the inspector MUST expose:
 - every triangle assigned exactly one surface;
 - collision geometry identical to visual geometry;
 - branch ends capped and integrated into the terrain.
+
+Wall rules:
+
+- **W1** Wall triangles MUST be non-degenerate and MUST NOT duplicate one another.
+- **W2** After welding, the wall graph MUST NOT contain T-junctions.
+- **W3** Walls MUST use the declared `wall` surface and MUST be separate from the ground and kerb graphs.
+- Wall bases MUST follow the same ground/terrain height source as the adjacent road and shoulder.
+- Wall spans MAY overlap junction asphalt and other section walls at shared junctions. Exposed span ends MUST be capped.
 
 Kerb rules:
 
@@ -117,6 +140,7 @@ Kerb rules:
 - No timestamps.
 - No random identifiers.
 - Repeat export of the same project must be byte-identical.
+- Prop ordering follows section order, prop-run order, then distance along each run; roadside graph ordering follows the section and span order.
 
 ## Validation
 

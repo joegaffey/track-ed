@@ -1,6 +1,6 @@
 # v1 roadmap — production promotion gates
 
-Status: G1, G2a, G2b, G2c1, G2c4, the `project@2` multi-junction graph, the `project@3` venue section graph, and G3 kerbs are implemented; road elevation, banking/crown, and props remain. v0 remains a spike until these gates pass.
+Status: G1, G2a, G2b, G2c1, G2c4, the `project@2` multi-junction graph, the `project@3` venue section graph, G3 kerbs, and G4 walls/props are implemented; banking/crown and re-conformance remain. v0 remains a spike until these gates pass.
 Date: 2026-11-16.
 
 ## Decision
@@ -42,17 +42,21 @@ Contract decision (D12): terrain has one source of truth per project.
 - Kerbs mode with dashed guide rails: drag to paint spans, select spans, and drag endpoint handles to resize. Seam-wrapping spans are supported through forward `start + length` arcs.
 - Red/white kerb runs follow road edges, rounded corners, and junction approaches with equal-length jagged elements: flat approach, one raised corner, then a riser.
 - Flat and corner heights are authorable globally and per span.
-- A separate consumer-neutral `kerbGraph` preserves the welded ground invariants. Spans are clipped against junction asphalt and other kerbs; exposed ends are capped.
+- A separate consumer-neutral `kerbGraph` preserves the welded ground invariants. Spans run continuously to their authored ends and may overlap at junctions; exposed ends are capped.
 - Kerbs sample the same ground/terrain height source as the road and shoulder.
-- `lapster-glb-track@2` emits `surface_kerb_red` and `surface_kerb_white` with solid collision on all faces.
+- `lapster-glb-track@3` emits `surface_kerb_red` and `surface_kerb_white` with solid collision on all faces.
 - Verified with the Lapster asset compiler: the two kerb fixtures bake, inspect as `Track`, and validate `ok`.
 
-### G4 — Props
+### G4 — Props and walls (implemented)
 
-- Define a consumer-neutral placement model: type/id, position, rotation, scale, and collision policy.
-- Add authoring, selection, duplication, and deletion.
-- Define export node/material conventions and confirm Lapster importer support.
-- Treat props as optional scene decoration; they must not alter the road surface graph.
+- `project@4` adds section-local wall spans and tree/tyre/block prop runs.
+- Walls use the shared roadside-run path with forward `start + length` spans, fixed `0.3 m` thickness, default `1.0 m` height, and default `0 m` offset so the inner face sits on the tarmac edge.
+- Walls bake into a separate `wallGraph` with the `wall` surface; exposed ends are capped and junction overlaps are intentional.
+- Prop runs carry kind, side, forward `start + length`, offset, spacing, and collision. The kernel expands them into deterministic instances along the section spline with terrain-sampled base heights. Tree collision is trunk-only.
+- The app authorises walls and prop runs with guide-rail painting, selection, endpoint handles, and numeric offset/spacing. Exported props use Lapster-derived concrete barrier, blue/white tyre-stack, and conifer-tree geometry rather than track-ed placeholders.
+- `lapster-glb-track@3` emits `surface_wall`, `prop_*` visuals, and a merged `col_prop` collision mesh using the `wall` material.
+- Props and walls do not alter the welded ground graph.
+- Verified with the Lapster asset compiler: walls/props bake, inspect as `Track`, validate `ok`, and render in the viewer and drive viewer.
 
 ### G5 — Re-conformance, performance, and comparison
 

@@ -16,12 +16,14 @@ import {
 import {
   KERB_RED_SURFACE,
   KERB_WHITE_SURFACE,
+  WALL_SURFACE,
 } from "./surfaces";
 
 import {
   KERB_ELEMENT_LENGTH,
   KERB_SAMPLE_SPACING,
   KERB_WIDTH,
+  WALL_SAMPLE_SPACING,
   roadsideRunsFromProject,
 } from "./roadside";
 
@@ -33,6 +35,12 @@ export {
   DEFAULT_KERB_CORNER_HEIGHT,
   KERB_ELEMENT_LENGTH,
   KERB_SAMPLE_SPACING,
+  WALL_SAMPLE_SPACING,
+  WALL_THICKNESS,
+  DEFAULT_WALL_HEIGHT,
+  DEFAULT_WALL_OFFSET,
+  DEFAULT_PROP_OFFSETS,
+  DEFAULT_PROP_SPACING,
 } from "./roadside";
 
 interface Station {
@@ -192,19 +200,22 @@ function stationsForSpan(
   sideName: "left" | "right",
   start: number,
   length: number,
+  innerDistance: number,
+  outerDistance: number,
+  spacing = KERB_SAMPLE_SPACING,
 ): Station[] {
   const sampled = sampleCenterline(section.points as Vec2[], section.closed, section.spline);
   const sliced = sliceSpanPolyline(sampled, section.closed, start, length);
-  const points = resamplePolyline(sliced, KERB_SAMPLE_SPACING);
+  const points = resamplePolyline(sliced, spacing);
   if (points.length < 2) {
     return [];
   }
   const side = sideName === "left" ? 1 : -1;
-  const inner = offsetPolyline(points, false, side, project.road.halfWidth);
-  const outer = offsetPolyline(points, false, side, project.road.halfWidth + KERB_WIDTH);
+  const inner = offsetPolyline(points, false, side, innerDistance);
+  const outer = offsetPolyline(points, false, side, outerDistance);
   if (inner.length !== points.length || outer.length !== points.length) {
     throw new BakeError(
-      `kerb span ${section.id} [${start.toFixed(3)} + ${length.toFixed(3)}] could not be offset`,
+      `roadside span ${section.id} [${start.toFixed(3)} + ${length.toFixed(3)}] could not be offset`,
     );
   }
   for (let index = 0; index < points.length - 1; index += 1) {
@@ -217,7 +228,7 @@ function stationsForSpan(
       Math.hypot(d[0] - c[0], d[1] - c[1]) <= MIN_SEGMENT_LENGTH
     ) {
       throw new BakeError(
-        `kerb span ${section.id} [${start.toFixed(3)} + ${length.toFixed(3)}] collapses; widen the turn or reduce the kerb width`,
+        `roadside span ${section.id} [${start.toFixed(3)} + ${length.toFixed(3)}] collapses; widen the turn or reduce the width`,
       );
     }
   }
@@ -226,7 +237,7 @@ function stationsForSpan(
     polylineSelfIntersections(outer, false).length > 0
   ) {
     throw new BakeError(
-      `kerb span ${section.id} [${start.toFixed(3)} + ${length.toFixed(3)}] self-intersects; widen the turn or reduce the kerb width`,
+      `roadside span ${section.id} [${start.toFixed(3)} + ${length.toFixed(3)}] self-intersects; widen the turn or reduce the width`,
     );
   }
 
@@ -513,21 +524,170 @@ function buildRun(
   return elementCount;
 }
 
-export function buildKerbGraph(
+function buildWallRun(
+  builder: MeshBuilder,
+  runStations: Station[],
+  sideSign: 1 | -1,
+  height: number,
+): void {
+  if (runStations.length < 2) {
+    return;
+  }
+  for (let index = 0; index < runStations.length - 1; index += 1) {
+    const from = runStations[index]!;
+    const to = runStations[index + 1]!;
+    const direction = normalize2(sub2(to.inner, from.inner));
+    if (Math.hypot(direction[0], direction[1]) <= MIN_SEGMENT_LENGTH) {
+      continue;
+    }
+    const normal = leftNormal(direction);
+    const outward: Vec3 = [normal[0] * sideSign, 0, normal[1] * sideSign];
+    const inward: Vec3 = [-outward[0], 0, -outward[2]];
+    const fromInnerBase: Vec3 = [from.inner[0], from.innerBaseY, from.inner[1]];
+    const fromInnerTop: Vec3 = [
+      from.inner[0],
+      from.innerBaseY + height,
+      from.inner[1],
+    ];
+    const fromOuterBase: Vec3 = [from.outer[0], from.outerBaseY, from.outer[1]];
+    const fromOuterTop: Vec3 = [
+      from.outer[0],
+      from.outerBaseY + height,
+      from.outer[1],
+    ];
+    const toInnerBase: Vec3 = [to.inner[0], to.innerBaseY, to.inner[1]];
+    const toInnerTop: Vec3 = [to.inner[0], to.innerBaseY + height, to.inner[1]];
+    const toOuterBase: Vec3 = [to.outer[0], to.outerBaseY, to.outer[1]];
+    const toOuterTop: Vec3 = [to.outer[0], to.outerBaseY + height, to.outer[1]];
+
+    addOrientedQuad(
+      builder,
+      fromInnerBase,
+      fromInnerTop,
+      toInnerTop,
+      toInnerBase,
+      WALL_SURFACE,
+      inward,
+    );
+    addOrientedQuad(
+      builder,
+      fromOuterBase,
+      toOuterBase,
+      toOuterTop,
+      fromOuterTop,
+      WALL_SURFACE,
+      outward,
+    );
+    addOrientedQuad(
+      builder,
+      fromInnerTop,
+      fromOuterTop,
+      toOuterTop,
+      toInnerTop,
+      WALL_SURFACE,
+      [0, 1, 0],
+    );
+  }
+
+  const first = runStations[0]!;
+  const second = runStations[1]!;
+  const startDirection = normalize2(sub2(first.inner, second.inner));
+  addOrientedQuad(
+    builder,
+    [first.inner[0], first.innerBaseY, first.inner[1]],
+    [first.outer[0], first.outerBaseY, first.outer[1]],
+    [first.outer[0], first.outerBaseY + height, first.outer[1]],
+    [first.inner[0], first.innerBaseY + height, first.inner[1]],
+    WALL_SURFACE,
+    [startDirection[0], 0, startDirection[1]],
+  );
+
+  const last = runStations[runStations.length - 1]!;
+  const previous = runStations[runStations.length - 2]!;
+  const endDirection = normalize2(sub2(last.inner, previous.inner));
+  addOrientedQuad(
+    builder,
+    [last.inner[0], last.innerBaseY, last.inner[1]],
+    [last.outer[0], last.outerBaseY, last.outer[1]],
+    [last.outer[0], last.outerBaseY + height, last.outer[1]],
+    [last.inner[0], last.innerBaseY + height, last.inner[1]],
+    WALL_SURFACE,
+    [endDirection[0], 0, endDirection[1]],
+  );
+}
+
+export function buildWallGraph(
   project: Project,
   bounds: Bounds,
 ): SurfaceGraph | undefined {
-  const runs = roadsideRunsFromProject(project);
+  const runs = roadsideRunsFromProject(project).filter(
+    (run) => run.profile.kind === "wall",
+  );
   if (runs.length === 0) {
     return undefined;
   }
 
   const builder = new MeshBuilder();
   for (const run of runs) {
-    if (run.profile.kind !== "kerb") {
-      throw new BakeError(`unsupported roadside surface kind "${run.kind}"`);
-    }
     const profile = run.profile;
+    if (profile.kind !== "wall") {
+      continue;
+    }
+    if (profile.height <= 0 || profile.width <= 0) {
+      throw new BakeError(`wall run "${run.id}" has invalid dimensions`);
+    }
+    for (const leg of run.legs) {
+      const section = project.centerlines.find(
+        (candidate) => candidate.id === leg.section,
+      );
+      if (!section) {
+        throw new BakeError(`wall run "${run.id}" references an unknown section`);
+      }
+      const innerDistance = project.road.halfWidth + run.offset.distance;
+      const stations = stationsForSpan(
+        project,
+        bounds,
+        section,
+        run.side,
+        leg.start,
+        leg.length,
+        innerDistance,
+        innerDistance + profile.width,
+        WALL_SAMPLE_SPACING,
+      );
+      if (stations.length < 2) {
+        continue;
+      }
+      buildWallRun(
+        builder,
+        stations,
+        run.side === "left" ? 1 : -1,
+        profile.height,
+      );
+    }
+  }
+
+  const graph = builder.build();
+  return graph.indices.length > 0 ? graph : undefined;
+}
+
+export function buildKerbGraph(
+  project: Project,
+  bounds: Bounds,
+): SurfaceGraph | undefined {
+  const runs = roadsideRunsFromProject(project).filter(
+    (run) => run.profile.kind === "kerb",
+  );
+  if (runs.length === 0) {
+    return undefined;
+  }
+
+  const builder = new MeshBuilder();
+  for (const run of runs) {
+    const profile = run.profile;
+    if (profile.kind !== "kerb") {
+      continue;
+    }
     if (profile.cornerHeight <= profile.flatHeight) {
       throw new BakeError(
         `kerb run "${run.id}" cornerHeight must be greater than flatHeight`,
@@ -547,6 +707,9 @@ export function buildKerbGraph(
         run.side,
         leg.start,
         leg.length,
+        project.road.halfWidth,
+        project.road.halfWidth + KERB_WIDTH,
+        KERB_SAMPLE_SPACING,
       );
       if (stations.length < 2) {
         continue;

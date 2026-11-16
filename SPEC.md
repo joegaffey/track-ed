@@ -1,12 +1,12 @@
 # track-ed — Functional Specification v1.0
 
-Status: v1 implementation in progress; M4 conformance passed. Scope: v0 spike plus v1 gates (splines, terrain/TIN, `project@2` junctions, `project@3` venue sections, and kerbs). Props remain.
+Status: v1 implementation in progress; M4 conformance passed. Scope: v0 spike plus v1 gates (splines, terrain/TIN, `project@2` junctions, `project@3` venue sections, kerbs, walls, and props).
 
 ## 1. Purpose
 
 `track-ed` is a standalone browser editor for authoring simple track geometry, inspecting the baked result, and exporting a GLB plus a manifest. The v0 goal is to prove whether a clean-room three.js-based editor and geometry pipeline can produce acceptable closed-loop and junction geometry faster and more inspectably than the current in-engine builder.
 
-The project model is track-ed's own. Lapster is the first consumer, not the definition of the tool. v0 ships one export profile, `lapster-glb-track@2`, which emits `track.glb` + `track.json` satisfying Lapster's `sim-track-glb-v1` importer. The `.sima` pack is produced downstream by Lapster's asset compiler.
+The project model is track-ed's own. Lapster is the first consumer, not the definition of the tool. v0 ships one export profile, `lapster-glb-track@3`, which emits `track.glb` + `track.json` satisfying Lapster's `sim-track-glb-v1` importer. The `.sima` pack is produced downstream by Lapster's asset compiler.
 
 ## 2. Status
 
@@ -23,8 +23,10 @@ The project model is track-ed's own. Lapster is the first consumer, not the defi
 - v1-G2c4 is implemented: road-follow mode now samples a global TIN built from the terrain points, so the road, shoulder, and terrain follow the same surface.
 - `track-ed/project@3` is implemented: multiple closed sections, dead-ended open sections, multi-way junction members, open-section junctions, section/junction authoring, an independent section list, separate Add section and Add junction flows, loose-end merging, loop closing, junction detach, and open/closed section splitting bake without a main loop. The full fixture matrix bakes, validates, exports, and passes Lapster conformance. Routes remain deferred.
 - `track-ed/project@2` is implemented: shared junction nodes with stable point ids support multiple junctions and multi-way branches. Moving a shared junction point moves every connected branch. A loose branch end can be dragged onto a main-loop control point to join it (`endAttach`), and dragging a joined end pulls it free. Dragging one loose branch end onto another merges both branches into a single open centreline.
-- v1-G3 kerbs are implemented: authorable section-local spans, junction-clipped red/white kerb geometry, a separate consumer-neutral kerb graph, and solid kerb collision in the Lapster profile.
-- v1-G4 props are next. The v0 performance comparison remains useful baseline input for the v1 decision.
+- v1-G3 kerbs are implemented: authorable section-local spans, continuous red/white kerb geometry with intentional junction overlaps, a separate consumer-neutral kerb graph, and solid kerb collision in the Lapster profile.
+- v1-G4 walls and props are implemented: section-local continuous walls and spline-following tree/tyre/block prop runs with offset, spacing, and collision policy.
+- `track-ed/project@4` is the current authoring format; `project@3` remains import-only and upgrades on load.
+- The v0 performance comparison remains useful baseline input for the v1 decision.
 
 ## 3. Scope
 
@@ -42,8 +44,7 @@ The project model is track-ed's own. Lapster is the first consumer, not the defi
 - Multiple loops, multiple branches per junction, shared sections.
 - Pit lanes, routes, sectors, multiple layouts.
 - Elevation, terrain relief, water, sky.
-- Kerbs, props, barriers, decorations, start gantries.
-- Textures and advanced materials.
+- Textures and advanced materials beyond flat base colours.
 - Direct `.sima` export.
 - CLI or headless export app.
 - Game runtime, physics, audio, multiplayer.
@@ -63,7 +64,7 @@ The project model is track-ed's own. Lapster is the first consumer, not the defi
 ```text
 src/kernel/         consumer-neutral geometry
 src/model/          BakedTrack contract
-src/export/lapster/ lapster-glb-track@2 profile
+src/export/lapster/ lapster-glb-track@3 profile
 src/app/            three.js editor and inspector
 ```
 
@@ -117,6 +118,8 @@ The model contains:
 - bounds;
 - one welded ground surface graph (positions, indices, per-triangle surface ids);
 - an optional separate kerb surface graph;
+- an optional separate wall surface graph;
+- optional baked prop instances expanded from section-local tree/tyre/block runs;
 - surfaces (id, name, friction, roughness);
 - spawns;
 - cameras.
@@ -125,7 +128,7 @@ The model MUST be consumer-agnostic. It MUST NOT contain `.sima`, pack chunks, r
 
 ## 9. Export profile v0
 
-The export profile is `lapster-glb-track@2`. The normative contract is `docs/contracts/lapster-glb-track.md`; the manifest schema is `schemas/lapster-track-manifest.schema.json`.
+The export profile is `lapster-glb-track@3`. The normative contract is `docs/contracts/lapster-glb-track.md`; the manifest schema is `schemas/lapster-track-manifest.schema.json`.
 
 The `track.glb` payload is standard glTF 2.0. The Lapster-specific parts are the `track.json` manifest, the `surface_*` node/material naming convention, surface metadata, spawn/collision rules, and the two-file bundle contract.
 
@@ -154,11 +157,16 @@ All requirements are normative.
 - **G12 — Branch ends.** Open branch ends MUST be capped and integrated into the terrain surface. No open road edge.
 - **G13 — Flat v0; elevation in v1.** v0 fixtures are flat at `y = 0`. v1 terrain and road-follow mode may elevate surfaces; connected road, shoulder, and terrain boundaries MUST share the same height.
 - **G14 — Path validity.** Minimum turn radius SHOULD warn (default 6 m). Main-loop self-intersection MUST be rejected. Branch/host attachment is the only permitted crossing.
-- **G15 — Bounds.** Scene bounds MUST cover the drivable area plus `terrain.margin`. The outer perimeter is the scene-bounds rectangle. Walls and outer-edge fall protection are out of scope.
+- **G15 — Bounds.** Scene bounds MUST cover the drivable area plus `terrain.margin`. The outer perimeter is the scene-bounds rectangle. Authored walls are in scope; automatic outer-edge fall protection is not.
 - **K1 — Kerb validity.** Kerb triangles MUST be non-degenerate and MUST NOT duplicate one another.
 - **K2 — Kerb topology.** After welding, the kerb graph MUST NOT contain T-junctions.
 - **K3 — Kerb separation and policy.** Kerbs MUST be stored in a separate consumer-neutral graph, use declared `kerb_*` surfaces, and follow the adjacent ground height. Section kerbs run continuously to their authored ends. Kerbs from adjacent sections MAY overlap each other and junction asphalt at a shared junction; no clipping or joiner is required. Exposed span ends MUST be capped. The export profile declares collision policy; v1 includes all kerb faces as solid.
 - **K4 — Kerb profile and authoring.** Kerb spans are forward section-local arcs (`start + length`); on closed sections an arc may wrap through the seam. Kerb authoring MUST use direct guide-rail painting and endpoint handles rather than start/end sliders. Each contiguous run MUST use equal-length elements. Each element MUST start at the effective flat height and rise to one raised corner at the effective corner height. Flat and corner heights MAY be set globally and overridden per span; the effective corner height MUST be greater than the effective flat height.
+
+- **W1 — Wall validity.** Wall triangles MUST be non-degenerate and MUST NOT duplicate one another.
+- **W2 — Wall topology.** After welding, the wall graph MUST NOT contain T-junctions.
+- **W3 — Wall policy.** Walls MUST be stored in a separate consumer-neutral graph, use the declared `wall` surface, follow the adjacent ground height, run to authored span ends, and cap exposed ends. Walls from adjacent sections MAY overlap at shared junctions.
+- **P1 — Prop validity.** Prop runs MUST be section-local forward arcs with a supported kind, side, offset, spacing, and collision policy. The kernel MUST expand them into deterministic instances with finite world transforms and MUST NOT alter the ground, kerb, or wall graphs.
 
 Implementation hint, not a requirement: a uniform terrain grid clipped and welded to the road footprint is the easiest way to satisfy G3, G6, and G7. Polygon-with-holes terrain is allowed but harder to keep hole-free.
 
@@ -172,7 +180,7 @@ Because inspection is the spike's primary validation surface, the editor MUST pr
 - **I4** Degenerate-triangle and duplicate/overlapping-triangle report.
 - **I5** Surface legend. Hover/click a triangle to report material, area, and triangle id.
 - **I6** Collision overlay to compare collision and visual surfaces.
-- **I7** Validation summary: ground boundary edge count, non-manifold edge count, degenerate count, overlap pairs, T-junction count, surface coverage status, and kerb vertex/triangle/non-manifold/T-junction counts.
+- **I7** Validation summary: ground boundary edge count, non-manifold edge count, degenerate count, overlap pairs, T-junction count, surface coverage status, kerb/wall vertex/triangle/non-manifold/T-junction counts, and a prop count.
 - **I8** Export is blocked while any MUST-level validation fails.
 
 ## 12. Functional flows
@@ -185,6 +193,8 @@ Because inspection is the spike's primary validation surface, the editor MUST pr
 - **F6** Inspect: use the geometry inspector.
 - **F7** Export: browser download of `track.glb` + `track.json`.
 - **F8** Validate: list violations; MUST failures block export.
+- **F9** Author walls with guide-rail painting and endpoint handles.
+- **F10** Paint, resize, delete, and set offset/spacing/collision for tree, tyre, and block prop runs.
 
 ## 13. Validation and export gate
 
@@ -252,13 +262,13 @@ See `docs/toolchain.md`.
 
 These are documented only to bound v0. They MUST NOT introduce design hooks, placeholder interfaces, or unused abstractions in v0.
 
-Terrain elevation and rounded spline centrelines are now implemented as v1 gates (G1, G2). Multiple loops, shared sections, and multi-way junctions are implemented in `project@3`. Kerbs and props remain deferred **for v0** and are required for production promotion in v1. See `docs/v1-roadmap.md`.
+Terrain elevation and rounded spline centrelines are now implemented as v1 gates (G1, G2). Multiple loops, shared sections, multi-way junctions, kerbs, walls, and props are implemented in `project@3`/`project@4`. Banking/crown, final re-conformance, and the production decision remain. See `docs/v1-roadmap.md`.
 
 - **Routes, laps, and sectors**: race routes over venue sections, route-based length, sectors, checkpoints, and start/finish logic.
 - **Pit lanes and pit boxes**: pit entry/exit paths, boxes, and metadata.
 - **Elevation and terrain relief**: heightfields, slopes, and cut/fill.
 - **Spline-resampled centrelines**: rounded corners and non-polyline centreline sampling.
-- **Kerbs, props, barriers, decorations**: authored roadside geometry and collision policy.
+- **Wall material variants, shaped profiles, and prop asset libraries**.
 - **Textures and material libraries**: beyond flat base colours.
 - **Direct `.sima` export**: pack writing without the Lapster compiler.
 - **CLI/headless export**: a non-browser bake path.
@@ -323,7 +333,7 @@ After promotion, decide explicitly which editor owns track authoring. Do not mai
 
 - track-ed owns `track-ed/project@1` and `BakedTrack` v1.
 - Lapster owns `sim-track-glb-v1`; track-ed pins its copy in `schemas/lapster-track-manifest.schema.json`.
-- The current export profile is `lapster-glb-track@2`.
-- v1 terrain and kerbs remained additive on `project@3` and `BakedTrack` v1 (optional `kerbGraph`); props may require a schema bump.
+- The current export profile is `lapster-glb-track@3`.
+- v1 terrain, kerbs, walls, and props remained additive on `BakedTrack` v1 (optional `kerbGraph`, `wallGraph`, and `props`); authoring is `project@4`.
 - Changes to node names, materials, or manifest fields require a further profile version bump and a conformance run.
 - Breaking changes to the project format or baked model require a version bump.

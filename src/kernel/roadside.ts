@@ -1,10 +1,30 @@
-import type { Project, ProjectKerbSpan } from "./project";
+import type {
+  Project,
+  ProjectKerbSpan,
+  ProjectWallSpan,
+} from "./project";
 
 export const KERB_WIDTH = 0.8;
 export const DEFAULT_KERB_FLAT_HEIGHT = 0.06;
 export const DEFAULT_KERB_CORNER_HEIGHT = 0.155;
 export const KERB_ELEMENT_LENGTH = 2;
 export const KERB_SAMPLE_SPACING = 2;
+
+export const WALL_THICKNESS = 0.3;
+export const DEFAULT_WALL_HEIGHT = 1;
+export const DEFAULT_WALL_OFFSET = 0;
+export const WALL_SAMPLE_SPACING = 2;
+
+export const DEFAULT_PROP_OFFSETS: Record<"tree" | "tyre" | "block", number> = {
+  tree: 4.5,
+  tyre: 0.8,
+  block: 1,
+};
+export const DEFAULT_PROP_SPACING: Record<"tree" | "tyre" | "block", number> = {
+  tree: 4.5,
+  tyre: 0.8,
+  block: 2,
+};
 
 export type RoadsideSide = "left" | "right";
 export type RoadsideSurfaceKind = "kerb" | "wall";
@@ -64,6 +84,14 @@ function kerbSpanLeg(sectionId: string, span: ProjectKerbSpan): RoadsideLeg {
   };
 }
 
+function wallSpanLeg(sectionId: string, span: ProjectWallSpan): RoadsideLeg {
+  return {
+    section: sectionId,
+    start: span.start,
+    length: span.length,
+  };
+}
+
 function kerbSpanProfile(
   project: Project,
   span: ProjectKerbSpan,
@@ -86,9 +114,9 @@ function kerbSpanProfile(
 export function roadsideRunsFromProject(project: Project): RoadsideRun[] {
   const runs: RoadsideRun[] = [];
   for (const section of project.centerlines) {
-    const spans = section.kerbs ?? [];
-    for (let index = 0; index < spans.length; index += 1) {
-      const span = spans[index]!;
+    const kerbSpans = section.kerbs ?? [];
+    for (let index = 0; index < kerbSpans.length; index += 1) {
+      const span = kerbSpans[index]!;
       if (span.length <= 1e-9) {
         continue;
       }
@@ -105,6 +133,32 @@ export function roadsideRunsFromProject(project: Project): RoadsideRun[] {
         junctionPolicy: "clip",
         collision: "solid",
         profile: kerbSpanProfile(project, span),
+      });
+    }
+
+    const wallSpans = section.walls ?? [];
+    for (let index = 0; index < wallSpans.length; index += 1) {
+      const span = wallSpans[index]!;
+      if (span.length <= 1e-9) {
+        continue;
+      }
+      runs.push({
+        id: `${section.id}:wall:${index}`,
+        kind: "wall",
+        mechanism: "surface",
+        side: span.side,
+        legs: [wallSpanLeg(section.id, span)],
+        offset: {
+          reference: "asphalt-edge",
+          distance: span.offset ?? DEFAULT_WALL_OFFSET,
+        },
+        junctionPolicy: "follow",
+        collision: "solid",
+        profile: {
+          kind: "wall",
+          width: WALL_THICKNESS,
+          height: span.height ?? DEFAULT_WALL_HEIGHT,
+        },
       });
     }
   }

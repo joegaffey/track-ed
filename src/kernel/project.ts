@@ -10,7 +10,12 @@ export type ProjectVec3 = [number, number, number];
 export type ProjectSchema =
   | "track-ed/project@1"
   | "track-ed/project@2"
-  | "track-ed/project@3";
+  | "track-ed/project@3"
+  | "track-ed/project@4";
+
+export function isVenueSchema(schema: ProjectSchema): boolean {
+  return schema === "track-ed/project@3" || schema === "track-ed/project@4";
+}
 
 export interface ProjectRoad {
   halfWidth: number;
@@ -73,6 +78,26 @@ export interface ProjectKerbSpan {
   cornerHeight?: number;
 }
 
+export interface ProjectWallSpan {
+  side: ProjectKerbSide;
+  start: number;
+  length: number;
+  height?: number;
+  offset?: number;
+}
+
+export type ProjectPropKind = "tree" | "tyre" | "block";
+
+export interface ProjectPropSpan {
+  kind: ProjectPropKind;
+  side: ProjectKerbSide;
+  start: number;
+  length: number;
+  offset?: number;
+  spacing?: number;
+  collision?: "solid" | "none";
+}
+
 export interface ProjectCenterline {
   id: string;
   closed: boolean;
@@ -82,6 +107,8 @@ export interface ProjectCenterline {
   endAttach?: ProjectAttach;
   spline?: ProjectSpline;
   kerbs?: ProjectKerbSpan[];
+  walls?: ProjectWallSpan[];
+  props?: ProjectPropSpan[];
 }
 
 export interface ProjectSpawn {
@@ -518,7 +545,7 @@ function parseJunction(
   }
 
   const id = readString(object.id, `${path}.id`, issues);
-  if (schema === "track-ed/project@3") {
+  if (isVenueSchema(schema)) {
     rejectUnknownKeys(object, ["id", "members", "anchor"], path, issues);
     if (!Array.isArray(object.members) || object.members.length < 2) {
       issues.push({
@@ -735,6 +762,208 @@ function parseKerbSpans(
   return spans;
 }
 
+function parseWallSpan(
+  value: unknown,
+  path: string,
+  issues: ProjectIssue[],
+): ProjectWallSpan | null {
+  const object = expectObject(value, path, issues);
+  if (!object) {
+    return null;
+  }
+  rejectUnknownKeys(
+    object,
+    ["side", "start", "length", "height", "offset"],
+    path,
+    issues,
+  );
+  const side = readString(object.side, `${path}.side`, issues);
+  if (side !== null && side !== "left" && side !== "right") {
+    issues.push({ path: `${path}.side`, message: 'must be "left" or "right"' });
+  }
+  const start = readNumber(object.start, `${path}.start`, issues);
+  const length = readPositiveNumber(object.length, `${path}.length`, issues);
+  if (start !== null && (start < 0 || start >= 1)) {
+    issues.push({ path: `${path}.start`, message: "must be in [0, 1)" });
+  }
+  if (length !== null && length > 1) {
+    issues.push({ path: `${path}.length`, message: "must be no greater than 1" });
+  }
+  const height =
+    object.height === undefined
+      ? undefined
+      : readPositiveNumber(object.height, `${path}.height`, issues);
+  const offset =
+    object.offset === undefined
+      ? undefined
+      : readNonNegativeNumber(object.offset, `${path}.offset`, issues);
+  return side === "left" || side === "right"
+    ? {
+        side,
+        start: start ?? 0,
+        length: length ?? 0,
+        ...(height !== undefined && height !== null ? { height } : {}),
+        ...(offset !== undefined && offset !== null ? { offset } : {}),
+      }
+    : null;
+}
+
+function parseWallSpans(
+  value: unknown,
+  path: string,
+  issues: ProjectIssue[],
+  closed: boolean,
+): ProjectWallSpan[] | null {
+  if (!Array.isArray(value)) {
+    issues.push({ path, message: "must be an array" });
+    return null;
+  }
+  const spans: ProjectWallSpan[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const span = parseWallSpan(value[index], `${path}[${index}]`, issues);
+    if (!span) {
+      return null;
+    }
+    if (!closed && span.start + span.length > 1 + 1e-9) {
+      issues.push({
+        path: `${path}[${index}].length`,
+        message: "must not extend past the end of an open section",
+      });
+    }
+    if (closed && span.length >= 1 - 1e-9) {
+      issues.push({
+        path: `${path}[${index}].length`,
+        message:
+          "a closed-section wall span must be shorter than the full loop; use two spans that meet at a seam",
+      });
+    }
+    spans.push(span);
+  }
+  for (const side of ["left", "right"] as const) {
+    const intervals = spans
+      .filter((span) => span.side === side)
+      .flatMap((span) => kerbSpanIntervals(span.start, span.length, closed))
+      .sort((a, b) => a[0] - b[0]);
+    for (let index = 1; index < intervals.length; index += 1) {
+      if (intervals[index]![0] < intervals[index - 1]![1] - 1e-9) {
+        issues.push({
+          path,
+          message: `${side} wall spans must not overlap`,
+        });
+        return null;
+      }
+    }
+  }
+  return spans;
+}
+
+function parsePropSpan(
+  value: unknown,
+  path: string,
+  issues: ProjectIssue[],
+): ProjectPropSpan | null {
+  const object = expectObject(value, path, issues);
+  if (!object) {
+    return null;
+  }
+  rejectUnknownKeys(
+    object,
+    ["kind", "side", "start", "length", "offset", "spacing", "collision"],
+    path,
+    issues,
+  );
+  const kind = readString(object.kind, `${path}.kind`, issues);
+  if (kind !== null && !["tree", "tyre", "block"].includes(kind)) {
+    issues.push({
+      path: `${path}.kind`,
+      message: 'must be "tree", "tyre", or "block"',
+    });
+  }
+  const side = readString(object.side, `${path}.side`, issues);
+  if (side !== null && side !== "left" && side !== "right") {
+    issues.push({ path: `${path}.side`, message: 'must be "left" or "right"' });
+  }
+  const start = readNumber(object.start, `${path}.start`, issues);
+  const length = readPositiveNumber(object.length, `${path}.length`, issues);
+  if (start !== null && (start < 0 || start >= 1)) {
+    issues.push({ path: `${path}.start`, message: "must be in [0, 1)" });
+  }
+  if (length !== null && length > 1) {
+    issues.push({ path: `${path}.length`, message: "must be no greater than 1" });
+  }
+  const offset =
+    object.offset === undefined
+      ? undefined
+      : readNonNegativeNumber(object.offset, `${path}.offset`, issues);
+  const spacing =
+    object.spacing === undefined
+      ? undefined
+      : readPositiveNumber(object.spacing, `${path}.spacing`, issues);
+  const collision = object.collision;
+  if (collision !== undefined && collision !== "solid" && collision !== "none") {
+    issues.push({
+      path: `${path}.collision`,
+      message: 'must be "solid" or "none"',
+    });
+  }
+  if (
+    kind === null ||
+    !["tree", "tyre", "block"].includes(kind) ||
+    side === null ||
+    (side !== "left" && side !== "right") ||
+    start === null ||
+    length === null ||
+    (offset !== undefined && offset === null) ||
+    (spacing !== undefined && spacing === null) ||
+    (collision !== undefined && collision !== "solid" && collision !== "none")
+  ) {
+    return null;
+  }
+  return {
+    kind: kind as ProjectPropKind,
+    side,
+    start,
+    length,
+    ...(offset !== undefined && offset !== null ? { offset } : {}),
+    ...(spacing !== undefined && spacing !== null ? { spacing } : {}),
+    ...(collision !== undefined ? { collision } : {}),
+  };
+}
+
+function parsePropSpans(
+  value: unknown,
+  path: string,
+  issues: ProjectIssue[],
+  closed: boolean,
+): ProjectPropSpan[] | null {
+  if (!Array.isArray(value)) {
+    issues.push({ path, message: "must be an array" });
+    return null;
+  }
+  const spans: ProjectPropSpan[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const span = parsePropSpan(value[index], `${path}[${index}]`, issues);
+    if (!span) {
+      return null;
+    }
+    if (!closed && span.start + span.length > 1 + 1e-9) {
+      issues.push({
+        path: `${path}[${index}].length`,
+        message: "must not extend past the end of an open section",
+      });
+    }
+    if (closed && span.length >= 1 - 1e-9) {
+      issues.push({
+        path: `${path}[${index}].length`,
+        message:
+          "a closed-section prop span must be shorter than the full loop; use two spans that meet at a seam",
+      });
+    }
+    spans.push(span);
+  }
+  return spans;
+}
+
 function parseCenterline(
   value: unknown,
   path: string,
@@ -745,12 +974,15 @@ function parseCenterline(
   if (!object) {
     return null;
   }
-  const isV3 = schema === "track-ed/project@3";
+  const isVenue = isVenueSchema(schema);
+  const isV4 = schema === "track-ed/project@4";
   rejectUnknownKeys(
     object,
-    isV3
-      ? ["id", "closed", "points", "spline", "kerbs"]
-      : ["id", "closed", "points", "attach", "endAttach", "spline"],
+    isV4
+      ? ["id", "closed", "points", "spline", "kerbs", "walls", "props"]
+      : isVenue
+        ? ["id", "closed", "points", "spline", "kerbs"]
+        : ["id", "closed", "points", "attach", "endAttach", "spline"],
     path,
     issues,
   );
@@ -759,7 +991,7 @@ function parseCenterline(
   const closed = readBoolean(object.closed, `${path}.closed`, issues);
   let points: ProjectVec2[] | null;
   let pointIds: string[];
-  if (schema === "track-ed/project@2" || isV3) {
+  if (schema === "track-ed/project@2" || isVenue) {
     const parsedPoints = parsePointObjects(object.points, `${path}.points`, 2, issues);
     points = parsedPoints?.points ?? null;
     pointIds = parsedPoints?.pointIds ?? [];
@@ -773,7 +1005,7 @@ function parseCenterline(
   }
 
   let kerbs: ProjectKerbSpan[] | undefined;
-  if (isV3 && object.kerbs !== undefined) {
+  if (isVenue && object.kerbs !== undefined) {
     const parsedKerbs = parseKerbSpans(
       object.kerbs,
       `${path}.kerbs`,
@@ -786,13 +1018,41 @@ function parseCenterline(
     kerbs = parsedKerbs;
   }
 
+  let props: ProjectPropSpan[] | undefined;
+  if (isV4 && object.props !== undefined) {
+    const parsedProps = parsePropSpans(
+      object.props,
+      `${path}.props`,
+      issues,
+      closed === true,
+    );
+    if (parsedProps === null) {
+      return null;
+    }
+    props = parsedProps;
+  }
+
+  let walls: ProjectWallSpan[] | undefined;
+  if (isV4 && object.walls !== undefined) {
+    const parsedWalls = parseWallSpans(
+      object.walls,
+      `${path}.walls`,
+      issues,
+      closed === true,
+    );
+    if (parsedWalls === null) {
+      return null;
+    }
+    walls = parsedWalls;
+  }
+
   let attach: ProjectAttach | null = null;
-  if (!isV3 && object.attach !== undefined) {
+  if (!isVenue && object.attach !== undefined) {
     attach = parseAttach(object.attach, `${path}.attach`, issues, schema);
   }
 
   let endAttach: ProjectAttach | null = null;
-  if (!isV3 && object.endAttach !== undefined) {
+  if (!isVenue && object.endAttach !== undefined) {
     if (schema !== "track-ed/project@2") {
       issues.push({
         path: `${path}.endAttach`,
@@ -810,19 +1070,19 @@ function parseCenterline(
         message: "a closed centreline needs at least 3 points",
       });
     }
-    if (!isV3 && object.attach !== undefined) {
+    if (!isVenue && object.attach !== undefined) {
       issues.push({
         path: `${path}.attach`,
         message: "must be omitted for a closed centreline",
       });
     }
-    if (!isV3 && object.endAttach !== undefined) {
+    if (!isVenue && object.endAttach !== undefined) {
       issues.push({
         path: `${path}.endAttach`,
         message: "must be omitted for a closed centreline",
       });
     }
-  } else if (closed === false && !isV3 && object.attach === undefined) {
+  } else if (closed === false && !isVenue && object.attach === undefined) {
     issues.push({
       path: `${path}.attach`,
       message: "is required for an open centreline",
@@ -832,7 +1092,7 @@ function parseCenterline(
   if (id === null || closed === null || points === null) {
     return null;
   }
-  if (closed === false && !isV3 && attach === null) {
+  if (closed === false && !isVenue && attach === null) {
     return null;
   }
 
@@ -845,6 +1105,8 @@ function parseCenterline(
     ...(endAttach ? { endAttach } : {}),
     ...(spline ? { spline } : {}),
     ...(kerbs && kerbs.length > 0 ? { kerbs } : {}),
+    ...(walls && walls.length > 0 ? { walls } : {}),
+    ...(props && props.length > 0 ? { props } : {}),
   };
 }
 
@@ -891,7 +1153,7 @@ function segmentLengths(points: readonly Vec2[], closed: boolean): number[] {
 
 function validateSemantics(project: Project, issues: ProjectIssue[]): void {
   const isV1 = project.schema === "track-ed/project@1";
-  const isV3 = project.schema === "track-ed/project@3";
+  const isVenue = isVenueSchema(project.schema);
 
   if (isV1 && project.centerlines.length > 2) {
     issues.push({
@@ -914,7 +1176,7 @@ function validateSemantics(project: Project, issues: ProjectIssue[]): void {
   const closed = project.centerlines.filter((centerline) => centerline.closed);
   const open = project.centerlines.filter((centerline) => !centerline.closed);
 
-  if (!isV3 && closed.length !== 1) {
+  if (!isVenue && closed.length !== 1) {
     issues.push({
       path: "centerlines",
       message: "project@1 and project@2 require exactly one closed centreline",
@@ -943,7 +1205,7 @@ function validateSemantics(project: Project, issues: ProjectIssue[]): void {
       });
       continue;
     }
-    if (!isV3 && !host.closed) {
+    if (!isVenue && !host.closed) {
       issues.push({
         path: `junctions[${junction.id}].centerline`,
         message: "junction host must be a closed centreline",
@@ -956,7 +1218,7 @@ function validateSemantics(project: Project, issues: ProjectIssue[]): void {
       });
     }
 
-    if (isV3) {
+    if (isVenue) {
       const members = junction.members ?? [];
       if (members.length < 2) {
         issues.push({
@@ -1220,19 +1482,22 @@ export function parseProject(input: unknown): ProjectParseResult {
     schemaText !== null &&
     schemaText !== "track-ed/project@1" &&
     schemaText !== "track-ed/project@2" &&
-    schemaText !== "track-ed/project@3"
+    schemaText !== "track-ed/project@3" &&
+    schemaText !== "track-ed/project@4"
   ) {
     issues.push({
       path: "$.schema",
       message:
-        'must be "track-ed/project@1", "track-ed/project@2", or "track-ed/project@3"',
+        'must be "track-ed/project@1", "track-ed/project@2", "track-ed/project@3", or "track-ed/project@4"',
     });
   }
   const schema: ProjectSchema =
-    schemaText === "track-ed/project@2" || schemaText === "track-ed/project@3"
+    schemaText === "track-ed/project@2" ||
+    schemaText === "track-ed/project@3" ||
+    schemaText === "track-ed/project@4"
       ? schemaText
       : "track-ed/project@1";
-  const isV3 = schema === "track-ed/project@3";
+  const isVenue = isVenueSchema(schema);
   const name = readString(object.name, "$.name", issues);
   const generator = readString(object.generator, "$.generator", issues);
   const road = parseRoad(object.road, "$.road", issues);
@@ -1240,10 +1505,10 @@ export function parseProject(input: unknown): ProjectParseResult {
   const spawn = parseSpawn(object.spawn, "$.spawn", issues);
   let kerbs: ProjectKerbProfile | undefined;
   if (object.kerbs !== undefined) {
-    if (!isV3) {
+    if (!isVenue) {
       issues.push({
         path: "$.kerbs",
-        message: "global kerb profiles are only supported in track-ed/project@3",
+        message: "global kerb profiles are only supported in track-ed/project@3 and project@4",
       });
     } else {
       const parsedKerbs = parseKerbProfile(object.kerbs, "$.kerbs", issues);
@@ -1254,21 +1519,21 @@ export function parseProject(input: unknown): ProjectParseResult {
     }
   }
 
-  if (isV3 && object.centerlines !== undefined) {
+  if (isVenue && object.centerlines !== undefined) {
     issues.push({
       path: "$.centerlines",
-      message: "use sections for track-ed/project@3",
+      message: "use sections for track-ed/project@3 and project@4",
     });
   }
-  if (!isV3 && object.sections !== undefined) {
+  if (!isVenue && object.sections !== undefined) {
     issues.push({
       path: "$.sections",
-      message: "sections are only supported in track-ed/project@3",
+      message: "sections are only supported in track-ed/project@3 and project@4",
     });
   }
 
-  const sectionInput = isV3 ? object.sections : object.centerlines;
-  const sectionPath = isV3 ? "$.sections" : "$.centerlines";
+  const sectionInput = isVenue ? object.sections : object.centerlines;
+  const sectionPath = isVenue ? "$.sections" : "$.centerlines";
   let centerlines: ProjectCenterline[] | null = null;
   if (!Array.isArray(sectionInput) || sectionInput.length < 1) {
     issues.push({ path: sectionPath, message: "must be a non-empty array" });
@@ -1291,10 +1556,10 @@ export function parseProject(input: unknown): ProjectParseResult {
 
   let junctions: ProjectJunction[] = [];
   if (object.junctions !== undefined) {
-    if (schema !== "track-ed/project@2" && schema !== "track-ed/project@3") {
+    if (schema !== "track-ed/project@2" && !isVenueSchema(schema)) {
       issues.push({
         path: "$.junctions",
-        message: "junctions are only supported in track-ed/project@2 and project@3",
+        message: "junctions are only supported in track-ed/project@2, project@3, and project@4",
       });
     } else if (!Array.isArray(object.junctions)) {
       issues.push({ path: "$.junctions", message: "must be an array" });
@@ -1335,7 +1600,8 @@ export function parseProject(input: unknown): ProjectParseResult {
   if (
     schemaText !== "track-ed/project@1" &&
     schemaText !== "track-ed/project@2" &&
-    schemaText !== "track-ed/project@3"
+    schemaText !== "track-ed/project@3" &&
+    schemaText !== "track-ed/project@4"
   ) {
     return { project: null, issues, warnings };
   }

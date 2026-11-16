@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import loopFixture from "../../../fixtures/projects/loop.json";
 import loopSpurFixture from "../../../fixtures/projects/venue-loop-spur-junction.json";
 import venueFixture from "../../../fixtures/projects/venue-two-loops-spur.json";
+import wallsPropsFixture from "../../../fixtures/projects/venue-walls-props.json";
 import { bakeProject } from "../../kernel/bake";
 import { parseProject } from "../../kernel/project";
 import { exportLapsterGlbTrack } from "./index";
@@ -26,7 +27,7 @@ function readJsonChunk(bytes: Uint8Array): Record<string, unknown> {
   return JSON.parse(text.trimEnd()) as Record<string, unknown>;
 }
 
-describe("lapster-glb-track@2", () => {
+describe("lapster-glb-track@3", () => {
   it("emits a deterministic GLB and manifest", () => {
     const track = validTrack();
     const first = exportLapsterGlbTrack(track);
@@ -122,6 +123,33 @@ describe("lapster-glb-track@2", () => {
       ).toHaveLength(2);
       expect(bundle.manifest.surfaces.every((surface) => !surface.mountable)).toBe(true);
     }
+  });
+
+  it("exports wall nodes, prop nodes, and Wall collision", () => {
+    const parsed = parseProject(wallsPropsFixture);
+    expect(parsed.issues).toEqual([]);
+    const bundle = exportLapsterGlbTrack(bakeProject(parsed.project!));
+    const gltf = readJsonChunk(bundle.files[0]!.bytes);
+    const nodes = (gltf.nodes as Array<{ name: string }>).map((node) => node.name);
+    expect(nodes).toContain("surface_wall");
+    expect(nodes).toContain("prop_tree_trunk");
+    expect(nodes).toContain("prop_tree_foliage");
+    expect(nodes).toContain("prop_tire_blue");
+    expect(nodes).toContain("prop_tire_white");
+    expect(nodes).toContain("prop_block");
+    expect(nodes).toContain("col_prop");
+    const materials = (gltf.materials as Array<{ name: string }>).map(
+      (material) => material.name,
+    );
+    expect(materials).toContain("concrete");
+    expect(materials).toContain("tire_blue");
+    expect(materials).toContain("tire_white");
+    expect(materials).toContain("tree_foliage");
+    expect(bundle.manifest.visual.include).toEqual(["surface_*", "prop_*"]);
+    expect(bundle.manifest.collision.include).toEqual(["surface_*", "col_*"]);
+    expect(bundle.manifest.surfaces.map((surface) => surface.name)).toContain("wall");
+    expect(bundle.manifest.surfaces.find((surface) => surface.name === "wall")?.materials)
+      .toEqual(["wall"]);
   });
 
   it("refuses to export an invalid track", () => {

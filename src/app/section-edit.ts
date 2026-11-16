@@ -15,7 +15,10 @@ import type {
   ProjectJunction,
   ProjectJunctionMember,
   ProjectKerbSpan,
+  ProjectPropSpan,
+  ProjectWallSpan,
 } from "../kernel/project";
+import { isVenueSchema } from "../kernel/project";
 import { fractionAtControlPoint, sampleCenterline } from "../kernel/spline";
 import { validateBakedTrack } from "../kernel/validate-baked";
 
@@ -133,6 +136,383 @@ function mergeKerbSpans(
           : {}),
       };
     });
+}
+
+function flipWallSide(side: ProjectWallSpan["side"]): ProjectWallSpan["side"] {
+  return side === "left" ? "right" : "left";
+}
+
+interface WallInterval {
+  side: ProjectWallSpan["side"];
+  start: number;
+  end: number;
+  height?: number;
+  offset?: number;
+}
+
+function wallSpanIntervals(
+  span: ProjectWallSpan,
+  closed: boolean,
+): WallInterval[] {
+  const end = span.start + span.length;
+  const profile = {
+    ...(span.height !== undefined ? { height: span.height } : {}),
+    ...(span.offset !== undefined ? { offset: span.offset } : {}),
+  };
+  if (closed && end > 1) {
+    return [
+      { side: span.side, start: span.start, end: 1, ...profile },
+      { side: span.side, start: 0, end: end - 1, ...profile },
+    ];
+  }
+  return [{ side: span.side, start: span.start, end, ...profile }];
+}
+
+function sameWallProfile(a: WallInterval, b: WallInterval): boolean {
+  return (
+    a.side === b.side &&
+    a.height === b.height &&
+    a.offset === b.offset
+  );
+}
+
+function mergeWallSpans(
+  spans: readonly ProjectWallSpan[],
+  closed = false,
+): ProjectWallSpan[] {
+  const intervals = spans
+    .flatMap((span) => wallSpanIntervals(span, closed))
+    .filter((interval) => interval.end - interval.start > 1e-6)
+    .sort(
+      (a, b) =>
+        a.side.localeCompare(b.side) ||
+        (a.height ?? -1) - (b.height ?? -1) ||
+        (a.offset ?? -1) - (b.offset ?? -1) ||
+        a.start - b.start,
+    );
+  const merged: WallInterval[] = [];
+  for (const interval of intervals) {
+    const previous = merged[merged.length - 1];
+    if (
+      previous &&
+      sameWallProfile(previous, interval) &&
+      interval.start <= previous.end + 1e-6
+    ) {
+      previous.end = Math.max(previous.end, interval.end);
+    } else {
+      merged.push({ ...interval });
+    }
+  }
+
+  if (closed) {
+    for (let index = 0; index < merged.length; index += 1) {
+      const first = merged[index]!;
+      if (first.start > 1e-6) {
+        continue;
+      }
+      const last = merged.find(
+        (candidate, candidateIndex) =>
+          candidateIndex > index &&
+          candidate.end >= 1 - 1e-6 &&
+          sameWallProfile(candidate, first),
+      );
+      if (!last || last.start <= first.end + 1e-9) {
+        continue;
+      }
+      merged.splice(merged.indexOf(last), 1);
+      merged.splice(index, 1, {
+        ...first,
+        start: last.start,
+        end: first.end + 1 + 1e-9,
+      });
+      break;
+    }
+  }
+
+  return merged
+    .filter((interval) => interval.end - interval.start > 1e-6)
+    .map((interval) => {
+      const length = interval.end - interval.start;
+      const start = interval.start >= 1 ? interval.start - 1 : interval.start;
+      return {
+        side: interval.side,
+        start: Math.max(0, Math.min(1 - 1e-9, start)),
+        length: Math.max(0, Math.min(1 - 1e-9, length)),
+        ...(interval.height !== undefined ? { height: interval.height } : {}),
+        ...(interval.offset !== undefined ? { offset: interval.offset } : {}),
+      };
+    });
+}
+
+function splitWallSpans(
+  spans: readonly ProjectWallSpan[],
+  fraction: number,
+): { left: ProjectWallSpan[]; right: ProjectWallSpan[] } {
+  const safe = Math.max(1e-6, Math.min(1 - 1e-6, fraction));
+  const left: ProjectWallSpan[] = [];
+  const right: ProjectWallSpan[] = [];
+  for (const span of spans) {
+    for (const interval of wallSpanIntervals(span, false)) {
+      const leftEnd = Math.min(interval.end, safe);
+      if (leftEnd - interval.start > 1e-6) {
+        left.push({
+          side: interval.side,
+          start: interval.start / safe,
+          length: (leftEnd - interval.start) / safe,
+          ...(interval.height !== undefined ? { height: interval.height } : {}),
+          ...(interval.offset !== undefined ? { offset: interval.offset } : {}),
+        });
+      }
+      const rightStart = Math.max(interval.start, safe);
+      if (interval.end - rightStart > 1e-6) {
+        right.push({
+          side: interval.side,
+          start: (rightStart - safe) / (1 - safe),
+          length: (interval.end - rightStart) / (1 - safe),
+          ...(interval.height !== undefined ? { height: interval.height } : {}),
+          ...(interval.offset !== undefined ? { offset: interval.offset } : {}),
+        });
+      }
+    }
+  }
+  return {
+    left: mergeWallSpans(left, false),
+    right: mergeWallSpans(right, false),
+  };
+}
+
+function mapWallSpansToOpen(
+  spans: readonly ProjectWallSpan[],
+  closed: boolean,
+  startDistance: number,
+  pathLength: number,
+  total: number,
+): ProjectWallSpan[] {
+  if (pathLength <= 1e-9 || total <= 1e-9) {
+    return [];
+  }
+  const mapped: ProjectWallSpan[] = [];
+  for (const span of spans) {
+    for (const interval of wallSpanIntervals(span, closed)) {
+      const start = interval.start * total;
+      const end = interval.end * total;
+      for (const offset of [-total, 0, total]) {
+        const from = Math.max(start + offset, startDistance);
+        const to = Math.min(end + offset, startDistance + pathLength);
+        if (to - from <= 1e-6) {
+          continue;
+        }
+        mapped.push({
+          side: interval.side,
+          start: Math.max(0, Math.min(1, (from - startDistance) / pathLength)),
+          length: Math.max(0, Math.min(1, (to - from) / pathLength)),
+          ...(interval.height !== undefined ? { height: interval.height } : {}),
+          ...(interval.offset !== undefined ? { offset: interval.offset } : {}),
+        });
+      }
+    }
+  }
+  return mergeWallSpans(mapped, false);
+}
+
+function mapWallSpansForMerge(
+  spans: readonly ProjectWallSpan[],
+  reversed: boolean,
+  startFraction: number,
+  lengthFraction: number,
+): ProjectWallSpan[] {
+  return spans.map((span) => {
+    const start = reversed ? 1 - (span.start + span.length) : span.start;
+    return {
+      side: reversed ? flipWallSide(span.side) : span.side,
+      start: startFraction + start * lengthFraction,
+      length: span.length * lengthFraction,
+      ...(span.height !== undefined ? { height: span.height } : {}),
+      ...(span.offset !== undefined ? { offset: span.offset } : {}),
+    };
+  });
+}
+
+function flipPropSide(side: ProjectPropSpan["side"]): ProjectPropSpan["side"] {
+  return side === "left" ? "right" : "left";
+}
+
+interface PropInterval {
+  kind: ProjectPropSpan["kind"];
+  side: ProjectPropSpan["side"];
+  start: number;
+  end: number;
+  offset?: number;
+  spacing?: number;
+  collision?: "solid" | "none";
+}
+
+function propSpanIntervals(span: ProjectPropSpan, closed: boolean): PropInterval[] {
+  const end = span.start + span.length;
+  const profile = {
+    ...(span.offset !== undefined ? { offset: span.offset } : {}),
+    ...(span.spacing !== undefined ? { spacing: span.spacing } : {}),
+    ...(span.collision !== undefined ? { collision: span.collision } : {}),
+  };
+  if (closed && end > 1) {
+    return [
+      { kind: span.kind, side: span.side, start: span.start, end: 1, ...profile },
+      { kind: span.kind, side: span.side, start: 0, end: end - 1, ...profile },
+    ];
+  }
+  return [{ kind: span.kind, side: span.side, start: span.start, end, ...profile }];
+}
+
+function samePropProfile(a: PropInterval, b: PropInterval): boolean {
+  return (
+    a.kind === b.kind &&
+    a.side === b.side &&
+    a.offset === b.offset &&
+    a.spacing === b.spacing &&
+    a.collision === b.collision
+  );
+}
+
+function mergePropSpans(
+  spans: readonly ProjectPropSpan[],
+  closed = false,
+): ProjectPropSpan[] {
+  const intervals = spans
+    .flatMap((span) => propSpanIntervals(span, closed))
+    .filter((interval) => interval.end - interval.start > 1e-6)
+    .sort(
+      (a, b) =>
+        a.side.localeCompare(b.side) ||
+        a.kind.localeCompare(b.kind) ||
+        (a.offset ?? -1) - (b.offset ?? -1) ||
+        (a.spacing ?? -1) - (b.spacing ?? -1) ||
+        a.start - b.start,
+    );
+  const merged: PropInterval[] = [];
+  for (const interval of intervals) {
+    const previous = merged[merged.length - 1];
+    if (
+      previous &&
+      samePropProfile(previous, interval) &&
+      interval.start <= previous.end + 1e-6
+    ) {
+      previous.end = Math.max(previous.end, interval.end);
+    } else {
+      merged.push({ ...interval });
+    }
+  }
+  return merged
+    .filter((interval) => interval.end - interval.start > 1e-6)
+    .map((interval) => {
+      const length = interval.end - interval.start;
+      const start = interval.start >= 1 ? interval.start - 1 : interval.start;
+      return {
+        kind: interval.kind,
+        side: interval.side,
+        start: Math.max(0, Math.min(1 - 1e-9, start)),
+        length: Math.max(0, Math.min(1 - 1e-9, length)),
+        ...(interval.offset !== undefined ? { offset: interval.offset } : {}),
+        ...(interval.spacing !== undefined ? { spacing: interval.spacing } : {}),
+        ...(interval.collision !== undefined ? { collision: interval.collision } : {}),
+      };
+    });
+}
+
+function splitPropSpans(
+  spans: readonly ProjectPropSpan[],
+  fraction: number,
+): { left: ProjectPropSpan[]; right: ProjectPropSpan[] } {
+  const safe = Math.max(1e-6, Math.min(1 - 1e-6, fraction));
+  const left: ProjectPropSpan[] = [];
+  const right: ProjectPropSpan[] = [];
+  for (const span of spans) {
+    for (const interval of propSpanIntervals(span, false)) {
+      const leftEnd = Math.min(interval.end, safe);
+      if (leftEnd - interval.start > 1e-6) {
+        left.push({
+          kind: interval.kind,
+          side: interval.side,
+          start: interval.start / safe,
+          length: (leftEnd - interval.start) / safe,
+          ...(interval.offset !== undefined ? { offset: interval.offset } : {}),
+          ...(interval.spacing !== undefined ? { spacing: interval.spacing } : {}),
+          ...(interval.collision !== undefined ? { collision: interval.collision } : {}),
+        });
+      }
+      const rightStart = Math.max(interval.start, safe);
+      if (interval.end - rightStart > 1e-6) {
+        right.push({
+          kind: interval.kind,
+          side: interval.side,
+          start: (rightStart - safe) / (1 - safe),
+          length: (interval.end - rightStart) / (1 - safe),
+          ...(interval.offset !== undefined ? { offset: interval.offset } : {}),
+          ...(interval.spacing !== undefined ? { spacing: interval.spacing } : {}),
+          ...(interval.collision !== undefined ? { collision: interval.collision } : {}),
+        });
+      }
+    }
+  }
+  return {
+    left: mergePropSpans(left, false),
+    right: mergePropSpans(right, false),
+  };
+}
+
+function mapPropSpansToOpen(
+  spans: readonly ProjectPropSpan[],
+  closed: boolean,
+  startDistance: number,
+  pathLength: number,
+  total: number,
+): ProjectPropSpan[] {
+  if (pathLength <= 1e-9 || total <= 1e-9) {
+    return [];
+  }
+  const mapped: ProjectPropSpan[] = [];
+  for (const span of spans) {
+    for (const interval of propSpanIntervals(span, closed)) {
+      const start = interval.start * total;
+      const end = interval.end * total;
+      for (const offset of [-total, 0, total]) {
+        const from = Math.max(start + offset, startDistance);
+        const to = Math.min(end + offset, startDistance + pathLength);
+        if (to - from <= 1e-6) {
+          continue;
+        }
+        mapped.push({
+          kind: interval.kind,
+          side: interval.side,
+          start: Math.max(0, Math.min(1, (from - startDistance) / pathLength)),
+          length: Math.max(0, Math.min(1, (to - from) / pathLength)),
+          ...(interval.offset !== undefined ? { offset: interval.offset } : {}),
+          ...(interval.spacing !== undefined ? { spacing: interval.spacing } : {}),
+          ...(interval.collision !== undefined ? { collision: interval.collision } : {}),
+        });
+      }
+    }
+  }
+  return mergePropSpans(mapped, false);
+}
+
+function mapPropSpansForMerge(
+  spans: readonly ProjectPropSpan[],
+  reversed: boolean,
+  startFraction: number,
+  lengthFraction: number,
+): ProjectPropSpan[] {
+  return spans.map((span) => {
+    const start = reversed ? 1 - (span.start + span.length) : span.start;
+    return {
+      kind: span.kind,
+      side: reversed ? flipPropSide(span.side) : span.side,
+      start: startFraction + start * lengthFraction,
+      length: span.length * lengthFraction,
+      ...(span.offset !== undefined ? { offset: span.offset } : {}),
+      ...(span.spacing !== undefined ? { spacing: span.spacing } : {}),
+      ...(span.collision !== undefined ? { collision: span.collision } : {}),
+    };
+  });
 }
 
 function splitKerbSpans(
@@ -426,8 +806,8 @@ export function addSectionAtPoint(
   pointIndex: number,
   flip = false,
 ): SectionEditResult {
-  if (source.schema !== "track-ed/project@3") {
-    return { ok: false, message: "Section authoring requires track-ed/project@3." };
+  if (!isVenueSchema(source.schema)) {
+    return { ok: false, message: "Section authoring requires track-ed/project@3 or project@4." };
   }
   const end = sectionEnd(source, sectionId, pointIndex);
   if (!end) {
@@ -489,8 +869,8 @@ export function addLooseSectionAtPoint(
   pointIndex: number,
   flip = false,
 ): SectionEditResult {
-  if (source.schema !== "track-ed/project@3") {
-    return { ok: false, message: "Section authoring requires track-ed/project@3." };
+  if (!isVenueSchema(source.schema)) {
+    return { ok: false, message: "Section authoring requires track-ed/project@3 or project@4." };
   }
   const end = sectionEnd(source, sectionId, pointIndex);
   if (!end) {
@@ -512,8 +892,8 @@ export function addJunctionMember(
   memberSectionId: string,
   memberPointId: string,
 ): SectionEditResult {
-  if (source.schema !== "track-ed/project@3") {
-    return { ok: false, message: "Junction authoring requires track-ed/project@3." };
+  if (!isVenueSchema(source.schema)) {
+    return { ok: false, message: "Junction authoring requires track-ed/project@3 or project@4." };
   }
   if (targetSectionId === memberSectionId) {
     return { ok: false, message: "A section cannot join itself." };
@@ -588,8 +968,8 @@ export function removeJunctionWithGap(
   source: Project,
   junctionId: string,
 ): SectionEditResult {
-  if (source.schema !== "track-ed/project@3") {
-    return { ok: false, message: "Junction removal requires track-ed/project@3." };
+  if (!isVenueSchema(source.schema)) {
+    return { ok: false, message: "Junction removal requires track-ed/project@3 or project@4." };
   }
   const project = structuredClone(source);
   const junction = project.junctions.find((candidate) => candidate.id === junctionId);
@@ -636,8 +1016,8 @@ export function splitOpenSection(
   sectionId: string,
   pointIndex: number,
 ): SectionEditResult {
-  if (source.schema !== "track-ed/project@3") {
-    return { ok: false, message: "Section splitting requires track-ed/project@3." };
+  if (!isVenueSchema(source.schema)) {
+    return { ok: false, message: "Section splitting requires track-ed/project@3 or project@4." };
   }
   const sourceSection = source.centerlines.find(
     (candidate) => candidate.id === sectionId,
@@ -720,12 +1100,24 @@ export function splitOpenSection(
         pointIndex,
       ) ?? 0.5;
     const splitKerbs = splitKerbSpans(sourceSection.kerbs ?? [], splitFraction);
+    const splitWalls = splitWallSpans(sourceSection.walls ?? [], splitFraction);
+    const splitProps = splitPropSpans(sourceSection.props ?? [], splitFraction);
     original.points = leftPoints;
     original.pointIds = leftIds;
     if (splitKerbs.left.length > 0) {
       original.kerbs = splitKerbs.left;
     } else {
       delete original.kerbs;
+    }
+    if (splitWalls.left.length > 0) {
+      original.walls = splitWalls.left;
+    } else {
+      delete original.walls;
+    }
+    if (splitProps.left.length > 0) {
+      original.props = splitProps.left;
+    } else {
+      delete original.props;
     }
     candidate.centerlines.push({
       id: rightId,
@@ -734,6 +1126,8 @@ export function splitOpenSection(
       pointIds: rightIds,
       ...(original.spline ? { spline: original.spline } : {}),
       ...(splitKerbs.right.length > 0 ? { kerbs: splitKerbs.right } : {}),
+      ...(splitWalls.right.length > 0 ? { walls: splitWalls.right } : {}),
+      ...(splitProps.right.length > 0 ? { props: splitProps.right } : {}),
     });
 
     const leftIdSet = new Set(leftIds);
@@ -778,8 +1172,8 @@ export function closeSectionLoop(
   draggedPointIndex: number,
   targetPointIndex: number,
 ): SectionEditResult {
-  if (source.schema !== "track-ed/project@3") {
-    return { ok: false, message: "Closing a loop requires track-ed/project@3." };
+  if (!isVenueSchema(source.schema)) {
+    return { ok: false, message: "Closing a loop requires track-ed/project@3 or project@4." };
   }
   const section = source.centerlines.find((candidate) => candidate.id === sectionId);
   if (!section || section.closed) {
@@ -822,6 +1216,18 @@ export function closeSectionLoop(
       delete candidate.kerbs;
     }
   }
+  if (candidate.walls) {
+    candidate.walls = mergeWallSpans(candidate.walls, true);
+    if (candidate.walls.length === 0) {
+      delete candidate.walls;
+    }
+  }
+  if (candidate.props) {
+    candidate.props = mergePropSpans(candidate.props, true);
+    if (candidate.props.length === 0) {
+      delete candidate.props;
+    }
+  }
   return { ok: true, project };
 }
 
@@ -832,8 +1238,8 @@ export function mergeLooseSectionEnds(
   sectionBId: string,
   pointBIndex: number,
 ): SectionEditResult {
-  if (source.schema !== "track-ed/project@3") {
-    return { ok: false, message: "Section merging requires track-ed/project@3." };
+  if (!isVenueSchema(source.schema)) {
+    return { ok: false, message: "Section merging requires track-ed/project@3 or project@4." };
   }
   if (sectionAId === sectionBId) {
     return { ok: false, message: "Select two different sections to merge." };
@@ -934,12 +1340,50 @@ export function mergeLooseSectionEnds(
       mergedLength > 0 ? lengthB / mergedLength : 0.5,
     ),
   ]);
+  const mergedWalls = mergeWallSpans([
+    ...mapWallSpansForMerge(
+      a.section.walls ?? [],
+      aReversed,
+      0,
+      mergedLength > 0 ? lengthA / mergedLength : 0.5,
+    ),
+    ...mapWallSpansForMerge(
+      b.section.walls ?? [],
+      bReversed,
+      mergedLength > 0 ? lengthA / mergedLength : 0.5,
+      mergedLength > 0 ? lengthB / mergedLength : 0.5,
+    ),
+  ]);
+  const mergedProps = mergePropSpans([
+    ...mapPropSpansForMerge(
+      a.section.props ?? [],
+      aReversed,
+      0,
+      mergedLength > 0 ? lengthA / mergedLength : 0.5,
+    ),
+    ...mapPropSpansForMerge(
+      b.section.props ?? [],
+      bReversed,
+      mergedLength > 0 ? lengthA / mergedLength : 0.5,
+      mergedLength > 0 ? lengthB / mergedLength : 0.5,
+    ),
+  ]);
   a.section.points = aPoints;
   a.section.pointIds = aPointIds;
   if (mergedKerbs.length > 0) {
     a.section.kerbs = mergedKerbs;
   } else {
     delete a.section.kerbs;
+  }
+  if (mergedWalls.length > 0) {
+    a.section.walls = mergedWalls;
+  } else {
+    delete a.section.walls;
+  }
+  if (mergedProps.length > 0) {
+    a.section.props = mergedProps;
+  } else {
+    delete a.section.props;
   }
   if (!a.section.spline && b.section.spline) {
     a.section.spline = b.section.spline;
@@ -986,8 +1430,8 @@ export function splitClosedSection(
   sectionId: string,
   pointIndex: number,
 ): SectionEditResult {
-  if (source.schema !== "track-ed/project@3") {
-    return { ok: false, message: "Loop splitting requires track-ed/project@3." };
+  if (!isVenueSchema(source.schema)) {
+    return { ok: false, message: "Loop splitting requires track-ed/project@3 or project@4." };
   }
   const sourceEnd = sectionEnd(source, sectionId, pointIndex);
   if (!sourceEnd || !sourceEnd.section.closed) {
@@ -1131,6 +1575,30 @@ export function splitClosedSection(
     } else {
       delete candidateSection.kerbs;
     }
+    const walls = mapWallSpansToOpen(
+      section.walls ?? [],
+      true,
+      startDistance,
+      pathLength,
+      total,
+    );
+    if (walls.length > 0) {
+      candidateSection.walls = walls;
+    } else {
+      delete candidateSection.walls;
+    }
+    const props = mapPropSpansToOpen(
+      section.props ?? [],
+      true,
+      startDistance,
+      pathLength,
+      total,
+    );
+    if (props.length > 0) {
+      candidateSection.props = props;
+    } else {
+      delete candidateSection.props;
+    }
 
     return isCandidateValid(candidate) ? candidate : null;
   };
@@ -1227,6 +1695,30 @@ export function splitClosedSection(
       candidateSection.kerbs = kerbs;
     } else {
       delete candidateSection.kerbs;
+    }
+    const walls = mapWallSpansToOpen(
+      section.walls ?? [],
+      true,
+      startDistance,
+      pathLength,
+      total,
+    );
+    if (walls.length > 0) {
+      candidateSection.walls = walls;
+    } else {
+      delete candidateSection.walls;
+    }
+    const props = mapPropSpansToOpen(
+      section.props ?? [],
+      true,
+      startDistance,
+      pathLength,
+      total,
+    );
+    if (props.length > 0) {
+      candidateSection.props = props;
+    } else {
+      delete candidateSection.props;
     }
 
     return isCandidateValid(candidate) ? candidate : null;

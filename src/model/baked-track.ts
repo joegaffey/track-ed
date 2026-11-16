@@ -32,6 +32,17 @@ export interface Camera {
   fovY: number;
 }
 
+export type PropKind = "tree" | "tyre" | "block";
+
+export interface Prop {
+  id: string;
+  kind: PropKind;
+  position: Vec3;
+  rotation: Quat;
+  scale: number;
+  collision: boolean;
+}
+
 export interface BakedTrack {
   kind: "track";
   name: string;
@@ -39,6 +50,8 @@ export interface BakedTrack {
   bounds: Bounds;
   surfaceGraph: SurfaceGraph;
   kerbGraph?: SurfaceGraph;
+  wallGraph?: SurfaceGraph;
+  props?: Prop[];
   surfaces: Surface[];
   spawns: Spawn[];
   cameras: Camera[];

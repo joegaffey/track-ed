@@ -4,7 +4,7 @@ import legacyFixture from "../../fixtures/projects/loop.json";
 import { bakeProject } from "../kernel/bake";
 import { parseProject, type Project } from "../kernel/project";
 import { validateBakedTrack } from "../kernel/validate-baked";
-import { convertProjectToV3 } from "./convert-project";
+import { convertProjectToLatest } from "./convert-project";
 
 function parsed(value: unknown): Project {
   const result = parseProject(value);
@@ -14,12 +14,12 @@ function parsed(value: unknown): Project {
   return result.project;
 }
 
-describe("convertProjectToV3", () => {
+describe("convertProjectToLatest", () => {
   it("converts a project@2 loop to a venue section", () => {
-    const result = convertProjectToV3(parsed(loopFixture));
+    const result = convertProjectToLatest(parsed(loopFixture));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.project.schema).toBe("track-ed/project@3");
+    expect(result.project.schema).toBe("track-ed/project@4");
     expect(result.project.centerlines).toHaveLength(1);
     expect(result.project.junctions).toEqual([]);
     expect(validateBakedTrack(bakeProject(result.project)).ok).toBe(true);
@@ -44,7 +44,7 @@ describe("convertProjectToV3", () => {
       pointIds: ["p1", "connector-p1", "p4"],
     });
 
-    const result = convertProjectToV3(project);
+    const result = convertProjectToLatest(project);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const junction1 = result.project.junctions.find(
@@ -66,7 +66,7 @@ describe("convertProjectToV3", () => {
   });
 
   it("leaves project@1 import-only", () => {
-    const result = convertProjectToV3(parsed(legacyFixture));
+    const result = convertProjectToLatest(parsed(legacyFixture));
     expect(result.ok).toBe(false);
   });
 });
