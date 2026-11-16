@@ -1,6 +1,6 @@
 # Contract — `track-ed/project@3`
 
-Status: implementation slice 2. Venue sections and general junctions are implemented; routes and app authoring remain deferred.
+Status: implementation slice 3. Venue sections, general junctions, and app authoring are implemented. Slice 4 conformance/polish is in progress; routes remain deferred.
 
 ## Purpose
 
@@ -75,14 +75,19 @@ Junctions connect section control points:
 - Multiple sections may share a junction.
 - Disconnected sections MUST NOT intersect; intersections are allowed only at shared junctions.
 - Loose ends may remain disconnected.
+- App authoring supports adding a joined section, joining a loose end to any control point, merging loose ends, closing an open section into a loop, detaching junctions, and splitting any section.
+- Open sections are capped at every loose end.
+- Splitting a closed section produces one open section with two capped ends.
+- Splitting an open section produces two capped open sections with a gap between them.
+- Removing a junction drops each non-anchor endpoint control point, leaving a gap; the anchor section is unchanged.
+- Splitting a closed loop prefers inserting two control points on the longer adjacent segment and retaining the selected point. If that cannot produce valid geometry, it falls back to simplified sampled control points while retaining the spline. The gap is one road width minimum and expands automatically where curvature would otherwise create invalid geometry.
+- Dragging one loose end of an open section onto its other loose end closes it into a loop.
 
 ## Migration
 
-`project@1` and `project@2` remain import-only formats. The app writes `project@3` only when the current project is already `project@3`; legacy `project@2` projects continue to write `project@2` until the authoring migration is complete.
+`project@1` remains import-only. The app converts `project@2` projects to `project@3` on load and writes `project@3` on save. Existing `project@2` junction hosts and branch `attach`/`endAttach` references become junction members; legacy fraction attachments are not converted automatically.
 
 ## Deferred
 
-- App authoring for general junctions.
 - Route/lap objects and route-based length.
-- Closed-loop splitting and section authoring UI.
-- Loose-to-loose authoring merge in `project@3`.
+- Section list and richer section metadata.

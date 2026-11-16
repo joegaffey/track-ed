@@ -1,6 +1,6 @@
 # Venue section graph — implementation plan
 
-Status: in progress. Slices 1 and 2 (`project@3` sections, multiple loops, dead-ended opens, general junction members, open-section junctions, and multi-way junctions) are implemented in the kernel and validated against Lapster; app authoring, routes, and loop splitting remain.
+Status: in progress. Slices 1–3 are implemented: `project@3` sections, multiple loops, dead-ended opens, general junctions, open-section and multi-way junctions, app section/junction authoring, automatic `project@2` conversion, loose-end merging, loop closing, junction detach, and splitting of both open and closed sections. Representative Slice 4 Lapster conformance passes; the full fixture matrix, performance check, section-list UI, and routes remain.
 
 ## Goal
 
@@ -23,7 +23,9 @@ Replace the current “one closed main loop plus branches” model with a venue 
 - Dropping one loose end onto another loose end merges them into one open section, rather than creating a junction.
 - Self-connections and self-junctions are rejected for now.
 - Splitting a closed loop produces one open section with a small gap.
-- The split gap is one road width, centred on the split point. With the current 5 m half-width that is 10 m total, 5 m either side.
+- Splitting an open section produces two capped open sections with a small gap.
+- The split gap is one road width minimum. It is placed on the longer adjacent segment and expands automatically when needed to produce valid geometry.
+- Dragging one loose end of an open section onto its other loose end closes it into a loop.
 - Export length is the sum of all section lengths while routes are absent. When routes exist, length is the sum of route lengths.
 - Routes/laps are not part of this implementation slice.
 
@@ -84,18 +86,20 @@ Rules:
 - Allow an open end to target any other section control point.
 - Keep loose-end-to-loose-end merging as a section merge.
 - Removing a junction detaches its members and leaves every section alive.
-- Add closed-loop split:
-  - open the selected loop;
-  - create one open section;
-  - offset the two endpoints by half a road width along the local tangent;
-  - preserve deterministic point ids and undo.
+- Add split for any section:
+  - closed loop -> one open section with two capped ends;
+  - open section -> two capped open sections;
+  - preserve the spline and deterministic point ids;
+  - minimum one-road-width gap, expanded when needed.
+- Allow closing an open section by dragging one loose end onto the other.
 - Spawn may target any section.
 - Show sections independently of junctions in authoring UI.
 
 ## Compatibility and migration
 
 - The app writes `project@3`.
-- `project@1` and `project@2` remain import-only.
+- The app converts `project@2` to `project@3` on load.
+- `project@1` remains import-only.
 - Convert old `centerlines` to `sections`.
 - Convert old junction hosts and `attach`/`endAttach` references to junction members.
 - Legacy `project@1` fraction attachments need an explicit conversion decision:
@@ -157,7 +161,10 @@ Estimate: 2–3 focused days.
 - An open end can attach to a closed section, an open section endpoint, an open section interior point, or an existing junction.
 - Multiple sections can share one junction.
 - Removing a junction leaves its sections as valid dead ends.
-- Splitting a closed loop produces one open section with a one-road-width gap.
+- Splitting a closed loop produces one open section with two capped ends.
+- Splitting an open section produces two capped sections with a small gap.
+- Split sections retain the spline and compact control-point counts.
+- Dragging one loose end onto the other loose end closes the section into a loop.
 - Export length is the sum of section lengths when no routes exist.
 - `project@1` and `project@2` fixtures still import and validate under the documented migration.
 - Lapster conformance still passes for a representative venue.
@@ -170,6 +177,22 @@ Estimate: 2–3 focused days.
 - Legacy fraction attachments may not migrate without inserting a host point.
 - Multi-way junction anchor choice must remain deterministic.
 - Removing `main` touches validation, baking, app editing, spawn, length, and tests, so partial migrations can leave inconsistent behavior.
+
+## Next session
+
+Start here:
+
+1. Finish Slice 4: run the full bake/validate fixture matrix and record performance. Representative venue Lapster conformance already passes.
+2. Add a section list to the authoring UI so sections can be inspected independently of junctions.
+3. Separate “Add section” from “Add junction”; currently Add section creates a section plus a junction.
+4. Decide the legacy `project@1` fraction-attachment migration.
+5. Record split/conformance performance and decide whether the split gap search needs further optimization.
+
+Known limitations:
+
+- Splitting some spline points can take a few seconds because candidate gaps are baked and validated.
+- `project@1` fraction attachments remain import-only.
+- Routes/laps, sectors, blank-sheet authoring, kerbs, and props are outside this plan.
 
 ## Explicitly deferred
 

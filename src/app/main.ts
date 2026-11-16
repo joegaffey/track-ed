@@ -26,6 +26,19 @@ import {
 } from "./scene";
 import type { BakedTrack, Vec3 } from "../model/baked-track";
 import { mergeLooseBranchEnds } from "./branch-merge";
+import { convertProjectToV3 } from "./convert-project";
+import {
+  addJunctionMember,
+  addSectionAtPoint,
+  closeSectionLoop,
+  isLooseSectionEnd,
+  isSectionPointInJunction,
+  mergeLooseSectionEnds,
+  removeJunctionWithGap,
+  splitClosedSection,
+  splitOpenSection,
+  syncSectionJunctions,
+} from "./section-edit";
 
 type DragState =
   | {
@@ -79,6 +92,7 @@ app.innerHTML = `
           <button class="edit-button" id="redo-button" type="button">Redo</button>
           <button class="edit-button" id="delete-button" type="button">Delete point</button>
           <button class="edit-button" id="branch-button" type="button">Add branch</button>
+          <button class="edit-button" id="split-loop-button" type="button">Split loop</button>
         </div>
         <div class="edit-field" id="attach-field" hidden>
           <label for="attach-fraction">attach <span id="attach-value">0.000</span></label>
@@ -87,10 +101,9 @@ app.innerHTML = `
         <div class="junction-list" id="junction-list"></div>
         <p class="edit-hint">
           Drag control points. Double-click a centreline to insert a point. Delete removes the
-          selected point. Select a main-loop control point, then Add junction to place the
-          junction there. Drag a loose branch end onto another loose branch end to merge them
-          into one road section. Moving the junction root leaves its other points fixed; the
-          move is blocked if the branch would cross the road.
+          selected point. Select any section control point, then Add section to create a joined
+          spur. Drag a loose end onto another section point to join; drag onto another loose end
+          to merge. Split section opens a closed loop or divides an open section with a gap.
         </p>
         <div class="edit-status" id="edit-status"></div>
       </section>
@@ -189,6 +202,8 @@ const undoButton = document.querySelector<HTMLButtonElement>("#undo-button")!;
 const redoButton = document.querySelector<HTMLButtonElement>("#redo-button")!;
 const deleteButton = document.querySelector<HTMLButtonElement>("#delete-button")!;
 const branchButton = document.querySelector<HTMLButtonElement>("#branch-button")!;
+const splitLoopButton =
+  document.querySelector<HTMLButtonElement>("#split-loop-button")!;
 const saveButton = document.querySelector<HTMLButtonElement>("#save-button")!;
 const openButton = document.querySelector<HTMLButtonElement>("#open-button")!;
 const frameButton = document.querySelector<HTMLButtonElement>("#frame-button")!;
@@ -275,6 +290,10 @@ function mainOf(source: Project): Project["centerlines"][number] | undefined {
 }
 
 function syncBranchStart(source: Project): void {
+  if (source.schema === "track-ed/project@3") {
+    syncSectionJunctions(source);
+    return;
+  }
   const moveToJunction = (
     branch: Project["centerlines"][number],
     junctionId: string,
@@ -350,12 +369,12 @@ function updateAuthoringUI(): void {
   undoButton.disabled = undoStack.length === 0;
   redoButton.disabled = redoStack.length === 0;
   deleteButton.disabled = selectedPoint === null;
-  branchButton.textContent = "Add junction";
-  branchButton.disabled = project?.schema === "track-ed/project@3";
-  branchButton.title =
-    project?.schema === "track-ed/project@3"
-      ? "General junction authoring is not implemented for project@3 yet."
-      : "";
+  const sectionVenue = project?.schema === "track-ed/project@3";
+  branchButton.textContent = sectionVenue ? "Add section" : "Add junction";
+  branchButton.disabled = false;
+  branchButton.title = sectionVenue
+    ? "Create a dead-ended section joined at the selected control point."
+    : "";
   const legacyBranch = project
     ? branchesOf(project).find(
         (candidate) => candidate.attach && "to" in candidate.attach,
@@ -366,6 +385,33 @@ function updateAuthoringUI(): void {
     attachFraction.value = String(legacyBranch.attach.fraction);
     attachValue.textContent = legacyBranch.attach.fraction.toFixed(3);
   }
+  const selectedSection = selectedPoint
+    ? project?.centerlines[selectedPoint.centerlineIndex]
+    : undefined;
+  const selectedPointId =
+    selectedPoint && selectedSection
+      ? selectedSection.pointIds[selectedPoint.pointIndex]
+      : undefined;
+  const selectedPointIndex = selectedPoint?.pointIndex;
+  const selectedEndpoint =
+    selectedSection !== undefined &&
+    !selectedSection.closed &&
+    (selectedPointIndex === 0 ||
+      selectedPointIndex === selectedSection.points.length - 1);
+  splitLoopButton.textContent = selectedSection?.closed ? "Split loop" : "Split section";
+  splitLoopButton.disabled =
+    project?.schema !== "track-ed/project@3" ||
+    !selectedSection ||
+    selectedPointId === undefined ||
+    selectedEndpoint ||
+    (project !== null &&
+      isSectionPointInJunction(project, selectedSection.id, selectedPointId));
+  splitLoopButton.title =
+    project?.schema === "track-ed/project@3"
+      ? selectedSection?.closed
+        ? "Open the selected closed loop with a road-width gap."
+        : "Split the selected open section into two capped sections."
+      : "Section splitting requires track-ed/project@3.";
   exportButton.disabled = !bakeValid || currentReport === null || !currentReport.ok;
   if (project) {
     updateSpawnUI(project);
@@ -830,7 +876,8 @@ function loadProject(input: unknown, frame: boolean): void {
     );
     return;
   }
-  project = parsed.project;
+  const converted = convertProjectToV3(parsed.project);
+  project = converted.ok ? converted.project : parsed.project;
   undoStack = [];
   redoStack = [];
   selectedPoint = null;
@@ -987,19 +1034,84 @@ function updateJunctionList(source: Project): void {
     remove.type = "button";
     remove.className = "edit-button";
     remove.textContent = "Remove";
-    remove.disabled = source.schema === "track-ed/project@3";
-    remove.title =
-      source.schema === "track-ed/project@3"
-        ? "Junction detach authoring is not implemented for project@3 yet."
-        : "";
+    remove.disabled = false;
+    remove.title = "";
     remove.addEventListener("click", () => removeJunction(junction.id));
     row.append(label, remove);
     junctionList.appendChild(row);
   }
 }
 
+function addSectionJunctionAtSelected(): void {
+  if (!project || !selectedPoint) {
+    setEditStatus("Select a section control point first.", "error");
+    return;
+  }
+  const section = project.centerlines[selectedPoint.centerlineIndex];
+  if (!section) {
+    return;
+  }
+  const before = cloneProject(project);
+  const result = addSectionAtPoint(project, section.id, selectedPoint.pointIndex);
+  if (!result.ok) {
+    setEditStatus(result.message, "error");
+    return;
+  }
+  if (!renderProject(result.project, { frame: false })) {
+    project = before;
+    renderProject(project, { frame: false });
+    setEditStatus("The new section would be invalid.", "error");
+    return;
+  }
+  pushUndo(before);
+  setEditStatus("Added a section and junction at the selected point.", "ok");
+  updateAuthoringUI();
+}
+
+function splitLoopAtSelection(): void {
+  if (!project || !selectedPoint) {
+    setEditStatus("Select a closed section control point first.", "error");
+    return;
+  }
+  const section = project.centerlines[selectedPoint.centerlineIndex];
+  if (!section) {
+    setEditStatus("Select a section control point first.", "error");
+    return;
+  }
+  const before = cloneProject(project);
+  const result = section.closed
+    ? splitClosedSection(project, section.id, selectedPoint.pointIndex)
+    : splitOpenSection(project, section.id, selectedPoint.pointIndex);
+  if (!result.ok) {
+    setEditStatus(result.message, "error");
+    return;
+  }
+  if (
+    !renderProject(result.project, { frame: false }) ||
+    !currentReport?.ok
+  ) {
+    project = before;
+    renderProject(project, { frame: false });
+    setEditStatus("The split would be invalid.", "error");
+    return;
+  }
+  selectedPoint = null;
+  pushUndo(before);
+  setEditStatus(
+    section.closed
+      ? "Split the closed loop into one open section."
+      : "Split the section into two capped sections.",
+    "ok",
+  );
+  updateAuthoringUI();
+}
+
 function addJunction(): void {
   if (!project) {
+    return;
+  }
+  if (project.schema === "track-ed/project@3") {
+    addSectionJunctionAtSelected();
     return;
   }
   const main = mainOf(project);
@@ -1100,6 +1212,26 @@ function removeJunction(junctionId: string): void {
   if (!junction) {
     return;
   }
+  if (project.schema === "track-ed/project@3") {
+    const before = cloneProject(project);
+    const result = removeJunctionWithGap(project, junctionId);
+    if (!result.ok) {
+      setEditStatus(result.message, "error");
+      return;
+    }
+    const rendered = renderProject(result.project, { frame: false });
+    if (!rendered || !currentReport?.ok) {
+      project = before;
+      renderProject(project, { frame: false });
+      setEditStatus("The junction could not be removed cleanly.", "error");
+      return;
+    }
+    selectedPoint = null;
+    pushUndo(before);
+    setEditStatus("Junction removed; sections detached.", "ok");
+    updateAuthoringUI();
+    return;
+  }
   const before = cloneProject(project);
   const removedBranchIds = new Set(
     branchesOf(project)
@@ -1148,10 +1280,41 @@ function isJunctionReferenced(source: Project, junctionId: string): boolean {
 function findJoinTarget(
   source: Project,
   branchIndex: number,
+  pointIndex: number,
   position: Vec2,
 ): ControlPointPick | null {
   if (source.schema === "track-ed/project@3") {
-    return null;
+    const dragged = source.centerlines[branchIndex];
+    if (!dragged || dragged.closed || !isLooseSectionEnd(source, dragged.id, pointIndex)) {
+      return null;
+    }
+    let best: ControlPointPick | null = null;
+    let bestDistance = Infinity;
+    for (let sectionIndex = 0; sectionIndex < source.centerlines.length; sectionIndex += 1) {
+      const section = source.centerlines[sectionIndex];
+      if (!section) {
+        continue;
+      }
+      const lastIndex = section.points.length - 1;
+      const limit = sectionIndex === branchIndex ? 20 : 4;
+      for (let targetIndex = 0; targetIndex < section.points.length; targetIndex += 1) {
+        if (sectionIndex === branchIndex) {
+          if (targetIndex === pointIndex || (targetIndex !== 0 && targetIndex !== lastIndex)) {
+            continue;
+          }
+          if (!isLooseSectionEnd(source, section.id, targetIndex)) {
+            continue;
+          }
+        }
+        const point = section.points[targetIndex]!;
+        const distance = Math.hypot(point[0] - position[0], point[1] - position[1]);
+        if (distance < limit && distance < bestDistance) {
+          bestDistance = distance;
+          best = { centerlineIndex: sectionIndex, pointIndex: targetIndex };
+        }
+      }
+    }
+    return best;
   }
   const branch = source.centerlines[branchIndex];
   if (!branch || branch.closed || branch.points.length < 2) {
@@ -1273,6 +1436,89 @@ function applyBranchEndJoin(
   }
   updateAuthoringUI();
   return true;
+}
+
+function applySectionJunction(
+  source: Project,
+  branch: Project["centerlines"][number],
+  target: ControlPointPick,
+  draggedPointIndex: number,
+): string | null {
+  const targetSection = source.centerlines[target.centerlineIndex];
+  const targetPointId = targetSection?.pointIds[target.pointIndex];
+  const draggedPointId = branch.pointIds[draggedPointIndex];
+  if (!targetSection || !targetPointId || !draggedPointId) {
+    return "The junction target no longer exists.";
+  }
+  const result = addJunctionMember(
+    source,
+    targetSection.id,
+    targetPointId,
+    branch.id,
+    draggedPointId,
+  );
+  if (!result.ok) {
+    return result.message;
+  }
+  if (!renderProject(result.project, { frame: false })) {
+    return "The junction would be invalid.";
+  }
+  setEditStatus(`Joined ${branch.id} to ${targetSection.id}/${targetPointId}.`, "ok");
+  updateAuthoringUI();
+  return null;
+}
+
+function applySectionLoopClose(
+  source: Project,
+  branch: Project["centerlines"][number],
+  target: ControlPointPick,
+  draggedPointIndex: number,
+): string | null {
+  const result = closeSectionLoop(
+    source,
+    branch.id,
+    draggedPointIndex,
+    target.pointIndex,
+  );
+  if (!result.ok) {
+    return result.message;
+  }
+  selectedPoint = null;
+  if (!renderProject(result.project, { frame: false })) {
+    return "The closed loop would be invalid.";
+  }
+  setEditStatus("Closed the section into a loop.", "ok");
+  updateAuthoringUI();
+  return null;
+}
+
+function applySectionEndMerge(
+  source: Project,
+  branch: Project["centerlines"][number],
+  target: ControlPointPick,
+  draggedPointIndex: number,
+): string | null {
+  const targetSection = source.centerlines[target.centerlineIndex];
+  if (!targetSection) {
+    return "The merge target no longer exists.";
+  }
+  const result = mergeLooseSectionEnds(
+    source,
+    branch.id,
+    draggedPointIndex,
+    targetSection.id,
+    target.pointIndex,
+  );
+  if (!result.ok) {
+    return result.message;
+  }
+  selectedPoint = null;
+  if (!renderProject(result.project, { frame: false })) {
+    return "The merged section would be invalid.";
+  }
+  setEditStatus(`Merged ${branch.id} and ${targetSection.id}.`, "ok");
+  updateAuthoringUI();
+  return null;
 }
 
 function applyBranchEndMerge(
@@ -1433,17 +1679,6 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         return;
       }
 
-      if (trackView.pickSpawn(point.x, point.y)) {
-        event.stopPropagation();
-        event.preventDefault();
-        setSelection(null);
-        drag = { kind: "spawn", startProject: cloneProject(project) };
-        trackView.setControlsEnabled(false);
-        canvas.setPointerCapture(event.pointerId);
-        canvas.style.cursor = "grabbing";
-        return;
-      }
-
       const hit = trackView.pickControlPoint(point.x, point.y);
       if (hit) {
         let resolved = hit;
@@ -1500,6 +1735,17 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
             ...(pendingDetach ? { pendingDetach: true } : {}),
           };
         }
+        trackView.setControlsEnabled(false);
+        canvas.setPointerCapture(event.pointerId);
+        canvas.style.cursor = "grabbing";
+        return;
+      }
+
+      if (trackView.pickSpawn(point.x, point.y)) {
+        event.stopPropagation();
+        event.preventDefault();
+        setSelection(null);
+        drag = { kind: "spawn", startProject: cloneProject(project) };
         trackView.setControlsEnabled(false);
         canvas.setPointerCapture(event.pointerId);
         canvas.style.cursor = "grabbing";
@@ -1583,16 +1829,40 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
           renderProject(project, { frame: false });
         }
 
-        if (
+        const isEndpoint =
           !branch.closed &&
-          drag.pointIndex === branch.points.length - 1
-        ) {
+          (drag.pointIndex === 0 || drag.pointIndex === branch.points.length - 1);
+        const canJoin =
+          project.schema === "track-ed/project@3"
+            ? isEndpoint && isLooseSectionEnd(project, branch.id, drag.pointIndex)
+            : drag.pointIndex === branch.points.length - 1;
+        if (canJoin) {
           const position = branch.points[drag.pointIndex]!;
-          const target = findJoinTarget(project, drag.centerlineIndex, position);
+          const target = findJoinTarget(
+            project,
+            drag.centerlineIndex,
+            drag.pointIndex,
+            position,
+          );
           trackView.setJoinTarget(target);
           if (target) {
             const targetCenterline = project.centerlines[target.centerlineIndex];
-            if (targetCenterline?.closed) {
+            const isLoopClose =
+              project.schema === "track-ed/project@3" &&
+              targetCenterline?.id === branch.id;
+            const isMergeTarget =
+              project.schema === "track-ed/project@3" &&
+              targetCenterline !== undefined &&
+              !isLoopClose &&
+              isLooseSectionEnd(project, targetCenterline.id, target.pointIndex);
+            if (isLoopClose) {
+              setEditStatus("Release to close this section into a loop", "ok");
+            } else if (isMergeTarget) {
+              setEditStatus(
+                `Release to merge ${branch.id} and ${targetCenterline.id}`,
+                "ok",
+              );
+            } else if (targetCenterline?.closed) {
               setEditStatus(
                 `Release to join ${branch.id} to ${targetCenterline.id}/${
                   targetCenterline.pointIds[target.pointIndex] ?? ""
@@ -1601,7 +1871,9 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
               );
             } else {
               setEditStatus(
-                `Release to merge ${branch.id} and ${targetCenterline?.id ?? "branch"}`,
+                `Release to join ${branch.id} to ${targetCenterline?.id ?? "section"}/${
+                  targetCenterline?.pointIds[target.pointIndex] ?? ""
+                }`,
                 "ok",
               );
             }
@@ -1718,10 +1990,32 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         currentDrag.pointIndex === branch.points.length - 1
       ) {
         const position = branch.points[currentDrag.pointIndex]!;
-        const target = findJoinTarget(project, currentDrag.centerlineIndex, position);
+        const target = findJoinTarget(
+          project,
+          currentDrag.centerlineIndex,
+          currentDrag.pointIndex,
+          position,
+        );
         if (target) {
           const targetCenterline = project.centerlines[target.centerlineIndex];
-          if (targetCenterline?.closed) {
+          if (project.schema === "track-ed/project@3" && targetCenterline) {
+            const isLoopClose = targetCenterline.id === branch.id;
+            const isMergeTarget =
+              !isLoopClose &&
+              isLooseSectionEnd(project, targetCenterline.id, target.pointIndex);
+            const error = isLoopClose
+              ? applySectionLoopClose(project, branch, target, currentDrag.pointIndex)
+              : isMergeTarget
+                ? applySectionEndMerge(project, branch, target, currentDrag.pointIndex)
+                : applySectionJunction(project, branch, target, currentDrag.pointIndex);
+            if (error === null) {
+              pushUndo(currentDrag.startProject);
+            } else {
+              project = currentDrag.startProject;
+              renderProject(project, { frame: false });
+              setEditStatus(error, "error");
+            }
+          } else if (targetCenterline?.closed) {
             if (applyBranchEndJoin(project, branch, target)) {
               pushUndo(currentDrag.startProject);
             } else {
@@ -1787,6 +2081,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
 deleteButton.addEventListener("click", deleteSelectedPoint);
+splitLoopButton.addEventListener("click", splitLoopAtSelection);
 terrainMode.addEventListener("change", () => {
   if (!project) {
     return;

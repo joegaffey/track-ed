@@ -22,7 +22,7 @@ This repository is a standalone track geometry editor. Read `SPEC.md` before wri
 
 Maintain track-ed as a browser editor for a closed main loop, multiple attached branches, shared junctions, spline centrelines, point-based TIN terrain, and branch-end joins/merges. It bakes one welded surface graph, inspects topology, and exports `track.glb` + `track.json` for the Lapster profile.
 
-M4 conformance has passed. v1-G1 (splines), v1-G2 (terrain/TIN), and `project@2` multi-junction authoring are implemented. `project@3` venue sections and general junctions are in progress: multiple closed loops, dead-ended open sections, multi-way junction members, and open-section junctions bake without a main loop. General junctions, routes, kerbs, props, dynamic sections, and production promotion remain deferred; do not regress the existing invariants while extending them.
+M4 conformance has passed. v1-G1 (splines), v1-G2 (terrain/TIN), and `project@2` multi-junction authoring are implemented. `project@3` venue sections and authoring are in progress: multiple closed loops, dead-ended open sections, multi-way junction members, open-section junctions, loose-end joins/merges, junction detach, and loop splitting work without a main loop. General junctions, routes, kerbs, props, dynamic sections, and production promotion remain deferred; do not regress the existing invariants while extending them.
 
 ## Architecture boundaries
 

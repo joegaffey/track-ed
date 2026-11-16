@@ -395,6 +395,32 @@ function extendedShoulderRibbonStart(points: Vec2[], width: number): Vec2[] {
   ];
 }
 
+function extendedShoulderRibbonBoth(points: Vec2[], width: number): Vec2[] {
+  const left = offsetPolyline(points, false, 1, width);
+  const right = offsetPolyline(points, false, -1, width);
+  if (left.length < 2 || right.length < 2) {
+    return [...left, ...right.slice().reverse()];
+  }
+  const first = points[0]!;
+  const second = points[1]!;
+  const last = points[points.length - 1]!;
+  const previous = points[points.length - 2]!;
+  const startDirection = normalize2(sub2(first, second));
+  const endDirection = normalize2(sub2(last, previous));
+  const leftStart = add2(left[0]!, scale2(startDirection, width));
+  const rightStart = add2(right[0]!, scale2(startDirection, width));
+  const leftEnd = add2(left[left.length - 1]!, scale2(endDirection, width));
+  const rightEnd = add2(right[right.length - 1]!, scale2(endDirection, width));
+  return [
+    leftStart,
+    ...left.slice(1, -1),
+    leftEnd,
+    rightEnd,
+    ...right.slice(1, -1).reverse(),
+    rightStart,
+  ];
+}
+
 function shoulderRibbonForEnds(
   points: Vec2[],
   width: number,
@@ -483,31 +509,6 @@ function sharedJunctionPoints(
   return points;
 }
 
-function extendedShoulderRibbonBoth(points: Vec2[], width: number): Vec2[] {
-  const left = offsetPolyline(points, false, 1, width);
-  const right = offsetPolyline(points, false, -1, width);
-  if (left.length < 2 || right.length < 2) {
-    return [...left, ...right.slice().reverse()];
-  }
-  const first = points[0]!;
-  const second = points[1]!;
-  const last = points[points.length - 1]!;
-  const previous = points[points.length - 2]!;
-  const startDirection = normalize2(sub2(first, second));
-  const endDirection = normalize2(sub2(last, previous));
-  const leftStart = add2(left[0]!, scale2(startDirection, width));
-  const rightStart = add2(right[0]!, scale2(startDirection, width));
-  const leftEnd = add2(left[left.length - 1]!, scale2(endDirection, width));
-  const rightEnd = add2(right[right.length - 1]!, scale2(endDirection, width));
-  return [
-    leftStart,
-    ...left.slice(1, -1),
-    leftEnd,
-    rightEnd,
-    ...right.slice(1, -1).reverse(),
-    rightStart,
-  ];
-}
 
 function snapBranch(
   project: Project,
