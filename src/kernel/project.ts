@@ -11,10 +11,15 @@ export type ProjectSchema =
   | "track-ed/project@1"
   | "track-ed/project@2"
   | "track-ed/project@3"
-  | "track-ed/project@4";
+  | "track-ed/project@4"
+  | "track-ed/project@5";
 
 export function isVenueSchema(schema: ProjectSchema): boolean {
-  return schema === "track-ed/project@3" || schema === "track-ed/project@4";
+  return (
+    schema === "track-ed/project@3" ||
+    schema === "track-ed/project@4" ||
+    schema === "track-ed/project@5"
+  );
 }
 
 export interface ProjectRoad {
@@ -98,6 +103,52 @@ export interface ProjectPropSpan {
   collision?: "solid" | "none";
 }
 
+export type ProjectRoadsideKind =
+  | "kerb"
+  | "wall"
+  | "tree"
+  | "tyre"
+  | "block";
+
+export interface ProjectKerbRoadsideRun {
+  kind: "kerb";
+  start: number;
+  length: number;
+  flatHeight?: number;
+  cornerHeight?: number;
+}
+
+export interface ProjectWallRoadsideRun {
+  kind: "wall";
+  start: number;
+  length: number;
+  height?: number;
+}
+
+export interface ProjectInstanceRoadsideRun {
+  kind: ProjectPropKind;
+  start: number;
+  length: number;
+  outwardOffset?: number;
+  spacing?: number;
+  collision?: "solid" | "none";
+}
+
+export type ProjectRoadsideRun =
+  | ProjectKerbRoadsideRun
+  | ProjectWallRoadsideRun
+  | ProjectInstanceRoadsideRun;
+
+export type ProjectRoadsideRole = "kerb-left" | "kerb-right";
+
+export interface ProjectRoadsideSpline {
+  id: string;
+  role?: ProjectRoadsideRole;
+  side: ProjectKerbSide;
+  offset: number;
+  runs: ProjectRoadsideRun[];
+}
+
 export interface ProjectCenterline {
   id: string;
   closed: boolean;
@@ -109,6 +160,7 @@ export interface ProjectCenterline {
   kerbs?: ProjectKerbSpan[];
   walls?: ProjectWallSpan[];
   props?: ProjectPropSpan[];
+  roadside?: ProjectRoadsideSpline[];
 }
 
 export interface ProjectSpawn {
@@ -964,6 +1016,264 @@ function parsePropSpans(
   return spans;
 }
 
+function parseRoadsideRun(
+  value: unknown,
+  path: string,
+  issues: ProjectIssue[],
+): ProjectRoadsideRun | null {
+  const object = expectObject(value, path, issues);
+  if (!object) {
+    return null;
+  }
+  const kind = readString(object.kind, `${path}.kind`, issues);
+  if (
+    kind !== null &&
+    !["kerb", "wall", "tree", "tyre", "block"].includes(kind)
+  ) {
+    issues.push({
+      path: `${path}.kind`,
+      message: 'must be "kerb", "wall", "tree", "tyre", or "block"',
+    });
+  }
+  const start = readNumber(object.start, `${path}.start`, issues);
+  const length = readPositiveNumber(object.length, `${path}.length`, issues);
+  if (start !== null && (start < 0 || start >= 1)) {
+    issues.push({ path: `${path}.start`, message: "must be in [0, 1)" });
+  }
+  if (length !== null && length > 1) {
+    issues.push({ path: `${path}.length`, message: "must be no greater than 1" });
+  }
+
+  if (kind === "kerb") {
+    rejectUnknownKeys(
+      object,
+      ["kind", "start", "length", "flatHeight", "cornerHeight"],
+      path,
+      issues,
+    );
+    const flatHeight =
+      object.flatHeight === undefined
+        ? undefined
+        : readNonNegativeNumber(object.flatHeight, `${path}.flatHeight`, issues);
+    const cornerHeight =
+      object.cornerHeight === undefined
+        ? undefined
+        : readPositiveNumber(object.cornerHeight, `${path}.cornerHeight`, issues);
+    if (
+      start === null ||
+      length === null ||
+      (flatHeight !== undefined && flatHeight === null) ||
+      (cornerHeight !== undefined && cornerHeight === null)
+    ) {
+      return null;
+    }
+    return {
+      kind: "kerb",
+      start,
+      length,
+      ...(flatHeight !== undefined ? { flatHeight } : {}),
+      ...(cornerHeight !== undefined ? { cornerHeight } : {}),
+    };
+  }
+
+  if (kind === "wall") {
+    rejectUnknownKeys(object, ["kind", "start", "length", "height"], path, issues);
+    const height =
+      object.height === undefined
+        ? undefined
+        : readPositiveNumber(object.height, `${path}.height`, issues);
+    if (start === null || length === null || (height !== undefined && height === null)) {
+      return null;
+    }
+    return {
+      kind: "wall",
+      start,
+      length,
+      ...(height !== undefined ? { height } : {}),
+    };
+  }
+
+  if (kind === "tree" || kind === "tyre" || kind === "block") {
+    rejectUnknownKeys(
+      object,
+      ["kind", "start", "length", "outwardOffset", "spacing", "collision"],
+      path,
+      issues,
+    );
+    const outwardOffset =
+      object.outwardOffset === undefined
+        ? undefined
+        : readNonNegativeNumber(object.outwardOffset, `${path}.outwardOffset`, issues);
+    const spacing =
+      object.spacing === undefined
+        ? undefined
+        : readPositiveNumber(object.spacing, `${path}.spacing`, issues);
+    const collision = object.collision;
+    if (collision !== undefined && collision !== "solid" && collision !== "none") {
+      issues.push({
+        path: `${path}.collision`,
+        message: 'must be "solid" or "none"',
+      });
+    }
+    if (
+      start === null ||
+      length === null ||
+      (outwardOffset !== undefined && outwardOffset === null) ||
+      (spacing !== undefined && spacing === null) ||
+      (collision !== undefined && collision !== "solid" && collision !== "none")
+    ) {
+      return null;
+    }
+    return {
+      kind,
+      start,
+      length,
+      ...(outwardOffset !== undefined ? { outwardOffset } : {}),
+      ...(spacing !== undefined ? { spacing } : {}),
+      ...(collision !== undefined ? { collision } : {}),
+    };
+  }
+
+  return null;
+}
+
+function parseRoadsideSpline(
+  value: unknown,
+  path: string,
+  issues: ProjectIssue[],
+  closed: boolean,
+): ProjectRoadsideSpline | null {
+  const object = expectObject(value, path, issues);
+  if (!object) {
+    return null;
+  }
+  rejectUnknownKeys(object, ["id", "role", "side", "offset", "runs"], path, issues);
+  const id = readString(object.id, `${path}.id`, issues);
+  const role = object.role;
+  if (role !== undefined && role !== "kerb-left" && role !== "kerb-right") {
+    issues.push({
+      path: `${path}.role`,
+      message: 'must be "kerb-left" or "kerb-right"',
+    });
+  }
+  const side = readString(object.side, `${path}.side`, issues);
+  if (side !== null && side !== "left" && side !== "right") {
+    issues.push({ path: `${path}.side`, message: 'must be "left" or "right"' });
+  }
+  const offset = readNonNegativeNumber(object.offset, `${path}.offset`, issues);
+  const runsInput = object.runs ?? [];
+  if (!Array.isArray(runsInput)) {
+    issues.push({ path: `${path}.runs`, message: "must be an array" });
+    return null;
+  }
+  const runs: ProjectRoadsideRun[] = [];
+  for (let index = 0; index < runsInput.length; index += 1) {
+    const run = parseRoadsideRun(
+      runsInput[index],
+      `${path}.runs[${index}]`,
+      issues,
+    );
+    if (!run) {
+      return null;
+    }
+    if (!closed && run.start + run.length > 1 + 1e-9) {
+      issues.push({
+        path: `${path}.runs[${index}].length`,
+        message: "must not extend past the end of an open section",
+      });
+    }
+    if (closed && run.length >= 1 - 1e-9) {
+      issues.push({
+        path: `${path}.runs[${index}].length`,
+        message:
+          "a closed-section run must be shorter than the full loop; use two runs that meet at a seam",
+      });
+    }
+    runs.push(run);
+  }
+  runs.sort((a, b) => a.start - b.start);
+  for (let i = 0; i < runs.length; i += 1) {
+    for (let j = i + 1; j < runs.length; j += 1) {
+      const a = runs[i]!;
+      const b = runs[j]!;
+      const overlap = kerbSpanIntervals(a.start, a.length, closed).some((aInterval) =>
+        kerbSpanIntervals(b.start, b.length, closed).some(
+          (bInterval) =>
+            aInterval[0] < bInterval[1] - 1e-9 &&
+            aInterval[1] > bInterval[0] + 1e-9,
+        ),
+      );
+      if (overlap) {
+        issues.push({
+          path: `${path}.runs`,
+          message: "runs on one roadside spline must not overlap",
+        });
+        return null;
+      }
+    }
+  }
+  if (
+    id === null ||
+    (side !== "left" && side !== "right") ||
+    offset === null ||
+    (role !== undefined && role !== "kerb-left" && role !== "kerb-right")
+  ) {
+    return null;
+  }
+  if (role !== undefined) {
+    const expectedSide = role === "kerb-left" ? "left" : "right";
+    if (side !== expectedSide) {
+      issues.push({
+        path: `${path}.side`,
+        message: `must be "${expectedSide}" for role "${role}"`,
+      });
+      return null;
+    }
+  }
+  return {
+    id,
+    ...(role !== undefined ? { role } : {}),
+    side,
+    offset,
+    runs,
+  };
+}
+
+function parseRoadside(
+  value: unknown,
+  path: string,
+  issues: ProjectIssue[],
+  closed: boolean,
+): ProjectRoadsideSpline[] | null {
+  if (!Array.isArray(value)) {
+    issues.push({ path, message: "must be an array" });
+    return null;
+  }
+  const splines: ProjectRoadsideSpline[] = [];
+  const ids = new Set<string>();
+  for (let index = 0; index < value.length; index += 1) {
+    const spline = parseRoadsideSpline(
+      value[index],
+      `${path}[${index}]`,
+      issues,
+      closed,
+    );
+    if (!spline) {
+      return null;
+    }
+    if (ids.has(spline.id)) {
+      issues.push({
+        path: `${path}[${index}].id`,
+        message: `duplicate roadside spline id "${spline.id}"`,
+      });
+      return null;
+    }
+    ids.add(spline.id);
+    splines.push(spline);
+  }
+  return splines;
+}
+
 function parseCenterline(
   value: unknown,
   path: string,
@@ -976,13 +1286,16 @@ function parseCenterline(
   }
   const isVenue = isVenueSchema(schema);
   const isV4 = schema === "track-ed/project@4";
+  const isV5 = schema === "track-ed/project@5";
   rejectUnknownKeys(
     object,
-    isV4
-      ? ["id", "closed", "points", "spline", "kerbs", "walls", "props"]
-      : isVenue
-        ? ["id", "closed", "points", "spline", "kerbs"]
-        : ["id", "closed", "points", "attach", "endAttach", "spline"],
+    isV5
+      ? ["id", "closed", "points", "spline", "roadside"]
+      : isV4
+        ? ["id", "closed", "points", "spline", "kerbs", "walls", "props"]
+        : isVenue
+          ? ["id", "closed", "points", "spline", "kerbs"]
+          : ["id", "closed", "points", "attach", "endAttach", "spline"],
     path,
     issues,
   );
@@ -1016,6 +1329,20 @@ function parseCenterline(
       return null;
     }
     kerbs = parsedKerbs;
+  }
+
+  let roadside: ProjectRoadsideSpline[] | undefined;
+  if (isV5 && object.roadside !== undefined) {
+    const parsedRoadside = parseRoadside(
+      object.roadside,
+      `${path}.roadside`,
+      issues,
+      closed === true,
+    );
+    if (parsedRoadside === null) {
+      return null;
+    }
+    roadside = parsedRoadside;
   }
 
   let props: ProjectPropSpan[] | undefined;
@@ -1107,6 +1434,7 @@ function parseCenterline(
     ...(kerbs && kerbs.length > 0 ? { kerbs } : {}),
     ...(walls && walls.length > 0 ? { walls } : {}),
     ...(props && props.length > 0 ? { props } : {}),
+    ...(roadside && roadside.length > 0 ? { roadside } : {}),
   };
 }
 
@@ -1483,18 +1811,20 @@ export function parseProject(input: unknown): ProjectParseResult {
     schemaText !== "track-ed/project@1" &&
     schemaText !== "track-ed/project@2" &&
     schemaText !== "track-ed/project@3" &&
-    schemaText !== "track-ed/project@4"
+    schemaText !== "track-ed/project@4" &&
+    schemaText !== "track-ed/project@5"
   ) {
     issues.push({
       path: "$.schema",
       message:
-        'must be "track-ed/project@1", "track-ed/project@2", "track-ed/project@3", or "track-ed/project@4"',
+        'must be "track-ed/project@1", "track-ed/project@2", "track-ed/project@3", "track-ed/project@4", or "track-ed/project@5"',
     });
   }
   const schema: ProjectSchema =
     schemaText === "track-ed/project@2" ||
     schemaText === "track-ed/project@3" ||
-    schemaText === "track-ed/project@4"
+    schemaText === "track-ed/project@4" ||
+    schemaText === "track-ed/project@5"
       ? schemaText
       : "track-ed/project@1";
   const isVenue = isVenueSchema(schema);
@@ -1601,7 +1931,8 @@ export function parseProject(input: unknown): ProjectParseResult {
     schemaText !== "track-ed/project@1" &&
     schemaText !== "track-ed/project@2" &&
     schemaText !== "track-ed/project@3" &&
-    schemaText !== "track-ed/project@4"
+    schemaText !== "track-ed/project@4" &&
+    schemaText !== "track-ed/project@5"
   ) {
     return { project: null, issues, warnings };
   }

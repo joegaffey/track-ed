@@ -10,6 +10,7 @@ import {
   DEFAULT_WALL_OFFSET,
   DEFAULT_PROP_OFFSETS,
   DEFAULT_PROP_SPACING,
+  DEFAULT_PROP_CENTERLINE_OFFSETS,
 } from "../kernel/kerbs";
 import {
   isVenueSchema,
@@ -18,6 +19,9 @@ import {
   type ProjectKerbSpan,
   type ProjectPropKind,
   type ProjectPropSpan,
+  type ProjectRoadsideKind,
+  type ProjectRoadsideRun,
+  type ProjectRoadsideSpline,
   type ProjectWallSpan,
 } from "../kernel/project";
 import { samplePolyline, segmentLengths } from "../kernel/geometry";
@@ -103,6 +107,7 @@ type DragState =
       sectionId: string;
       side: "left" | "right";
       propKind: ProjectPropKind;
+      paintOffset: number;
       closed: boolean;
       originFraction: number;
       previousFraction: number;
@@ -113,6 +118,24 @@ type DragState =
       kind: "prop-entry" | "prop-exit";
       sectionId: string;
       spanIndex: number;
+      startProject: Project;
+    }
+  | {
+      kind: "roadside-paint";
+      sectionId: string;
+      splineId: string;
+      runKind: ProjectRoadsideKind;
+      closed: boolean;
+      originFraction: number;
+      previousFraction: number;
+      signedLength: number;
+      startProject: Project;
+    }
+  | {
+      kind: "roadside-entry" | "roadside-exit";
+      sectionId: string;
+      splineId: string;
+      runIndex: number;
       startProject: Project;
     }
   | {
@@ -144,10 +167,12 @@ app.innerHTML = `
     </div>
     <div class="topbar-right">
       <div class="mode-switch" role="group" aria-label="Editing mode">
-        <button class="mode-button active" id="mode-points" type="button">Points</button>
-        <button class="mode-button" id="mode-kerbs" type="button">Kerbs</button>
-        <button class="mode-button" id="mode-walls" type="button">Walls</button>
-        <button class="mode-button" id="mode-props" type="button">Props</button>
+        <button class="mode-button" id="mode-terrain" type="button">Terrain</button>
+        <button class="mode-button active" id="mode-points" type="button">Track</button>
+        <button class="mode-button" id="mode-roadside" type="button">Roadside</button>
+        <button class="mode-button" id="mode-kerbs" type="button" hidden>Kerbs</button>
+        <button class="mode-button" id="mode-walls" type="button" hidden>Walls</button>
+        <button class="mode-button" id="mode-props" type="button" hidden>Props</button>
       </div>
       <div class="project-meta" id="project-meta"></div>
     </div>
@@ -155,12 +180,61 @@ app.innerHTML = `
   <div class="workspace">
     <div class="viewport" id="viewport"></div>
     <aside class="sidebar">
-      <section class="panel status-panel" id="status-panel"></section>
-      <section class="panel">
+      <section class="panel status-panel" id="status-panel">
+        <button class="status-toggle" id="status-toggle" type="button" aria-expanded="false">
+          <span>Geometry validation</span>
+          <span class="status-pill" id="status-summary">PENDING</span>
+          <span class="status-chevron">▾</span>
+        </button>
+        <div class="status-body" id="status-body" hidden></div>
+      </section>
+      <section class="panel" data-modes="track">
         <h2>Sections</h2>
         <div class="section-list" id="section-list"></div>
       </section>
-      <section class="panel">
+      <section class="panel" data-modes="roadside">
+        <h2>Roadside</h2>
+        <div class="edit-field">
+          <label for="roadside-section">section</label>
+          <select id="roadside-section"></select>
+        </div>
+        <div class="edit-field">
+          <label for="roadside-new-offset">new spline offset (m)</label>
+          <input type="number" id="roadside-new-offset" min="0" step="0.1" value="12" />
+        </div>
+        <div class="edit-field">
+          <label for="roadside-new-side">new spline side</label>
+          <select id="roadside-new-side">
+            <option value="left">left</option>
+            <option value="right">right</option>
+          </select>
+        </div>
+        <div class="edit-actions">
+          <button class="edit-button" id="roadside-add-spline" type="button">Add spline</button>
+          <button class="edit-button" id="roadside-remove-spline" type="button">Remove spline</button>
+        </div>
+        <div class="junction-list" id="roadside-spline-list"></div>
+        <div class="edit-actions">
+          <button class="edit-button" id="roadside-kind-kerb" type="button">Kerb</button>
+          <button class="edit-button" id="roadside-kind-wall" type="button">Wall</button>
+          <button class="edit-button active" id="roadside-kind-tree" type="button">Trees</button>
+          <button class="edit-button" id="roadside-kind-tyre" type="button">Tyres</button>
+          <button class="edit-button" id="roadside-kind-block" type="button">Blocks</button>
+        </div>
+        <div class="edit-field" id="roadside-run-property-field" hidden>
+          <label for="roadside-run-property" id="roadside-run-property-label">run property</label>
+          <input type="number" id="roadside-run-property" min="0.1" step="0.1" />
+        </div>
+        <div class="edit-actions">
+          <button class="edit-button" id="roadside-run-remove" type="button">Remove run</button>
+        </div>
+        <p class="edit-hint">
+          Choose a feature type, then drag a spline rail to add a run. Select a run in 3D
+          to edit its spacing or height. Fixed kerb splines are edited directly on the track.
+        </p>
+        <div class="edit-status" id="roadside-status"></div>
+      </section>
+      <section class="panel" data-modes="track">
         <h2>Authoring</h2>
         <div class="edit-actions">
           <button class="edit-button" id="undo-button" type="button">Undo</button>
@@ -190,7 +264,7 @@ app.innerHTML = `
         </div>
         <input type="file" id="open-file" accept=".json,application/json" hidden />
       </section>
-      <section class="panel">
+      <section class="panel" data-modes="track">
         <h2>Spawn</h2>
         <div class="edit-field">
           <label for="spawn-centerline">centreline</label>
@@ -201,7 +275,7 @@ app.innerHTML = `
           Lateral position stays at the authored project value until starting-grid support is added.
         </p>
       </section>
-      <section class="panel">
+      <section class="panel" data-modes="terrain">
         <h2>Terrain points</h2>
         <div class="edit-field">
           <label for="terrain-mode">road mode</label>
@@ -225,7 +299,7 @@ app.innerHTML = `
         </p>
         <div class="edit-status" id="terrain-point-status"></div>
       </section>
-      <section class="panel">
+      <section class="panel" hidden>
         <h2>Kerbs</h2>
         <div class="edit-field">
           <label for="kerb-global-flat">global flat height (m)</label>
@@ -257,7 +331,7 @@ app.innerHTML = `
         </p>
         <div class="edit-status" id="kerb-status"></div>
       </section>
-      <section class="panel">
+      <section class="panel" hidden>
         <h2>Walls</h2>
         <div class="edit-field">
           <label for="wall-height">wall height (m)</label>
@@ -277,16 +351,20 @@ app.innerHTML = `
         </p>
         <div class="edit-status" id="wall-status"></div>
       </section>
-      <section class="panel">
+      <section class="panel" hidden>
         <h2>Props</h2>
         <div class="edit-actions">
           <button class="edit-button active" id="prop-kind-tree" type="button">Trees</button>
           <button class="edit-button" id="prop-kind-tyre" type="button">Tyres</button>
           <button class="edit-button" id="prop-kind-block" type="button">Blocks</button>
         </div>
+        <div class="edit-field">
+          <label for="prop-paint-offset">paint offset from centreline (m)</label>
+          <input type="number" id="prop-paint-offset" min="0" step="0.1" value="12" />
+        </div>
         <div class="junction-list" id="prop-list"></div>
         <div class="edit-field" id="prop-offset-field" hidden>
-          <label for="prop-offset">offset from asphalt edge (m)</label>
+          <label for="prop-offset">run offset from centreline (m)</label>
           <input type="number" id="prop-offset" min="0" step="0.1" />
         </div>
         <div class="edit-field" id="prop-spacing-field" hidden>
@@ -337,6 +415,9 @@ app.innerHTML = `
 
 const projectMeta = document.querySelector<HTMLDivElement>("#project-meta")!;
 const statusPanel = document.querySelector<HTMLElement>("#status-panel")!;
+const statusToggle = document.querySelector<HTMLButtonElement>("#status-toggle")!;
+const statusSummary = document.querySelector<HTMLSpanElement>("#status-summary")!;
+const statusBody = document.querySelector<HTMLDivElement>("#status-body")!;
 const surfaceLegend = document.querySelector<HTMLDivElement>("#surface-legend")!;
 const pickInfo = document.querySelector<HTMLDivElement>("#pick-info")!;
 const violationsContainer = document.querySelector<HTMLDivElement>("#violations")!;
@@ -371,6 +452,40 @@ const terrainPointHeightField =
   document.querySelector<HTMLDivElement>("#terrain-point-height-field")!;
 const terrainPointHeight = document.querySelector<HTMLInputElement>("#terrain-point-height")!;
 const terrainPointStatus = document.querySelector<HTMLDivElement>("#terrain-point-status")!;
+const modeRoadsideButton =
+  document.querySelector<HTMLButtonElement>("#mode-roadside")!;
+const roadsideSectionSelect =
+  document.querySelector<HTMLSelectElement>("#roadside-section")!;
+const roadsideNewOffset =
+  document.querySelector<HTMLInputElement>("#roadside-new-offset")!;
+const roadsideNewSide =
+  document.querySelector<HTMLSelectElement>("#roadside-new-side")!;
+const roadsideAddSplineButton =
+  document.querySelector<HTMLButtonElement>("#roadside-add-spline")!;
+const roadsideRemoveSplineButton =
+  document.querySelector<HTMLButtonElement>("#roadside-remove-spline")!;
+const roadsideSplineList =
+  document.querySelector<HTMLDivElement>("#roadside-spline-list")!;
+const roadsideRunPropertyField =
+  document.querySelector<HTMLDivElement>("#roadside-run-property-field")!;
+const roadsideRunPropertyLabel =
+  document.querySelector<HTMLLabelElement>("#roadside-run-property-label")!;
+const roadsideRunProperty =
+  document.querySelector<HTMLInputElement>("#roadside-run-property")!;
+const roadsideRunRemoveButton =
+  document.querySelector<HTMLButtonElement>("#roadside-run-remove")!;
+const roadsideStatus = document.querySelector<HTMLDivElement>("#roadside-status")!;
+const roadsideKindButtons: Array<
+  [HTMLButtonElement, ProjectRoadsideKind]
+> = [
+  [document.querySelector<HTMLButtonElement>("#roadside-kind-kerb")!, "kerb"],
+  [document.querySelector<HTMLButtonElement>("#roadside-kind-wall")!, "wall"],
+  [document.querySelector<HTMLButtonElement>("#roadside-kind-tree")!, "tree"],
+  [document.querySelector<HTMLButtonElement>("#roadside-kind-tyre")!, "tyre"],
+  [document.querySelector<HTMLButtonElement>("#roadside-kind-block")!, "block"],
+];
+const modeTerrainButton =
+  document.querySelector<HTMLButtonElement>("#mode-terrain")!;
 const modePointsButton = document.querySelector<HTMLButtonElement>("#mode-points")!;
 const modeKerbsButton = document.querySelector<HTMLButtonElement>("#mode-kerbs")!;
 const modeWallsButton = document.querySelector<HTMLButtonElement>("#mode-walls")!;
@@ -394,6 +509,8 @@ const wallStatus = document.querySelector<HTMLDivElement>("#wall-status")!;
 const propKindTree = document.querySelector<HTMLButtonElement>("#prop-kind-tree")!;
 const propKindTyre = document.querySelector<HTMLButtonElement>("#prop-kind-tyre")!;
 const propKindBlock = document.querySelector<HTMLButtonElement>("#prop-kind-block")!;
+const propPaintOffsetInput =
+  document.querySelector<HTMLInputElement>("#prop-paint-offset")!;
 const propRemoveButton = document.querySelector<HTMLButtonElement>("#prop-remove")!;
 const propList = document.querySelector<HTMLDivElement>("#prop-list")!;
 const propOffsetField = document.querySelector<HTMLDivElement>("#prop-offset-field")!;
@@ -425,8 +542,23 @@ let wallEditStart: Project | null = null;
 let selectedPropSpan: { sectionId: string; index: number } | null = null;
 let propEditStart: Project | null = null;
 let propPaintKind: ProjectPropKind = "tree";
-let editorMode: "points" | "kerbs" | "walls" | "props" = "points";
+let propPaintOffset = DEFAULT_PROP_CENTERLINE_OFFSETS.tree;
+let editorMode:
+  | "terrain"
+  | "track"
+  | "kerbs"
+  | "walls"
+  | "props"
+  | "roadside" = "track";
+let roadsideSectionId: string | null = null;
+let selectedRoadsideSpline: { sectionId: string; splineId: string } | null = null;
+let selectedRoadsideRun:
+  | { sectionId: string; splineId: string; runIndex: number }
+  | null = null;
+let roadsidePaintKind: ProjectRoadsideKind = "tree";
+let roadsideEditStart: Project | null = null;
 let bakeValid = false;
+let statusExpanded = false;
 
 const RENDER_DELAY_MS = 150;
 const RENDER_MAX_WAIT_MS = 300;
@@ -497,7 +629,7 @@ function scheduleOverlayUpdate(): void {
     view.updateOverlays(
       overlayCenterlines(project, currentTrack.bounds),
       overlayTerrainPoints(project),
-      overlayKerbs(project, currentTrack.bounds),
+      overlayForMode(project, currentTrack.bounds),
       overlayProps(currentTrack),
     );
     let spawn: Spawn | null = null;
@@ -506,7 +638,7 @@ function scheduleOverlayUpdate(): void {
     } catch {
       spawn = null;
     }
-    view.updateSpawn(spawn);
+    view.updateSpawn(editorMode === "track" ? spawn : null);
   });
 }
 
@@ -675,23 +807,39 @@ function updateAuthoringUI(): void {
     updateKerbsUI(project);
     updateWallsUI(project);
     updatePropsUI(project);
+    updateRoadsideUI(project);
   } else {
     sectionList.innerHTML = "";
     kerbList.innerHTML = "";
     wallList.innerHTML = "";
     propList.innerHTML = "";
+    roadsideSplineList.innerHTML = "";
   }
 }
 
 function updateModeUI(): void {
-  modePointsButton.classList.toggle("active", editorMode === "points");
+  modeTerrainButton.classList.toggle("active", editorMode === "terrain");
+  modePointsButton.classList.toggle("active", editorMode === "track");
+  modeRoadsideButton.classList.toggle("active", editorMode === "roadside");
   modeKerbsButton.classList.toggle("active", editorMode === "kerbs");
   modeWallsButton.classList.toggle("active", editorMode === "walls");
   modePropsButton.classList.toggle("active", editorMode === "props");
-  view?.setCenterlinesVisible(editorMode === "points" && centerlineToggle.checked);
+  view?.setCenterlinesVisible(
+    editorMode === "track" && centerlineToggle.checked,
+  );
+  updateModePanels();
 }
 
-function setEditorMode(mode: "points" | "kerbs" | "walls" | "props"): void {
+function updateModePanels(): void {
+  for (const panel of document.querySelectorAll<HTMLElement>("[data-modes]")) {
+    const modes = (panel.dataset.modes ?? "").split(/\s+/);
+    panel.hidden = !modes.includes(editorMode);
+  }
+}
+
+function setEditorMode(
+  mode: "terrain" | "track" | "kerbs" | "walls" | "props" | "roadside",
+): void {
   if (editorMode === mode) {
     return;
   }
@@ -703,6 +851,11 @@ function setEditorMode(mode: "points" | "kerbs" | "walls" | "props"): void {
   selectedKerbSpan = null;
   selectedWallSpan = null;
   selectedPropSpan = null;
+  selectedRoadsideSpline = null;
+  selectedRoadsideRun = null;
+  if (mode === "roadside" && project && !roadsideSectionId) {
+    roadsideSectionId = project.centerlines[0]?.id ?? null;
+  }
   updateModeUI();
   scheduleOverlayUpdate();
   updateAuthoringUI();
@@ -745,10 +898,12 @@ function showFatal(title: string, details: string[]): void {
   currentTrack = null;
   currentReport = null;
   bakeValid = false;
-  statusPanel.innerHTML = "";
-  const heading = document.createElement("h2");
+  statusSummary.textContent = "BLOCKED";
+  statusSummary.className = "status-pill bad";
+  statusBody.innerHTML = "";
+  const heading = document.createElement("h3");
   heading.textContent = title;
-  statusPanel.appendChild(heading);
+  statusBody.appendChild(heading);
   const list = document.createElement("div");
   list.className = "violations";
   for (const detail of details) {
@@ -757,7 +912,7 @@ function showFatal(title: string, details: string[]): void {
     item.textContent = detail;
     list.appendChild(item);
   }
-  statusPanel.appendChild(list);
+  statusBody.appendChild(list);
   surfaceLegend.innerHTML = "";
   violationsContainer.innerHTML = "";
   exportButton.disabled = true;
@@ -780,19 +935,17 @@ function metric(label: string, value: string, tone = ""): HTMLElement {
   return element;
 }
 
+function updateStatusCollapsed(): void {
+  statusBody.hidden = !statusExpanded;
+  statusToggle.setAttribute("aria-expanded", String(statusExpanded));
+  statusPanel.classList.toggle("expanded", statusExpanded);
+}
+
 function renderStatus(track: BakedTrack, report: ValidationReport): void {
   const topology = report.topology;
-  statusPanel.innerHTML = "";
-
-  const heading = document.createElement("div");
-  heading.className = "status-heading";
-  const title = document.createElement("h2");
-  title.textContent = "Geometry validation";
-  const status = document.createElement("span");
-  status.className = `status-pill ${report.ok ? "ok" : "bad"}`;
-  status.textContent = report.ok ? "VALID" : "BLOCKED";
-  heading.append(title, status);
-  statusPanel.appendChild(heading);
+  statusSummary.textContent = report.ok ? "VALID" : "BLOCKED";
+  statusSummary.className = `status-pill ${report.ok ? "ok" : "bad"}`;
+  statusBody.innerHTML = "";
 
   const grid = document.createElement("div");
   grid.className = "metrics";
@@ -859,7 +1012,7 @@ function renderStatus(track: BakedTrack, report: ValidationReport): void {
       topology.overlapPairs.length > 0 ? "bad" : "good",
     ),
   );
-  statusPanel.appendChild(grid);
+  statusBody.appendChild(grid);
 
   const note = document.createElement("p");
   note.className = "status-note";
@@ -871,7 +1024,7 @@ function renderStatus(track: BakedTrack, report: ValidationReport): void {
         ? "One welded ground graph plus separate roadside graphs. Roadside base edges are expected; ground open edges lie on the scene perimeter."
         : "One welded surface graph. The only open edges lie on the scene perimeter."
       : "Topology errors detected. Export is blocked until the MUST checks pass.";
-  statusPanel.appendChild(note);
+  statusBody.appendChild(note);
 }
 
 function renderLegend(track: BakedTrack, report: ValidationReport): void {
@@ -985,6 +1138,9 @@ function overlayCenterlines(
 }
 
 function overlayTerrainPoints(source: Project): TerrainPointOverlayData[] {
+  if (editorMode !== "terrain") {
+    return [];
+  }
   return (source.terrain.points ?? []).map((point) => ({
     position: [point.position[0], point.position[1]],
     height: point.height,
@@ -1054,7 +1210,7 @@ function roadsideRailPoints(
   source: Project,
   bounds: { min: Vec3; max: Vec3 },
   section: Project["centerlines"][number],
-  kind: "kerb" | "wall" | "prop",
+  kind: "kerb" | "wall" | "prop" | "spline",
   side: "left" | "right",
   start: number,
   length: number,
@@ -1109,6 +1265,10 @@ function overlayKerbs(
   const rails: KerbRailOverlayData[] = [];
   for (const section of source.centerlines) {
     for (const side of ["left", "right"] as const) {
+      const edgeOffset =
+        activeKind === "prop"
+          ? propPaintOffset - source.road.halfWidth
+          : undefined;
       const [points] = roadsideRailPoints(
         source,
         bounds,
@@ -1117,10 +1277,94 @@ function overlayKerbs(
         side,
         0,
         1,
-        activeKind === "prop" ? DEFAULT_PROP_OFFSETS[propPaintKind] : undefined,
+        edgeOffset,
       );
       if (points && points.length >= 2) {
-        rails.push({ kind: activeKind, sectionId: section.id, side, points });
+        rails.push({
+          kind: activeKind,
+          sectionId: section.id,
+          side,
+          ...(activeKind === "prop" ? { offset: propPaintOffset, active: true } : {}),
+          points,
+        });
+      }
+    }
+  }
+
+  if (activeKind === "prop") {
+    const seen = new Set(
+      rails.map(
+        (rail) =>
+          `${rail.sectionId}:${rail.side}:${(rail.offset ?? 0).toFixed(3)}`,
+      ),
+    );
+    for (const section of source.centerlines) {
+      for (const span of section.props ?? []) {
+        const centerlineOffset =
+          source.road.halfWidth +
+          (span.offset ?? DEFAULT_PROP_OFFSETS[span.kind]);
+        const key = `${section.id}:${span.side}:${centerlineOffset.toFixed(3)}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        const [points] = roadsideRailPoints(
+          source,
+          bounds,
+          section,
+          "prop",
+          span.side,
+          0,
+          1,
+          centerlineOffset - source.road.halfWidth,
+        );
+        if (points && points.length >= 2) {
+          rails.push({
+            kind: "prop",
+            sectionId: section.id,
+            side: span.side,
+            offset: centerlineOffset,
+            active: false,
+            points,
+          });
+        }
+      }
+    }
+  }
+
+  if (activeKind === "prop") {
+    const seenWalls = new Set<string>();
+    for (const section of source.centerlines) {
+      for (const wall of section.walls ?? []) {
+        const centerlineOffset =
+          source.road.halfWidth +
+          (wall.offset ?? DEFAULT_WALL_OFFSET) +
+          WALL_THICKNESS / 2;
+        const key = `${section.id}:${wall.side}:${centerlineOffset.toFixed(3)}`;
+        if (seenWalls.has(key)) {
+          continue;
+        }
+        seenWalls.add(key);
+        const [points] = roadsideRailPoints(
+          source,
+          bounds,
+          section,
+          "wall",
+          wall.side,
+          0,
+          1,
+          centerlineOffset - source.road.halfWidth,
+        );
+        if (points && points.length >= 2) {
+          rails.push({
+            kind: "wall",
+            sectionId: section.id,
+            side: wall.side,
+            offset: centerlineOffset,
+            active: false,
+            points,
+          });
+        }
       }
     }
   }
@@ -1203,7 +1447,7 @@ function overlayKerbs(
               : "prop";
         const offset =
           activeDrag.kind === "prop-paint"
-            ? DEFAULT_PROP_OFFSETS[activeDrag.propKind]
+            ? activeDrag.paintOffset - project.road.halfWidth
             : undefined;
         const pieces = roadsideRailPoints(
           project,
@@ -1251,6 +1495,38 @@ function serializeProject(source: Project): unknown {
           ? { attach: centerline.attach }
           : {}),
         ...(centerline.spline ? { spline: centerline.spline } : {}),
+      })),
+    };
+  }
+
+  if (source.schema === "track-ed/project@5") {
+    return {
+      schema: "track-ed/project@5",
+      name: source.name,
+      generator: source.generator,
+      road: source.road,
+      terrain: source.terrain,
+      ...(source.kerbs ? { kerbs: source.kerbs } : {}),
+      spawn: source.spawn,
+      cameras: source.cameras,
+      junctions: source.junctions.map((junction) => ({
+        id: junction.id,
+        members:
+          junction.members ??
+          [{ section: junction.centerline, point: junction.point }],
+        anchor: { section: junction.centerline, point: junction.point },
+      })),
+      sections: source.centerlines.map((centerline) => ({
+        id: centerline.id,
+        closed: centerline.closed,
+        points: centerline.points.map((position, index) => ({
+          id: centerline.pointIds[index],
+          position,
+        })),
+        ...(centerline.spline ? { spline: centerline.spline } : {}),
+        ...(centerline.roadside && centerline.roadside.length > 0
+          ? { roadside: centerline.roadside }
+          : {}),
       })),
     };
   }
@@ -1413,7 +1689,7 @@ function renderProject(
       overlayCenterlines(project, baked.bounds),
       overlayTerrainPoints(project),
       report.kerbTopology,
-      overlayKerbs(project, baked.bounds),
+      overlayForMode(project, baked.bounds),
       overlayProps(baked),
     );
     const canvas = viewport.querySelector<HTMLCanvasElement>("canvas");
@@ -1427,7 +1703,7 @@ function renderProject(
       overlayCenterlines(project, baked.bounds),
       overlayTerrainPoints(project),
       report.kerbTopology,
-      overlayKerbs(project, baked.bounds),
+      overlayForMode(project, baked.bounds),
       overlayProps(baked),
     );
   }
@@ -1462,6 +1738,7 @@ function loadProject(input: unknown, frame: boolean): void {
   }
   const converted = convertProjectToLatest(parsed.project);
   project = converted.ok ? converted.project : parsed.project;
+  roadsideSectionId = project.centerlines[0]?.id ?? null;
   undoStack = [];
   redoStack = [];
   selectedPoint = null;
@@ -1469,6 +1746,8 @@ function loadProject(input: unknown, frame: boolean): void {
   selectedKerbSpan = null;
   selectedWallSpan = null;
   selectedPropSpan = null;
+  selectedRoadsideSpline = null;
+  selectedRoadsideRun = null;
   kerbEditStart = null;
   wallEditStart = null;
   propEditStart = null;
@@ -1492,6 +1771,8 @@ function undo(): void {
   selectedKerbSpan = null;
   selectedWallSpan = null;
   selectedPropSpan = null;
+  selectedRoadsideSpline = null;
+  selectedRoadsideRun = null;
   kerbEditStart = null;
   wallEditStart = null;
   propEditStart = null;
@@ -1516,6 +1797,8 @@ function redo(): void {
   selectedKerbSpan = null;
   selectedWallSpan = null;
   selectedPropSpan = null;
+  selectedRoadsideSpline = null;
+  selectedRoadsideRun = null;
   kerbEditStart = null;
   wallEditStart = null;
   propEditStart = null;
@@ -2039,6 +2322,7 @@ function findPropSpanAt(
   side: "left" | "right",
   kind: ProjectPropKind,
   fraction: number,
+  centerlineOffset?: number,
 ): number | null {
   const section = source.centerlines.find((candidate) => candidate.id === sectionId);
   if (!section) {
@@ -2047,9 +2331,14 @@ function findPropSpanAt(
   const spans = section.props ?? [];
   for (let index = 0; index < spans.length; index += 1) {
     const span = spans[index]!;
+    const spanOffset =
+      source.road.halfWidth +
+      (span.offset ?? DEFAULT_PROP_OFFSETS[span.kind]);
     if (
       span.kind === kind &&
       span.side === side &&
+      (centerlineOffset === undefined ||
+        Math.abs(spanOffset - centerlineOffset) <= 0.05) &&
       kerbSpanContains(span.start, span.length, fraction, section.closed)
     ) {
       return index;
@@ -2058,9 +2347,11 @@ function findPropSpanAt(
   return null;
 }
 
-function propPaintSpan(
-  drag: Extract<NonNullable<DragState>, { kind: "prop-paint" }>,
-): { start: number; length: number } | null {
+function propPaintSpan(drag: {
+  signedLength: number;
+  originFraction: number;
+  previousFraction: number;
+}): { start: number; length: number } | null {
   const length = Math.abs(drag.signedLength);
   if (length <= 1e-5) {
     return null;
@@ -2103,11 +2394,13 @@ function updatePropsUI(source: Project): void {
       const rawEnd = span.start + span.length;
       const end = section.closed ? rawEnd % 1 : rawEnd;
       const wraps = section.closed && rawEnd > 1 + 1e-9;
-      const offset = span.offset ?? DEFAULT_PROP_OFFSETS[span.kind];
+      const offset =
+        source.road.halfWidth +
+        (span.offset ?? DEFAULT_PROP_OFFSETS[span.kind]);
       const spacing = span.spacing ?? DEFAULT_PROP_SPACING[span.kind];
       detail.textContent = `${span.start.toFixed(3)} – ${end.toFixed(3)}${
         wraps ? " (wraps)" : ""
-      } · ${offset.toFixed(1)} m out · ${spacing.toFixed(1)} m apart`;
+      } · ${offset.toFixed(1)} m from centre · ${spacing.toFixed(1)} m apart`;
       label.append(title, detail);
       row.append(label);
       row.addEventListener("click", () => {
@@ -2131,7 +2424,15 @@ function updatePropsUI(source: Project): void {
   const selected = selectedPropSpan
     ? findPropSpan(source, selectedPropSpan.sectionId, selectedPropSpan.index)
     : null;
-  const offset = selected?.span.offset ?? DEFAULT_PROP_OFFSETS[propPaintKind];
+  if (document.activeElement !== propPaintOffsetInput) {
+    propPaintOffsetInput.value = String(propPaintOffset);
+  }
+  propPaintOffsetInput.disabled = !editable;
+  const offset =
+    selected !== null
+      ? source.road.halfWidth +
+        (selected.span.offset ?? DEFAULT_PROP_OFFSETS[selected.span.kind])
+      : propPaintOffset;
   const spacing = selected?.span.spacing ?? DEFAULT_PROP_SPACING[propPaintKind];
   propOffsetField.hidden = selected === null;
   propSpacingField.hidden = selected === null;
@@ -2157,8 +2458,8 @@ function updatePropsUI(source: Project): void {
   propStatus.textContent = selected
     ? `Editing ${selected.span.kind} run on ${selected.section.id} · ${selected.span.side}.`
     : spanCount > 0
-      ? `${spanCount} prop run${spanCount === 1 ? "" : "s"}. Painting ${propPaintKind}.`
-      : `No prop runs. Painting ${propPaintKind}.`;
+      ? `${spanCount} prop run${spanCount === 1 ? "" : "s"}. Painting ${propPaintKind} at ${propPaintOffset.toFixed(1)} m.`
+      : `No prop runs. Painting ${propPaintKind} at ${propPaintOffset.toFixed(1)} m.`;
 }
 
 function removePropSpan(): void {
@@ -2225,6 +2526,553 @@ function finishPropSpanEdit(): void {
     pushUndo(start);
   }
   updateAuthoringUI();
+}
+
+function roadsideSection(source: Project): Project["centerlines"][number] | null {
+  if (!roadsideSectionId) {
+    return source.centerlines[0] ?? null;
+  }
+  return (
+    source.centerlines.find((section) => section.id === roadsideSectionId) ??
+    source.centerlines[0] ??
+    null
+  );
+}
+
+function findRoadsideSpline(
+  source: Project,
+  sectionId: string,
+  splineId: string,
+): { section: Project["centerlines"][number]; spline: ProjectRoadsideSpline } | null {
+  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
+  const spline = section?.roadside?.find((candidate) => candidate.id === splineId);
+  return section && spline ? { section, spline } : null;
+}
+
+function findRoadsideRun(
+  source: Project,
+  sectionId: string,
+  splineId: string,
+  runIndex: number,
+): { section: Project["centerlines"][number]; spline: ProjectRoadsideSpline; run: ProjectRoadsideRun } | null {
+  const located = findRoadsideSpline(source, sectionId, splineId);
+  const run = located?.spline.runs[runIndex];
+  return located && run ? { ...located, run } : null;
+}
+
+function nextRoadsideSplineId(section: Project["centerlines"][number]): string {
+  const used = new Set((section.roadside ?? []).map((spline) => spline.id));
+  let index = (section.roadside?.length ?? 0) + 1;
+  let id = `${section.id}:roadside:${index}`;
+  while (used.has(id)) {
+    index += 1;
+    id = `${section.id}:roadside:${index}`;
+  }
+  return id;
+}
+
+function roadsideDefaultOffset(
+  source: Project,
+  kind: ProjectRoadsideKind,
+): number {
+  if (kind === "kerb") {
+    return source.road.halfWidth + KERB_WIDTH / 2;
+  }
+  if (kind === "wall") {
+    return source.road.halfWidth + WALL_THICKNESS / 2;
+  }
+  return DEFAULT_PROP_CENTERLINE_OFFSETS[kind];
+}
+
+function findRoadsideRunAt(
+  spline: ProjectRoadsideSpline,
+  fraction: number,
+  closed: boolean,
+): number | null {
+  for (let index = 0; index < spline.runs.length; index += 1) {
+    const run = spline.runs[index]!;
+    if (kerbSpanContains(run.start, run.length, fraction, closed)) {
+      return index;
+    }
+  }
+  return null;
+}
+
+function roadsideRunOverlaps(
+  spline: ProjectRoadsideSpline,
+  start: number,
+  length: number,
+  closed: boolean,
+  ignoreIndex = -1,
+): boolean {
+  return spline.runs.some(
+    (run, index) =>
+      index !== ignoreIndex &&
+      kerbSpansOverlap(start, length, run.start, run.length, closed),
+  );
+}
+
+function roadsideOverlayKind(
+  kind: ProjectRoadsideKind,
+): "kerb" | "wall" | "prop" {
+  return kind === "kerb" ? "kerb" : kind === "wall" ? "wall" : "prop";
+}
+
+function roadsideRunKind(run: ProjectRoadsideRun): "kerb" | "wall" | "prop" {
+  return roadsideOverlayKind(run.kind);
+}
+
+function updateRoadsideUI(source: Project): void {
+  const editable = source.schema === "track-ed/project@5";
+  const sectionIds = source.centerlines.map((section) => section.id);
+  if (!roadsideSectionId || !sectionIds.includes(roadsideSectionId)) {
+    roadsideSectionId = sectionIds[0] ?? null;
+  }
+  const optionIds = [...roadsideSectionSelect.options].map((option) => option.value);
+  if (optionIds.join("\u0000") !== sectionIds.join("\u0000")) {
+    roadsideSectionSelect.innerHTML = "";
+    for (const id of sectionIds) {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = id;
+      roadsideSectionSelect.appendChild(option);
+    }
+  }
+  if (roadsideSectionId) {
+    roadsideSectionSelect.value = roadsideSectionId;
+  }
+  roadsideSectionSelect.disabled = !editable || sectionIds.length === 0;
+
+  const section = roadsideSection(source);
+  const splines = section?.roadside ?? [];
+  const freeSplines = splines.filter((spline) => spline.role === undefined);
+  if (
+    selectedRoadsideSpline &&
+    (!section ||
+      selectedRoadsideSpline.sectionId !== section.id ||
+      !splines.some((spline) => spline.id === selectedRoadsideSpline!.splineId))
+  ) {
+    selectedRoadsideSpline = null;
+    selectedRoadsideRun = null;
+  }
+
+  roadsideSplineList.innerHTML = "";
+  for (const spline of freeSplines) {
+    const row = document.createElement("div");
+    row.className =
+      selectedRoadsideSpline?.splineId === spline.id
+        ? "section-row roadside-spline-row selected"
+        : "section-row roadside-spline-row";
+    const label = document.createElement("div");
+    label.className = "section-label";
+    const title = document.createElement("strong");
+    title.textContent = spline.id;
+    const detail = document.createElement("span");
+    detail.textContent = spline.side;
+    label.append(title, detail);
+
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "30";
+    slider.step = "0.1";
+    slider.value = String(spline.offset);
+    slider.disabled = !editable;
+
+    const number = document.createElement("input");
+    number.type = "number";
+    number.min = "0";
+    number.step = "0.1";
+    number.value = String(spline.offset);
+    number.disabled = !editable;
+
+    const select = (): void => {
+      selectedRoadsideSpline = { sectionId: section!.id, splineId: spline.id };
+      selectedRoadsideRun = null;
+      scheduleOverlayUpdate();
+      updateRoadsideUI(source);
+    };
+    const update = (value: number): void => {
+      if (!Number.isFinite(value) || value < 0) {
+        return;
+      }
+      selectedRoadsideSpline = { sectionId: section!.id, splineId: spline.id };
+      selectedRoadsideRun = null;
+      slider.value = String(value);
+      number.value = String(value);
+      editRoadsideSplineOffset(value);
+    };
+    row.addEventListener("click", select);
+    slider.addEventListener("input", () => update(Number(slider.value)));
+    number.addEventListener("input", () => update(Number(number.value)));
+    slider.addEventListener("change", finishRoadsideEdit);
+    number.addEventListener("change", finishRoadsideEdit);
+
+    const controls = document.createElement("div");
+    controls.className = "roadside-controls";
+    controls.append(slider, number);
+    row.append(label, controls);
+    roadsideSplineList.appendChild(row);
+  }
+  if (freeSplines.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "junction-empty";
+    empty.textContent = editable
+      ? "No free roadside splines on this section."
+      : "Roadside splines require track-ed/project@5.";
+    roadsideSplineList.appendChild(empty);
+  }
+
+  const activeSpline = selectedRoadsideSpline
+    ? findRoadsideSpline(
+        source,
+        selectedRoadsideSpline.sectionId,
+        selectedRoadsideSpline.splineId,
+      )?.spline ?? null
+    : null;
+  if (
+    selectedRoadsideRun &&
+    (!activeSpline ||
+      selectedRoadsideRun.splineId !== activeSpline.id ||
+      !activeSpline.runs[selectedRoadsideRun.runIndex])
+  ) {
+    selectedRoadsideRun = null;
+  }
+  roadsideRemoveSplineButton.disabled =
+    !editable || activeSpline === null || activeSpline.role !== undefined;
+
+  const selectedRun = selectedRoadsideRun
+    ? findRoadsideRun(
+        source,
+        selectedRoadsideRun.sectionId,
+        selectedRoadsideRun.splineId,
+        selectedRoadsideRun.runIndex,
+      )?.run ?? null
+    : null;
+  const instanceRun =
+    selectedRun && selectedRun.kind !== "kerb" && selectedRun.kind !== "wall"
+      ? selectedRun
+      : null;
+  const wallRun = selectedRun?.kind === "wall" ? selectedRun : null;
+  roadsideRunPropertyField.hidden = instanceRun === null && wallRun === null;
+  if (instanceRun) {
+    roadsideRunPropertyLabel.textContent = "spacing (m)";
+    roadsideRunProperty.min = "0.1";
+    roadsideRunProperty.step = "0.1";
+    if (document.activeElement !== roadsideRunProperty) {
+      roadsideRunProperty.value = String(
+        instanceRun.spacing ?? DEFAULT_PROP_SPACING[instanceRun.kind],
+      );
+    }
+  } else if (wallRun) {
+    roadsideRunPropertyLabel.textContent = "height (m)";
+    roadsideRunProperty.min = "0.1";
+    roadsideRunProperty.step = "0.05";
+    if (document.activeElement !== roadsideRunProperty) {
+      roadsideRunProperty.value = String(wallRun.height ?? DEFAULT_WALL_HEIGHT);
+    }
+  }
+  roadsideRunRemoveButton.disabled = !editable || selectedRun === null;
+
+  for (const [button, kind] of roadsideKindButtons) {
+    button.classList.toggle("active", roadsidePaintKind === kind);
+    button.disabled = !editable;
+  }
+
+  roadsideStatus.textContent = activeSpline
+    ? `${activeSpline.id} · ${activeSpline.side} · ${
+        activeSpline.role !== undefined ? "fixed" : `${activeSpline.offset.toFixed(1)} m`
+      } · painting ${roadsidePaintKind}.`
+    : section
+      ? `No spline selected on ${section.id}.`
+      : "Add a section first.";
+}
+
+function setRoadsideStatus(message: string, tone: "ok" | "error" | "" = ""): void {
+  roadsideStatus.textContent = message;
+  roadsideStatus.className = `edit-status ${tone}`.trim();
+}
+
+function addRoadsideSpline(): void {
+  if (!project || project.schema !== "track-ed/project@5") {
+    return;
+  }
+  const section = roadsideSection(project);
+  if (!section) {
+    return;
+  }
+  const offset = Number(roadsideNewOffset.value);
+  if (!Number.isFinite(offset) || offset < 0) {
+    setRoadsideStatus("Spline offset must be non-negative.", "error");
+    return;
+  }
+  const before = cloneProject(project);
+  if (!section.roadside) {
+    section.roadside = [];
+  }
+  const spline: ProjectRoadsideSpline = {
+    id: nextRoadsideSplineId(section),
+    side: roadsideNewSide.value === "right" ? "right" : "left",
+    offset,
+    runs: [],
+  };
+  section.roadside.push(spline);
+  selectedRoadsideSpline = { sectionId: section.id, splineId: spline.id };
+  selectedRoadsideRun = null;
+  if (!renderProject(project, { frame: false })) {
+    project = before;
+    renderProject(project, { frame: false });
+    setRoadsideStatus("The spline could not be added.", "error");
+    return;
+  }
+  pushUndo(before);
+  setRoadsideStatus("Added roadside spline.", "ok");
+  scheduleOverlayUpdate();
+  updateAuthoringUI();
+}
+
+function removeRoadsideSpline(): void {
+  if (!project || !selectedRoadsideSpline) {
+    return;
+  }
+  const located = findRoadsideSpline(
+    project,
+    selectedRoadsideSpline.sectionId,
+    selectedRoadsideSpline.splineId,
+  );
+  if (!located) {
+    return;
+  }
+  const before = cloneProject(project);
+  located.section.roadside = (located.section.roadside ?? []).filter(
+    (spline) => spline.id !== located.spline.id,
+  );
+  if (located.section.roadside.length === 0) {
+    delete located.section.roadside;
+  }
+  selectedRoadsideSpline = null;
+  selectedRoadsideRun = null;
+  if (!renderProject(project, { frame: false })) {
+    project = before;
+    renderProject(project, { frame: false });
+    setRoadsideStatus("The spline could not be removed.", "error");
+    return;
+  }
+  pushUndo(before);
+  setRoadsideStatus("Removed roadside spline.", "ok");
+  scheduleOverlayUpdate();
+  updateAuthoringUI();
+}
+
+function removeRoadsideRun(): void {
+  if (!project || !selectedRoadsideRun) {
+    return;
+  }
+  const located = findRoadsideRun(
+    project,
+    selectedRoadsideRun.sectionId,
+    selectedRoadsideRun.splineId,
+    selectedRoadsideRun.runIndex,
+  );
+  if (!located) {
+    return;
+  }
+  const before = cloneProject(project);
+  located.spline.runs.splice(selectedRoadsideRun.runIndex, 1);
+  selectedRoadsideRun = null;
+  if (!renderProject(project, { frame: false })) {
+    project = before;
+    renderProject(project, { frame: false });
+    setRoadsideStatus("The run could not be removed.", "error");
+    return;
+  }
+  pushUndo(before);
+  setRoadsideStatus("Removed run.", "ok");
+  scheduleOverlayUpdate();
+  updateAuthoringUI();
+}
+
+function editRoadsideRun(
+  mutate: (run: ProjectRoadsideRun) => void,
+): void {
+  if (!project || !selectedRoadsideRun) {
+    return;
+  }
+  const located = findRoadsideRun(
+    project,
+    selectedRoadsideRun.sectionId,
+    selectedRoadsideRun.splineId,
+    selectedRoadsideRun.runIndex,
+  );
+  if (!located) {
+    return;
+  }
+  if (!roadsideEditStart) {
+    roadsideEditStart = cloneProject(project);
+  }
+  mutate(located.run);
+  scheduleRender();
+  scheduleOverlayUpdate();
+  updateRoadsideUI(project);
+}
+
+function editRoadsideSplineOffset(value: number): void {
+  if (!project || !selectedRoadsideSpline) {
+    return;
+  }
+  const located = findRoadsideSpline(
+    project,
+    selectedRoadsideSpline.sectionId,
+    selectedRoadsideSpline.splineId,
+  );
+  if (!located) {
+    return;
+  }
+  if (!roadsideEditStart) {
+    roadsideEditStart = cloneProject(project);
+  }
+  located.spline.offset = value;
+  scheduleRender();
+  scheduleOverlayUpdate();
+}
+
+function finishRoadsideEdit(): void {
+  if (!roadsideEditStart) {
+    return;
+  }
+  const start = roadsideEditStart;
+  roadsideEditStart = null;
+  if (!flushPendingRender()) {
+    project = start;
+    renderProject(project, { frame: false });
+    setRoadsideStatus("The roadside change does not bake.", "error");
+    updateAuthoringUI();
+    return;
+  }
+  if (project && JSON.stringify(start) !== JSON.stringify(project)) {
+    pushUndo(start);
+  }
+  updateAuthoringUI();
+}
+
+function overlayRoadsideSplines(
+  source: Project,
+  bounds: { min: Vec3; max: Vec3 },
+): KerbOverlayData {
+  if (editorMode !== "roadside") {
+    return { rails: [], spans: [] };
+  }
+  const rails: KerbRailOverlayData[] = [];
+  const spans: KerbOverlayData["spans"] = [];
+  for (const section of source.centerlines) {
+    for (const spline of section.roadside ?? []) {
+      const edgeOffset = spline.offset - source.road.halfWidth;
+      const [points] = roadsideRailPoints(
+        source,
+        bounds,
+        section,
+        "spline",
+        spline.side,
+        0,
+        1,
+        edgeOffset,
+      );
+      if (points && points.length >= 2) {
+        rails.push({
+          kind: "spline",
+          sectionId: section.id,
+          splineId: spline.id,
+          side: spline.side,
+          offset: spline.offset,
+          active:
+            selectedRoadsideSpline?.sectionId === section.id &&
+            selectedRoadsideSpline.splineId === spline.id,
+          points,
+        });
+      }
+      for (let runIndex = 0; runIndex < spline.runs.length; runIndex += 1) {
+        const run = spline.runs[runIndex]!;
+        const pieces = roadsideRailPoints(
+          source,
+          bounds,
+          section,
+          "spline",
+          spline.side,
+          run.start,
+          run.length,
+          edgeOffset,
+        );
+        const first = pieces[0];
+        const last = pieces[pieces.length - 1];
+        if (!first || !last || first.length === 0 || last.length === 0) {
+          continue;
+        }
+        spans.push({
+          kind: roadsideRunKind(run),
+          sectionId: section.id,
+          splineId: spline.id,
+          spanIndex: runIndex,
+          side: spline.side,
+          selected:
+            selectedRoadsideRun?.sectionId === section.id &&
+            selectedRoadsideRun.splineId === spline.id &&
+            selectedRoadsideRun.runIndex === runIndex,
+          pieces,
+          entry: first[0]!,
+          exit: last[last.length - 1]!,
+        });
+      }
+    }
+  }
+
+  let preview: KerbOverlayData["preview"] = null;
+  if (drag?.kind === "roadside-paint" && project) {
+    const activeDrag = drag;
+    const located = findRoadsideSpline(
+      project,
+      activeDrag.sectionId,
+      activeDrag.splineId,
+    );
+    if (located) {
+      const signed = activeDrag.signedLength;
+      const start =
+        signed >= 0 ? activeDrag.originFraction : activeDrag.previousFraction;
+      const length = Math.abs(signed);
+      if (length > 1e-5) {
+        const pieces = roadsideRailPoints(
+          project,
+          bounds,
+          located.section,
+          "spline",
+          located.spline.side,
+          start,
+          length,
+          located.spline.offset - project.road.halfWidth,
+        );
+        const first = pieces[0];
+        const last = pieces[pieces.length - 1];
+        if (first && last && first.length > 0 && last.length > 0) {
+          preview = {
+            kind: roadsideOverlayKind(activeDrag.runKind),
+            pieces,
+            entry: first[0]!,
+            exit: last[last.length - 1]!,
+          };
+        }
+      }
+    }
+  }
+
+  return { rails, spans, preview };
+}
+
+function overlayForMode(
+  source: Project,
+  bounds: { min: Vec3; max: Vec3 },
+): KerbOverlayData {
+  return editorMode === "roadside"
+    ? overlayRoadsideSplines(source, bounds)
+    : overlayKerbs(source, bounds);
 }
 
 function updateJunctionList(source: Project): void {
@@ -3066,6 +3914,91 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         return;
       }
 
+      if (editorMode === "roadside") {
+        const handle = trackView.pickKerbHandle(point.x, point.y);
+        if (handle && handle.splineId) {
+          event.stopPropagation();
+          event.preventDefault();
+          selectedRoadsideSpline = {
+            sectionId: handle.sectionId,
+            splineId: handle.splineId,
+          };
+          selectedRoadsideRun = {
+            sectionId: handle.sectionId,
+            splineId: handle.splineId,
+            runIndex: handle.spanIndex,
+          };
+          drag = {
+            kind: handle.handle === "entry" ? "roadside-entry" : "roadside-exit",
+            sectionId: handle.sectionId,
+            splineId: handle.splineId,
+            runIndex: handle.spanIndex,
+            startProject: cloneProject(project),
+          };
+          trackView.setControlsEnabled(false);
+          canvas.setPointerCapture(event.pointerId);
+          canvas.style.cursor = "grabbing";
+          scheduleOverlayUpdate();
+          updateRoadsideUI(project);
+          return;
+        }
+        const rail = trackView.pickKerbRail(point.x, point.y);
+        if (rail && rail.splineId) {
+          const section = project.centerlines.find(
+            (candidate) => candidate.id === rail.sectionId,
+          );
+          if (!section) {
+            return;
+          }
+          event.stopPropagation();
+          event.preventDefault();
+          roadsideSectionId = rail.sectionId;
+          const locatedSpline = section.roadside?.find(
+            (candidate) => candidate.id === rail.splineId,
+          );
+          selectedRoadsideSpline = {
+            sectionId: rail.sectionId,
+            splineId: rail.splineId,
+          };
+          if (locatedSpline) {
+            const runIndex = findRoadsideRunAt(
+              locatedSpline,
+              rail.fraction,
+              section.closed,
+            );
+            if (runIndex !== null) {
+              selectedRoadsideRun = {
+                sectionId: rail.sectionId,
+                splineId: rail.splineId,
+                runIndex,
+              };
+              scheduleOverlayUpdate();
+              updateRoadsideUI(project);
+              return;
+            }
+          }
+          selectedRoadsideRun = null;
+          drag = {
+            kind: "roadside-paint",
+            sectionId: rail.sectionId,
+            splineId: rail.splineId,
+            runKind: roadsidePaintKind,
+            closed: section.closed,
+            originFraction: rail.fraction,
+            previousFraction: rail.fraction,
+            signedLength: 0,
+            startProject: cloneProject(project),
+          };
+          trackView.setControlsEnabled(false);
+          canvas.setPointerCapture(event.pointerId);
+          canvas.style.cursor = "crosshair";
+          scheduleOverlayUpdate();
+          updateRoadsideUI(project);
+          return;
+        }
+        return;
+      }
+
       if (editorMode === "props") {
         const handle = trackView.pickKerbHandle(point.x, point.y);
         if (handle && handle.kind === "prop") {
@@ -3093,12 +4026,16 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
           if (!section) {
             return;
           }
+          if (rail.offset !== undefined) {
+            propPaintOffset = rail.offset;
+          }
           const spanIndex = findPropSpanAt(
             project,
             rail.sectionId,
             rail.side,
             propPaintKind,
             rail.fraction,
+            rail.offset,
           );
           if (spanIndex !== null) {
             event.stopPropagation();
@@ -3115,6 +4052,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
             sectionId: rail.sectionId,
             side: rail.side,
             propKind: propPaintKind,
+            paintOffset: propPaintOffset,
             closed: section.closed,
             originFraction: rail.fraction,
             previousFraction: rail.fraction,
@@ -3130,7 +4068,10 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         return;
       }
 
-      const terrainPointIndex = trackView.pickTerrainPoint(point.x, point.y);
+      const terrainPointIndex =
+        editorMode === "terrain"
+          ? trackView.pickTerrainPoint(point.x, point.y)
+          : null;
       if (terrainPointIndex !== null) {
         event.stopPropagation();
         event.preventDefault();
@@ -3153,7 +4094,10 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         return;
       }
 
-      const hit = trackView.pickControlPoint(point.x, point.y);
+      const hit =
+        editorMode === "track"
+          ? trackView.pickControlPoint(point.x, point.y)
+          : null;
       if (hit) {
         let resolved = hit;
         const hitCenterline = project.centerlines[hit.centerlineIndex];
@@ -3231,7 +4175,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         return;
       }
 
-      if (trackView.pickSpawn(point.x, point.y)) {
+      if (editorMode === "track" && trackView.pickSpawn(point.x, point.y)) {
         event.stopPropagation();
         event.preventDefault();
         setSelection(null);
@@ -3242,7 +4186,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         return;
       }
 
-      if (addTerrainPointMode) {
+      if (editorMode === "terrain" && addTerrainPointMode) {
         const surface = trackView.pick(point.x, point.y);
         if (surface && surface.surfaceId === 2) {
           event.stopPropagation();
@@ -3441,6 +4385,96 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         scheduleOverlayUpdate();
         scheduleDragRender();
         updateWallsUI(project);
+        return;
+      }
+
+      if (drag.kind === "roadside-paint") {
+        const activeDrag = drag;
+        const section = project.centerlines.find(
+          (candidate) => candidate.id === activeDrag.sectionId,
+        );
+        if (!section) {
+          return;
+        }
+        const fraction = nearestPolylineFraction(section, ground);
+        if (fraction === null) {
+          return;
+        }
+        if (activeDrag.closed) {
+          let delta = fraction - activeDrag.previousFraction;
+          if (delta > 0.5) {
+            delta -= 1;
+          } else if (delta < -0.5) {
+            delta += 1;
+          }
+          activeDrag.signedLength += delta;
+          activeDrag.previousFraction = fraction;
+        } else {
+          activeDrag.signedLength = fraction - activeDrag.originFraction;
+          activeDrag.previousFraction = fraction;
+        }
+        scheduleOverlayUpdate();
+        return;
+      }
+
+      if (drag.kind === "roadside-entry" || drag.kind === "roadside-exit") {
+        const activeDrag = drag;
+        const located = findRoadsideRun(
+          project,
+          activeDrag.sectionId,
+          activeDrag.splineId,
+          activeDrag.runIndex,
+        );
+        if (!located) {
+          return;
+        }
+        const section = located.section;
+        const run = located.run;
+        const fraction = nearestPolylineFraction(section, ground);
+        if (fraction === null) {
+          return;
+        }
+        const minimum = 0.002;
+        let start = run.start;
+        let length = run.length;
+        if (activeDrag.kind === "roadside-entry") {
+          const exit = kerbSpanEnd(run.start, run.length);
+          const forward = section.closed
+            ? (exit - fraction + 1) % 1
+            : exit - fraction;
+          if (forward <= minimum || forward >= 1) {
+            return;
+          }
+          start = fraction;
+          length = forward;
+        } else {
+          const forward = section.closed
+            ? (fraction - run.start + 1) % 1
+            : fraction - run.start;
+          if (forward <= minimum || forward >= 1) {
+            return;
+          }
+          length = forward;
+        }
+        if (!section.closed && start + length > 1 + 1e-9) {
+          return;
+        }
+        if (
+          roadsideRunOverlaps(
+            located.spline,
+            start,
+            length,
+            section.closed,
+            activeDrag.runIndex,
+          )
+        ) {
+          return;
+        }
+        run.start = start;
+        run.length = length;
+        scheduleOverlayUpdate();
+        scheduleDragRender();
+        updateRoadsideUI(project);
         return;
       }
 
@@ -3731,6 +4765,31 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
       return;
     }
 
+    if (editorMode === "roadside") {
+      const handle = trackView.pickKerbHandle(point.x, point.y);
+      if (handle && handle.splineId) {
+        canvas.style.cursor = "grab";
+        pickInfo.innerHTML = `
+          <div class="pick-row"><span>roadside handle</span><strong>${handle.handle}</strong></div>
+          <div class="pick-row"><span>spline</span><strong>${handle.splineId}</strong></div>
+        `;
+        return;
+      }
+      const rail = trackView.pickKerbRail(point.x, point.y);
+      if (rail && rail.splineId) {
+        canvas.style.cursor = "crosshair";
+        pickInfo.innerHTML = `
+          <div class="pick-row"><span>roadside spline</span><strong>${rail.splineId}</strong></div>
+          <div class="pick-row"><span>offset</span><strong>${(rail.offset ?? 0).toFixed(1)} m</strong></div>
+        `;
+        return;
+      }
+      canvas.style.cursor = "default";
+      pickInfo.textContent =
+        "Select a spline, choose a feature type, then drag a spline rail to paint.";
+      return;
+    }
+
     if (editorMode === "props") {
       const handle = trackView.pickKerbHandle(point.x, point.y);
       if (handle && handle.kind === "prop") {
@@ -3753,12 +4812,14 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
               rail.side,
               propPaintKind,
               rail.fraction,
+              rail.offset,
             )
           : null;
         canvas.style.cursor = spanIndex === null ? "crosshair" : "pointer";
         pickInfo.innerHTML = `
           <div class="pick-row"><span>prop rail</span><strong>${rail.sectionId} · ${rail.side}</strong></div>
           <div class="pick-row"><span>kind</span><strong>${propPaintKind}</strong></div>
+          <div class="pick-row"><span>offset</span><strong>${(rail.offset ?? propPaintOffset).toFixed(1)} m</strong></div>
         `;
         return;
       }
@@ -3768,7 +4829,10 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
       return;
     }
 
-    const hoverTerrainPoint = trackView.pickTerrainPoint(point.x, point.y);
+    const hoverTerrainPoint =
+      editorMode === "terrain"
+        ? trackView.pickTerrainPoint(point.x, point.y)
+        : null;
     if (hoverTerrainPoint !== null) {
       canvas.style.cursor = "grab";
       const terrainPoint = project?.terrain.points?.[hoverTerrainPoint];
@@ -3786,7 +4850,10 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
       return;
     }
 
-    const controlPoint = trackView.pickControlPoint(point.x, point.y);
+    const controlPoint =
+      editorMode === "track"
+        ? trackView.pickControlPoint(point.x, point.y)
+        : null;
     if (controlPoint) {
       canvas.style.cursor = "grab";
       const centerline = project?.centerlines[controlPoint.centerlineIndex];
@@ -3993,6 +5060,103 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
       return;
     }
 
+    if (currentDrag.kind === "roadside-paint" && project) {
+      const painted = propPaintSpan(currentDrag);
+      if (!painted) {
+        scheduleOverlayUpdate();
+        updateAuthoringUI();
+        return;
+      }
+      const located = findRoadsideSpline(
+        project,
+        currentDrag.sectionId,
+        currentDrag.splineId,
+      );
+      if (!located) {
+        return;
+      }
+      if (
+        !located.section.closed &&
+        painted.start + painted.length > 1 + 1e-9
+      ) {
+        setRoadsideStatus("The run must stay within this open section.", "error");
+        scheduleOverlayUpdate();
+        return;
+      }
+      if (
+        roadsideRunOverlaps(
+          located.spline,
+          painted.start,
+          painted.length,
+          located.section.closed,
+        )
+      ) {
+        setRoadsideStatus(
+          "Runs on one roadside spline cannot overlap.",
+          "error",
+        );
+        scheduleOverlayUpdate();
+        return;
+      }
+      const run: ProjectRoadsideRun =
+        currentDrag.runKind === "kerb"
+          ? { kind: "kerb", start: painted.start, length: painted.length }
+          : currentDrag.runKind === "wall"
+            ? { kind: "wall", start: painted.start, length: painted.length }
+            : {
+                kind: currentDrag.runKind,
+                start: painted.start,
+                length: painted.length,
+              };
+      const before = currentDrag.startProject;
+      located.spline.runs.push(run);
+      located.spline.runs.sort((a, b) => a.start - b.start);
+      selectedRoadsideSpline = {
+        sectionId: located.section.id,
+        splineId: located.spline.id,
+      };
+      selectedRoadsideRun = {
+        sectionId: located.section.id,
+        splineId: located.spline.id,
+        runIndex: located.spline.runs.indexOf(run),
+      };
+      if (!renderProject(project, { frame: false })) {
+        project = before;
+        selectedRoadsideRun = null;
+        renderProject(project, { frame: false });
+        setRoadsideStatus("The painted run does not bake.", "error");
+        scheduleOverlayUpdate();
+        return;
+      }
+      pushUndo(before);
+      setRoadsideStatus("Painted roadside run.", "ok");
+      scheduleOverlayUpdate();
+      updateAuthoringUI();
+      return;
+    }
+
+    if (
+      currentDrag.kind === "roadside-entry" ||
+      currentDrag.kind === "roadside-exit"
+    ) {
+      if (project && !bakeValid) {
+        project = currentDrag.startProject;
+        renderProject(project, { frame: false });
+        setRoadsideStatus(
+          "Run resize rejected: the track would become invalid.",
+          "error",
+        );
+      } else if (
+        project &&
+        JSON.stringify(currentDrag.startProject) !== JSON.stringify(project)
+      ) {
+        pushUndo(currentDrag.startProject);
+      }
+      scheduleOverlayUpdate();
+      updateAuthoringUI();
+      return;
+    }
+
     if (currentDrag.kind === "prop-paint" && project) {
       const painted = propPaintSpan(currentDrag);
       if (!painted) {
@@ -4019,6 +5183,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
           side: currentDrag.side,
           start: painted.start,
           length: painted.length,
+          offset: Math.max(0, currentDrag.paintOffset - project.road.halfWidth),
         },
       ].sort(
         (a, b) =>
@@ -4150,7 +5315,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
   });
 
   canvas.addEventListener("dblclick", (event) => {
-    if (!project) {
+    if (!project || editorMode !== "track") {
       return;
     }
     const point = pointerNdc(event, canvas);
@@ -4163,6 +5328,10 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
   });
 }
 
+statusToggle.addEventListener("click", () => {
+  statusExpanded = !statusExpanded;
+  updateStatusCollapsed();
+});
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
 deleteButton.addEventListener("click", deleteSelectedPoint);
@@ -4222,7 +5391,8 @@ newButton.addEventListener("click", () => {
   if (undoStack.length > 0 && !window.confirm("Discard edits and start a new loop?")) {
     return;
   }
-  loadProject(loopSplineTerrainJunctionsFixture, true);
+  updateStatusCollapsed();
+loadProject(loopSplineTerrainJunctionsFixture, true);
 });
 
 saveButton.addEventListener("click", () => {
@@ -4392,7 +5562,50 @@ function finishKerbEdit(): void {
 
 kerbRemoveButton.addEventListener("click", removeKerbSpan);
 
-modePointsButton.addEventListener("click", () => setEditorMode("points"));
+modeTerrainButton.addEventListener("click", () => setEditorMode("terrain"));
+modePointsButton.addEventListener("click", () => setEditorMode("track"));
+modeRoadsideButton.addEventListener("click", () => setEditorMode("roadside"));
+roadsideSectionSelect.addEventListener("change", () => {
+  roadsideSectionId = roadsideSectionSelect.value || null;
+  selectedRoadsideSpline = null;
+  selectedRoadsideRun = null;
+  scheduleOverlayUpdate();
+  if (project) {
+    updateRoadsideUI(project);
+  }
+});
+roadsideAddSplineButton.addEventListener("click", addRoadsideSpline);
+roadsideRemoveSplineButton.addEventListener("click", removeRoadsideSpline);
+for (const [button, kind] of roadsideKindButtons) {
+  button.addEventListener("click", () => {
+    roadsidePaintKind = kind;
+    if (project) {
+      roadsideNewOffset.value = String(roadsideDefaultOffset(project, kind));
+    }
+    scheduleOverlayUpdate();
+    if (project) {
+      updateRoadsideUI(project);
+    }
+  });
+}
+roadsideRunProperty.addEventListener("input", () => {
+  if (!project || !selectedRoadsideRun) {
+    return;
+  }
+  const value = Number(roadsideRunProperty.value);
+  if (!Number.isFinite(value) || value <= 0) {
+    return;
+  }
+  editRoadsideRun((run) => {
+    if (run.kind === "wall") {
+      run.height = value;
+    } else if (run.kind !== "kerb") {
+      run.spacing = value;
+    }
+  });
+});
+roadsideRunProperty.addEventListener("change", finishRoadsideEdit);
+roadsideRunRemoveButton.addEventListener("click", removeRoadsideRun);
 modeKerbsButton.addEventListener("click", () => setEditorMode("kerbs"));
 modeWallsButton.addEventListener("click", () => setEditorMode("walls"));
 modePropsButton.addEventListener("click", () => setEditorMode("props"));
@@ -4458,11 +5671,24 @@ for (const [button, kind] of [
       setEditorMode("props");
     }
     propPaintKind = kind;
+    propPaintOffset = DEFAULT_PROP_CENTERLINE_OFFSETS[kind];
     updateModeUI();
     scheduleOverlayUpdate();
     updateAuthoringUI();
   });
 }
+propPaintOffsetInput.addEventListener("input", () => {
+  if (!project) {
+    return;
+  }
+  const value = Number(propPaintOffsetInput.value);
+  if (!Number.isFinite(value) || value < 0) {
+    return;
+  }
+  propPaintOffset = value;
+  scheduleOverlayUpdate();
+  updatePropsUI(project);
+});
 propRemoveButton.addEventListener("click", removePropSpan);
 propOffset.addEventListener("input", () => {
   if (!project || !selectedPropSpan) {
@@ -4473,7 +5699,7 @@ propOffset.addEventListener("input", () => {
     return;
   }
   editSelectedPropSpan((span) => {
-    span.offset = value;
+    span.offset = Math.max(0, value - (project?.road.halfWidth ?? 0));
   });
 });
 propSpacing.addEventListener("input", () => {
@@ -4492,7 +5718,9 @@ propOffset.addEventListener("change", finishPropSpanEdit);
 propSpacing.addEventListener("change", finishPropSpanEdit);
 
 centerlineToggle.addEventListener("change", () => {
-  view?.setCenterlinesVisible(editorMode === "points" && centerlineToggle.checked);
+  view?.setCenterlinesVisible(
+    editorMode === "track" && centerlineToggle.checked,
+  );
 });
 wireframeToggle.addEventListener("change", () => {
   view?.setWireframeVisible(wireframeToggle.checked);
@@ -4565,19 +5793,29 @@ window.addEventListener("keydown", (event) => {
     } else if (editorMode === "props" && selectedPropSpan) {
       event.preventDefault();
       removePropSpan();
+    } else if (editorMode === "roadside" && selectedRoadsideRun) {
+      event.preventDefault();
+      removeRoadsideRun();
     } else if (selectedPoint) {
       event.preventDefault();
       deleteSelectedPoint();
     }
   }
   if (event.key === "Escape") {
-    if (editorMode === "kerbs" || editorMode === "walls" || editorMode === "props") {
+    if (
+      editorMode === "kerbs" ||
+      editorMode === "walls" ||
+      editorMode === "props" ||
+      editorMode === "roadside"
+    ) {
       event.preventDefault();
       drag = null;
       view?.setControlsEnabled(true);
       selectedKerbSpan = null;
       selectedWallSpan = null;
       selectedPropSpan = null;
+      selectedRoadsideSpline = null;
+      selectedRoadsideRun = null;
       scheduleOverlayUpdate();
       updateAuthoringUI();
     }
@@ -4589,4 +5827,5 @@ const resizeObserver = new ResizeObserver(() => {
 });
 resizeObserver.observe(viewport);
 
+updateStatusCollapsed();
 loadProject(loopSplineTerrainJunctionsFixture, true);

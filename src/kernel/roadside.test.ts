@@ -11,10 +11,11 @@ describe("roadside runs", () => {
     for (const run of runs) {
       expect(run.kind).toBe("kerb");
       expect(run.mechanism).toBe("surface");
-      expect(run.offset.reference).toBe("asphalt-edge");
-      expect(run.offset.distance).toBeCloseTo(KERB_WIDTH / 2, 9);
-      expect(run.junctionPolicy).toBe("clip");
+      expect(run.offset).toBeCloseTo(project.road.halfWidth, 9);
       expect(run.legs).toHaveLength(1);
+      if (!("profile" in run)) {
+        throw new Error("expected a surface run");
+      }
       expect(run.profile.kind).toBe("kerb");
     }
   });

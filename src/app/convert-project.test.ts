@@ -19,9 +19,12 @@ describe("convertProjectToLatest", () => {
     const result = convertProjectToLatest(parsed(loopFixture));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.project.schema).toBe("track-ed/project@4");
+    expect(result.project.schema).toBe("track-ed/project@5");
     expect(result.project.centerlines).toHaveLength(1);
     expect(result.project.junctions).toEqual([]);
+    expect(
+      (result.project.centerlines[0]?.roadside ?? []).map((spline) => spline.role),
+    ).toEqual(["kerb-left", "kerb-right"]);
     expect(validateBakedTrack(bakeProject(result.project)).ok).toBe(true);
   });
 
@@ -63,6 +66,44 @@ describe("convertProjectToLatest", () => {
     ]);
     expect(result.project.centerlines.find((section) => section.id === "connector")?.attach)
       .toBeUndefined();
+  });
+
+  it("migrates project@4 kerbs, walls, and props into roadside splines", () => {
+    const project = parsed({
+      schema: "track-ed/project@4",
+      name: "Migrate roadside",
+      generator: "track-ed test",
+      road: { halfWidth: 5, shoulderHalfWidth: 8 },
+      terrain: { margin: 20, mode: "conform" },
+      spawn: { centerline: "road", fraction: 0.2, lateral: 0 },
+      cameras: [],
+      sections: [
+        {
+          id: "road",
+          closed: false,
+          points: [
+            { id: "p0", position: [0, 0] },
+            { id: "p1", position: [100, 0] },
+          ],
+          kerbs: [{ side: "left", start: 0.1, length: 0.1 }],
+          walls: [{ side: "right", start: 0.2, length: 0.1, offset: 2 }],
+          props: [
+            { kind: "block", side: "left", start: 0.3, length: 0.1, offset: 4 },
+          ],
+        },
+      ],
+    });
+    const result = convertProjectToLatest(project);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const roadside = result.project.centerlines[0]!.roadside!;
+    expect(result.project.schema).toBe("track-ed/project@5");
+    expect(roadside.map((spline) => spline.offset)).toEqual([5, 5, 9, 7]);
+    expect(roadside.flatMap((spline) => spline.runs.map((run) => run.kind))).toEqual([
+      "kerb",
+      "block",
+      "wall",
+    ]);
   });
 
   it("leaves project@1 import-only", () => {

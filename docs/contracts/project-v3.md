@@ -1,6 +1,6 @@
 # Contract — `track-ed/project@3`
 
-Status: legacy. `project@3` remains supported for import and is converted to `project@4` on load. New authoring writes `project@4`; routes remain deferred.
+Status: legacy. `project@3` remains supported for import and is upgraded to `project@5` on load. New authoring writes `project@5`; routes remain deferred.
 
 ## Purpose
 
@@ -125,7 +125,7 @@ Junctions connect section control points:
 
 ## Migration
 
-`project@1` remains import-only. The app upgrades `project@2` and `project@3` projects to `project@4` on load and writes `project@4` on save. Existing `project@2` junction hosts and branch `attach`/`endAttach` references become junction members. Legacy `project@1` fraction attachments are not converted automatically: inserting a host control point at the sampled attachment would change the authored points, point ids, and spline shape. See D15 in `docs/decisions.md`.
+`project@1` remains import-only. The app upgrades `project@2` and `project@3` projects to `project@5` on load and writes `project@5` on save. Existing `project@2` junction hosts and branch `attach`/`endAttach` references become junction members. Legacy `project@1` fraction attachments are not converted automatically: inserting a host control point at the sampled attachment would change the authored points, point ids, and spline shape. See D15 in `docs/decisions.md`.
 
 ## Deferred
 

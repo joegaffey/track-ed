@@ -230,6 +230,38 @@ input {
   background: rgba(255, 92, 92, 0.1);
 }
 
+.status-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #aab6c6;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.status-chevron {
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+
+.status-panel.expanded .status-chevron {
+  transform: rotate(180deg);
+}
+
+.status-body {
+  margin-top: 0.7rem;
+}
+
+
 .metrics {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -623,6 +655,33 @@ button.section-row:hover {
   gap: 0.12rem;
   min-width: 0;
 }
+.roadside-spline-row {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.roadside-spline-row .section-label {
+  flex: 1 0 100%;
+}
+
+.roadside-controls {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.roadside-controls input[type="range"] {
+  flex: 1;
+  min-width: 80px;
+}
+
+.roadside-controls input[type="number"] {
+  width: 64px;
+}
+
+
 
 .section-label strong {
   color: var(--text);

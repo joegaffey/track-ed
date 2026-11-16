@@ -83,13 +83,13 @@ The loop-spur fixture has 1167 kerb triangles with continuous junction overlaps;
 
 ## Wall and prop conformance (v1-G4)
 
-`venue-walls-props` adds two continuous wall spans and tree, tyre, and block prop runs on a closed spline loop.
+`venue-walls-props` exercises two fixed kerb-edge splines and four free roadside splines on a closed loop: wall and kerb runs at the tarmac edge, block and tyre runs, and two tree layers at different free offsets.
 
 | Fixture | `track.sima` | Vertices | Triangles | Surfaces | Inspect | Validate |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
-| `venue-walls-props` | 986648 B | 15644 | 12875 | 6 | `venue-walls-props (Track)` | ok |
+| `venue-walls-props` | 1677080 B | 29040 | 18987 | 6 | `venue-walls-props (Track)` | ok |
 
-The bundle has 11 materials, 10 textures, 11 draw calls, and 3,563 collision triangles. `surface_wall` is exported as a separate wall graph; props export as `prop_*` visual meshes using Lapster-derived block, tyre, and conifer geometry, plus a merged `col_prop` collision mesh using the `wall` material. Props default to solid collision and can opt out with `collision: "none"`; tree collision is trunk-only. The manifest uses `visual.include = ["surface_*", "prop_*"]` and `collision.include = ["surface_*", "col_*"]`. The track viewer and drive viewer loaded the bundle with no console errors; trees, tyres, blocks, and walls render, and the car spawns on the track.
+The bundle has 11 materials, 10 textures, 11 draw calls, and 4,863 collision triangles. `surface_wall` is exported as a separate wall graph; kerbs on the same side are suppressed under wall spans; props export as `prop_*` visual meshes using Lapster-derived block, tyre, and conifer geometry, plus a merged `col_prop` collision mesh using the `wall` material. Props default to solid collision and can opt out with `collision: "none"`; tree collision is trunk-only. The manifest uses `visual.include = ["surface_*", "prop_*"]` and `collision.include = ["surface_*", "col_*"]`. The track viewer and drive viewer loaded the bundle with no console errors; trees, tyres, blocks, and walls render, and the car spawns on the track.
 
 ## Slice 4 full-fixture rerun
 
@@ -115,7 +115,7 @@ All 19 checked-in project fixtures were parsed, baked, validated in-process, exp
 | `venue-loop-spur-junction` | 366220 B | 5670 | 1755 | 444.37 m | ok |
 | `venue-two-loops-spur` | 609928 B | 9460 | 2980 | 813.65 m | ok |
 | `venue-wrapped-kerb` | 296584 B | 4505 | 1601 | 313.85 m | ok |
-| `venue-walls-props` | 986648 B | 15644 | 12875 | 371.36 m | ok |
+| `venue-walls-props` | 1677080 B | 29040 | 18987 | 371.36 m | ok |
 
 The venue length is the sum of all section lengths. Kerb fixtures add two surfaces and a separate kerb graph; wall/prop fixtures add the `wall` surface, prop visual nodes, and optional `col_prop` collision. Ground node names and spawn/collision rules are unchanged from `@1`. The two-loop venue has two disjoint spline loops plus a dead-ended open spur; the junction venue has a closed loop with an open spur attached at an interior control point.
 

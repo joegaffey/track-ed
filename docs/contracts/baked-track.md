@@ -13,7 +13,7 @@ The TypeScript reference is `src/model/baked-track.ts`. This document defines th
 - The kernel produces `BakedTrack`.
 - An export profile consumes `BakedTrack`.
 - `BakedTrack` MUST NOT contain consumer-specific fields: no `.sima`, pack chunks, rkyv, importer node names, game surface IDs, or game-specific metadata.
-- The model is not persisted. `track-ed/project@4` is the current authoring format; `project@1`, `project@2`, and `project@3` are legacy inputs.
+- The model is not persisted. `track-ed/project@5` is the current authoring format; `project@1`–`project@4` are legacy inputs.
 
 ## Shape
 
@@ -80,13 +80,13 @@ interface Prop {
 - **BM3** `triangleSurfaces.length` MUST equal `indices.length / 3`. Every id MUST exist in `surfaces`.
 - **BM4** `surfaces[].id` MUST be unique. `surfaces[].name` MUST be unique and non-empty.
 - **BM5** `bounds` MUST enclose every position.
-- **BM6** `length` MUST be the track length in metres. For `project@3`/`project@4` it is the sum of all section lengths; for legacy single-main-loop projects it is the main-loop arc length. Spline sections are measured on the sampled polyline. Branches and dead ends are included for venue projects.
+- **BM6** `length` MUST be the track length in metres. For `project@3`–`project@5` it is the sum of all section lengths; for legacy single-main-loop projects it is the main-loop arc length. Spline sections are measured on the sampled polyline. Branches and dead ends are included for venue projects.
 - **BM7** `spawns` MUST contain at least one spawn. Rotations MUST be normalized and face the centreline tangent.
 - **BM8** `cameras` MAY be empty.
 - **BM9** `surfaceGraph` MUST satisfy geometry requirements G3–G11 from `SPEC.md` before any profile may export it. `kerbGraph`, when present, MUST satisfy K1–K3.
 - **BM9a** `kerbGraph` is separate from `surfaceGraph` and does not change the welded ground graph. It contains raised kerb tops, sides, and end caps. Kerb triangles MAY have non-vertical or vertical normals.
 - **BM9b** `wallGraph` is separate from `surfaceGraph` and `kerbGraph`. It contains continuous wall faces with the declared `wall` surface. Wall triangles MAY be vertical. Exposed wall ends MUST be capped.
-- **BM9c** `props` is optional. The kernel expands authored prop runs into deterministic instances with terrain-sampled base heights; each instance MUST have a unique id, a supported kind, a finite world position, a normalized rotation, a positive scale, and a boolean collision policy. Tree collision is limited to the trunk; canopies are visual-only. Props MUST NOT be added to `surfaceGraph` or either roadside graph.
+- **BM9c** `props` is optional. The kernel expands authored instance runs into deterministic props with terrain-sampled base heights; each instance MUST have a unique id, a supported kind, a finite world position, a normalized rotation, a positive scale, and a boolean collision policy. Tree collision is limited to the trunk; canopies are visual-only. Props MUST NOT be added to `surfaceGraph` or either roadside graph.
 - **BM10** The model MUST be deterministic: the same project yields the same positions, indices, surface ids, and ordering.
 - **BM11** No timestamps, generated-by strings, or environment-dependent values may appear in the model.
 - **BM12** The model is not persisted.

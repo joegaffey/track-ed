@@ -1,6 +1,6 @@
 # track-ed — Functional Specification v1.0
 
-Status: v1 implementation in progress; M4 conformance passed. Scope: v0 spike plus v1 gates (splines, terrain/TIN, `project@2` junctions, `project@3` venue sections, kerbs, walls, and props).
+Status: v1 implementation in progress; M4 conformance passed. Scope: v0 spike plus v1 gates (splines, terrain/TIN, `project@2` junctions, unified `project@5` venue sections, kerbs, walls, and props).
 
 ## 1. Purpose
 
@@ -24,8 +24,8 @@ The project model is track-ed's own. Lapster is the first consumer, not the defi
 - `track-ed/project@3` is implemented: multiple closed sections, dead-ended open sections, multi-way junction members, open-section junctions, section/junction authoring, an independent section list, separate Add section and Add junction flows, loose-end merging, loop closing, junction detach, and open/closed section splitting bake without a main loop. The full fixture matrix bakes, validates, exports, and passes Lapster conformance. Routes remain deferred.
 - `track-ed/project@2` is implemented: shared junction nodes with stable point ids support multiple junctions and multi-way branches. Moving a shared junction point moves every connected branch. A loose branch end can be dragged onto a main-loop control point to join it (`endAttach`), and dragging a joined end pulls it free. Dragging one loose branch end onto another merges both branches into a single open centreline.
 - v1-G3 kerbs are implemented: authorable section-local spans, continuous red/white kerb geometry with intentional junction overlaps, a separate consumer-neutral kerb graph, and solid kerb collision in the Lapster profile.
-- v1-G4 walls and props are implemented: section-local continuous walls and spline-following tree/tyre/block prop runs with offset, spacing, and collision policy.
-- `track-ed/project@4` is the current authoring format; `project@3` remains import-only and upgrades on load.
+- v1-G4 walls and props are implemented: fixed left/right kerb-edge splines plus editable free section-local roadside splines, with kerb, wall, tree, tyre, and block runs.
+- `track-ed/project@5` is the current authoring format; `project@1`–`project@4` remain import inputs and upgrade on load.
 - The v0 performance comparison remains useful baseline input for the v1 decision.
 
 ## 3. Scope
@@ -160,13 +160,13 @@ All requirements are normative.
 - **G15 — Bounds.** Scene bounds MUST cover the drivable area plus `terrain.margin`. The outer perimeter is the scene-bounds rectangle. Authored walls are in scope; automatic outer-edge fall protection is not.
 - **K1 — Kerb validity.** Kerb triangles MUST be non-degenerate and MUST NOT duplicate one another.
 - **K2 — Kerb topology.** After welding, the kerb graph MUST NOT contain T-junctions.
-- **K3 — Kerb separation and policy.** Kerbs MUST be stored in a separate consumer-neutral graph, use declared `kerb_*` surfaces, and follow the adjacent ground height. Section kerbs run continuously to their authored ends. Kerbs from adjacent sections MAY overlap each other and junction asphalt at a shared junction; no clipping or joiner is required. Exposed span ends MUST be capped. The export profile declares collision policy; v1 includes all kerb faces as solid.
+- **K3 — Kerb separation and policy.** Kerbs MUST be stored in a separate consumer-neutral graph, use declared `kerb_*` surfaces, and follow the adjacent ground height. Section kerbs run continuously to their authored ends. Kerbs on the same side are suppressed where a wall span overlaps them. Kerbs from adjacent sections MAY overlap each other and junction asphalt at a shared junction; no clipping or joiner is required. Exposed span ends MUST be capped. The export profile declares collision policy; v1 includes all kerb faces as solid.
 - **K4 — Kerb profile and authoring.** Kerb spans are forward section-local arcs (`start + length`); on closed sections an arc may wrap through the seam. Kerb authoring MUST use direct guide-rail painting and endpoint handles rather than start/end sliders. Each contiguous run MUST use equal-length elements. Each element MUST start at the effective flat height and rise to one raised corner at the effective corner height. Flat and corner heights MAY be set globally and overridden per span; the effective corner height MUST be greater than the effective flat height.
 
 - **W1 — Wall validity.** Wall triangles MUST be non-degenerate and MUST NOT duplicate one another.
 - **W2 — Wall topology.** After welding, the wall graph MUST NOT contain T-junctions.
 - **W3 — Wall policy.** Walls MUST be stored in a separate consumer-neutral graph, use the declared `wall` surface, follow the adjacent ground height, run to authored span ends, and cap exposed ends. Walls from adjacent sections MAY overlap at shared junctions.
-- **P1 — Prop validity.** Prop runs MUST be section-local forward arcs with a supported kind, side, offset, spacing, and collision policy. The kernel MUST expand them into deterministic instances with finite world transforms and MUST NOT alter the ground, kerb, or wall graphs.
+- **P1 — Roadside validity.** Roadside splines MUST be section-local offset paths with ordered non-overlapping runs. Runs MUST use a supported kind and forward arc span. The kernel MUST expand instance runs into deterministic props with finite world transforms and MUST NOT alter the ground, kerb, or wall graphs.
 
 Implementation hint, not a requirement: a uniform terrain grid clipped and welded to the road footprint is the easiest way to satisfy G3, G6, and G7. Polygon-with-holes terrain is allowed but harder to keep hole-free.
 
@@ -194,7 +194,7 @@ Because inspection is the spike's primary validation surface, the editor MUST pr
 - **F7** Export: browser download of `track.glb` + `track.json`.
 - **F8** Validate: list violations; MUST failures block export.
 - **F9** Author walls with guide-rail painting and endpoint handles.
-- **F10** Paint, resize, delete, and set offset/spacing/collision for tree, tyre, and block prop runs.
+- **F10** Add/remove free roadside splines, edit their offsets with a slider and numeric control, paint/resize/delete runs, and select fixed kerb-edge splines directly on the track.
 
 ## 13. Validation and export gate
 
@@ -262,7 +262,7 @@ See `docs/toolchain.md`.
 
 These are documented only to bound v0. They MUST NOT introduce design hooks, placeholder interfaces, or unused abstractions in v0.
 
-Terrain elevation and rounded spline centrelines are now implemented as v1 gates (G1, G2). Multiple loops, shared sections, multi-way junctions, kerbs, walls, and props are implemented in `project@3`/`project@4`. Banking/crown, final re-conformance, and the production decision remain. See `docs/v1-roadmap.md`.
+Terrain elevation and rounded spline centrelines are now implemented as v1 gates (G1, G2). Multiple loops, shared sections, multi-way junctions, kerbs, walls, and props are implemented in `project@5`. Banking/crown, final re-conformance, and the production decision remain. See `docs/v1-roadmap.md`.
 
 - **Routes, laps, and sectors**: race routes over venue sections, route-based length, sectors, checkpoints, and start/finish logic.
 - **Pit lanes and pit boxes**: pit entry/exit paths, boxes, and metadata.
@@ -334,6 +334,6 @@ After promotion, decide explicitly which editor owns track authoring. Do not mai
 - track-ed owns `track-ed/project@1` and `BakedTrack` v1.
 - Lapster owns `sim-track-glb-v1`; track-ed pins its copy in `schemas/lapster-track-manifest.schema.json`.
 - The current export profile is `lapster-glb-track@3`.
-- v1 terrain, kerbs, walls, and props remained additive on `BakedTrack` v1 (optional `kerbGraph`, `wallGraph`, and `props`); authoring is `project@4`.
+- v1 terrain, kerbs, walls, and props remained additive on `BakedTrack` v1 (optional `kerbGraph`, `wallGraph`, and `props`); authoring is `project@5`.
 - Changes to node names, materials, or manifest fields require a further profile version bump and a conformance run.
 - Breaking changes to the project format or baked model require a version bump.

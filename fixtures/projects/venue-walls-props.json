@@ -1,5 +1,5 @@
 {
-  "schema": "track-ed/project@4",
+  "schema": "track-ed/project@5",
   "name": "Walls and Props",
   "generator": "track-ed v1",
   "road": {
@@ -68,55 +68,95 @@
           ]
         }
       ],
-      "kerbs": [
+      "roadside": [
         {
+          "id": "loop:kerb-left",
+          "role": "kerb-left",
           "side": "left",
-          "start": 0.05,
-          "length": 0.17
+          "offset": 5,
+          "runs": [
+            {
+              "kind": "kerb",
+              "start": 0.05,
+              "length": 0.17
+            },
+            {
+              "kind": "wall",
+              "start": 0.25,
+              "length": 0.2
+            }
+          ]
         },
         {
+          "id": "loop:kerb-right",
+          "role": "kerb-right",
           "side": "right",
-          "start": 0.35,
-          "length": 0.15
-        }
-      ],
-      "walls": [
-        {
-          "side": "left",
-          "start": 0.25,
-          "length": 0.2
+          "offset": 5,
+          "runs": [
+            {
+              "kind": "kerb",
+              "start": 0.35,
+              "length": 0.15
+            },
+            {
+              "kind": "wall",
+              "start": 0.6,
+              "length": 0.25,
+              "height": 1.2
+            }
+          ]
         },
         {
+          "id": "loop:roadside:1",
+          "side": "left",
+          "offset": 9,
+          "runs": [
+            {
+              "kind": "block",
+              "start": 0.65,
+              "length": 0.2,
+              "spacing": 2.4
+            }
+          ]
+        },
+        {
+          "id": "loop:roadside:2",
+          "side": "left",
+          "offset": 12,
+          "runs": [
+            {
+              "kind": "tree",
+              "start": 0.05,
+              "length": 0.55,
+              "spacing": 4.5
+            }
+          ]
+        },
+        {
+          "id": "loop:roadside:3",
+          "side": "left",
+          "offset": 16,
+          "runs": [
+            {
+              "kind": "tree",
+              "start": 0.1,
+              "length": 0.5,
+              "spacing": 4.5
+            }
+          ]
+        },
+        {
+          "id": "loop:roadside:4",
           "side": "right",
-          "start": 0.6,
-          "length": 0.25,
-          "height": 1.2
-        }
-      ],
-      "props": [
-        {
-          "kind": "tree",
-          "side": "left",
-          "start": 0.05,
-          "length": 0.25,
-          "offset": 4.5,
-          "spacing": 4.5
-        },
-        {
-          "kind": "tyre",
-          "side": "right",
-          "start": 0.3,
-          "length": 0.2,
-          "offset": 0.8,
-          "spacing": 0.8
-        },
-        {
-          "kind": "block",
-          "side": "left",
-          "start": 0.65,
-          "length": 0.2,
-          "offset": 1.0,
-          "spacing": 2.4
+          "offset": 5.8,
+          "runs": [
+            {
+              "kind": "tyre",
+              "start": 0.3,
+              "length": 0.2,
+              "spacing": 0.8
+            }
+          ]
         }
       ]
     }

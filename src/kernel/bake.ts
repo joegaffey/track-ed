@@ -50,8 +50,8 @@ import {
 import { isVenueSchema, type Project, type ProjectCenterline } from "./project";
 import { DEFAULT_SURFACES, KERB_SURFACES, WALL_SURFACES } from "./surfaces";
 import {
-  DEFAULT_PROP_OFFSETS,
-  DEFAULT_PROP_SPACING,
+  roadsideRunsFromProject,
+  type RoadsideInstanceRun,
 } from "./roadside";
 import { buildKerbGraph, buildWallGraph } from "./kerbs";
 
@@ -238,21 +238,34 @@ function applyTerrainMode(
   return surfaceGraph;
 }
 
-function groundHeightAt(
-  project: Project,
-  bounds: { min: Vec3; max: Vec3 },
-): (point: Vec2) => number {
-  if (project.terrain.mode !== "follow") {
-    return () => 0;
-  }
-  if (project.terrain.points && project.terrain.points.length > 0) {
-    return buildPointTerrainSampler(project.terrain.points, bounds);
-  }
-  if (project.terrain.elevation) {
-    const elevation = project.terrain.elevation;
-    return (point) => rawTerrainHeight(elevation, point);
-  }
-  return () => 0;
+function groundSampler(
+  graph: SurfaceGraph,
+): (x: number, z: number) => number | null {
+  return (x, z) => {
+    for (let triangle = 0; triangle < graph.indices.length / 3; triangle += 1) {
+      const a = graph.positions[graph.indices[triangle * 3]!]!;
+      const b = graph.positions[graph.indices[triangle * 3 + 1]!]!;
+      const c = graph.positions[graph.indices[triangle * 3 + 2]!]!;
+      const denominator =
+        (b[2] - c[2]) * (a[0] - c[0]) +
+        (c[0] - b[0]) * (a[2] - c[2]);
+      if (Math.abs(denominator) < 1e-12) {
+        continue;
+      }
+      const wa =
+        ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) /
+        denominator;
+      const wb =
+        ((c[2] - a[2]) * (x - c[0]) + (a[0] - c[0]) * (z - c[2])) /
+        denominator;
+      const wc = 1 - wa - wb;
+      if (wa < -1e-7 || wb < -1e-7 || wc < -1e-7) {
+        continue;
+      }
+      return wa * a[1] + wb * b[1] + wc * c[1];
+    }
+    return null;
+  };
 }
 
 function propNoise(id: string, salt: number): number {
@@ -308,14 +321,20 @@ function sampleAtDistance(
 function bakeProps(
   project: Project,
   bounds: { min: Vec3; max: Vec3 },
+  surfaceGraph: SurfaceGraph,
 ): Prop[] | undefined {
-  const heightAt = groundHeightAt(project, bounds);
+  const heightAt = groundSampler(surfaceGraph);
   const props: Prop[] = [];
-  for (const section of project.centerlines) {
-    const spans = section.props ?? [];
-    for (let spanIndex = 0; spanIndex < spans.length; spanIndex += 1) {
-      const span = spans[spanIndex]!;
-      if (span.length <= 1e-9) {
+  const runs = roadsideRunsFromProject(project).filter(
+    (run): run is RoadsideInstanceRun => run.mechanism === "instances",
+  );
+  for (const run of runs) {
+    for (let legIndex = 0; legIndex < run.legs.length; legIndex += 1) {
+      const leg = run.legs[legIndex]!;
+      const section = project.centerlines.find(
+        (candidate) => candidate.id === leg.section,
+      );
+      if (!section) {
         continue;
       }
       const sampled = sampleCenterline(
@@ -327,19 +346,17 @@ function bakeProps(
       if (total <= 1e-9) {
         continue;
       }
-      const spacing = span.spacing ?? DEFAULT_PROP_SPACING[span.kind];
-      const offsetDistance =
-        project.road.halfWidth +
-        (span.offset ?? DEFAULT_PROP_OFFSETS[span.kind]);
-      const sideSign = span.side === "left" ? 1 : -1;
-      const start = span.start * total;
-      const end = (span.start + span.length) * total;
+      const spacing = run.spacing;
+      const offsetDistance = run.offset;
+      const sideSign = run.side === "left" ? 1 : -1;
+      const start = leg.start * total;
+      const end = (leg.start + leg.length) * total;
       let distance = start + spacing / 2;
       let index = 0;
       while (distance < end - 1e-9 && index < 10000) {
         const sample = sampleAtDistance(sampled, section.closed, distance);
         if (sample) {
-          const id = `${section.id}:prop:${spanIndex}:${index}`;
+          const id = `${run.id}:${legIndex}:${index}`;
           const noise = (salt: number): number => propNoise(id, salt);
           const lateralJitter = (noise(1) * 2 - 1) * 0.08;
           const longitudinalJitter = (noise(2) * 2 - 1) * 0.08;
@@ -354,17 +371,14 @@ function bakeProps(
           const z = sample.position[1] + offset[1] + jitterZ;
           const yaw =
             Math.atan2(sample.tangent[0], sample.tangent[1]) + yawJitter;
-          const scale = span.kind === "tree" ? 0.85 + 0.3 * noise(4) : 1;
+          const scale = run.kind === "tree" ? 0.85 + 0.3 * noise(4) : 1;
           props.push({
             id,
-            kind: span.kind,
-            position: [x, heightAt([x, z]), z],
+            kind: run.kind,
+            position: [x, heightAt(x, z) ?? 0, z],
             rotation: [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)] as Quat,
             scale,
-            collision:
-              span.collision === undefined
-                ? true
-                : span.collision === "solid",
+            collision: run.collision === "solid",
           });
         }
         distance += spacing;
@@ -391,7 +405,7 @@ function finishTrack(
 ): BakedTrack {
   const kerbGraph = buildKerbGraph(project, bounds);
   const wallGraph = buildWallGraph(project, bounds);
-  const props = bakeProps(project, bounds);
+  const props = bakeProps(project, bounds, surfaceGraph);
   const surfaces: Surface[] = DEFAULT_SURFACES.map((surface) => ({ ...surface }));
   if (kerbGraph) {
     const kerbSurfaceIds = new Set(kerbGraph.triangleSurfaces);

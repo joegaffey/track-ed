@@ -1,10 +1,10 @@
 # Contract — `track-ed/project@4`
 
-Status: implemented. `@4` adds section-local walls and spline-following prop runs to the `project@3` venue-section model.
+Status: legacy. `project@4` remains supported for import and upgrades to `project@5` on load. New authoring writes `project@5`.
 
 ## Purpose
 
-`track-ed/project@4` is the current authoring format. It keeps the open/closed venue-section graph from `project@3` and adds:
+`track-ed/project@4` is a legacy authoring format. It keeps the open/closed venue-section graph from `project@3` and adds:
 
 - continuous roadside walls;
 - tree, tyre, and block prop runs along section splines.
@@ -72,6 +72,7 @@ Sections may author prop runs:
 - `offset` is optional and MUST be non-negative. It is the distance in metres from the asphalt edge to the wall's inner face. The default is `0 m`, so the inner face sits on the tarmac edge.
 - Wall thickness is a kernel constant: `0.3 m`.
 - Walls run continuously to their authored span ends. Exposed ends are capped.
+- Kerbs on the same side are suppressed where a wall span overlaps them. Kerb geometry resumes outside the wall span.
 - Walls from adjacent sections MAY overlap at shared junctions. No clipping, setback, or joiner is applied.
 - Wall bases follow the same ground/terrain height source as the adjacent road and shoulder.
 - Wall surfaces use the declared `wall` surface.
@@ -97,8 +98,8 @@ Sections may author prop runs:
 All `project@3` semantic rules still apply. In addition:
 
 - `sections[].walls` and `sections[].props` are only valid in `track-ed/project@4`.
-- `project@3` files remain import-only for walls/props; they are converted to `project@4` on load.
-- The app reads `project@1`–`project@4` and writes `project@4`.
+- `project@3` files remain import-only for walls/props; they are converted forward to `project@5` on load.
+- The app upgrades `project@4` to `project@5` on load and writes `project@5`.
 - `project@1` remains import-only; `project@2` and `project@3` convert to `project@4`.
 - Wall and prop authoring must preserve the existing ground, kerb, and junction invariants.
 

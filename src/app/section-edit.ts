@@ -16,6 +16,8 @@ import type {
   ProjectJunctionMember,
   ProjectKerbSpan,
   ProjectPropSpan,
+  ProjectRoadsideRun,
+  ProjectRoadsideSpline,
   ProjectWallSpan,
 } from "../kernel/project";
 import { isVenueSchema } from "../kernel/project";
@@ -513,6 +515,162 @@ function mapPropSpansForMerge(
       ...(span.collision !== undefined ? { collision: span.collision } : {}),
     };
   });
+}
+
+interface RoadsideInterval {
+  start: number;
+  end: number;
+}
+
+function roadsideRunIntervals(
+  run: ProjectRoadsideRun,
+  closed: boolean,
+): RoadsideInterval[] {
+  const end = run.start + run.length;
+  if (closed && end > 1 + 1e-9) {
+    return [
+      { start: run.start, end: 1 },
+      { start: 0, end: end - 1 },
+    ];
+  }
+  return [{ start: run.start, end }];
+}
+
+function roadsideRunSpan(
+  run: ProjectRoadsideRun,
+  start: number,
+  length: number,
+): ProjectRoadsideRun {
+  return {
+    ...run,
+    start,
+    length,
+  };
+}
+
+function splitRoadsideSplines(
+  splines: readonly ProjectRoadsideSpline[],
+  fraction: number,
+): { left: ProjectRoadsideSpline[]; right: ProjectRoadsideSpline[] } {
+  const safe = Math.max(1e-6, Math.min(1 - 1e-6, fraction));
+  const left: ProjectRoadsideSpline[] = [];
+  const right: ProjectRoadsideSpline[] = [];
+  for (const spline of splines) {
+    const leftRuns: ProjectRoadsideRun[] = [];
+    const rightRuns: ProjectRoadsideRun[] = [];
+    for (const run of spline.runs) {
+      for (const interval of roadsideRunIntervals(run, false)) {
+        const leftEnd = Math.min(interval.end, safe);
+        if (leftEnd - interval.start > 1e-6) {
+          leftRuns.push(
+            roadsideRunSpan(
+              run,
+              interval.start / safe,
+              (leftEnd - interval.start) / safe,
+            ),
+          );
+        }
+        const rightStart = Math.max(interval.start, safe);
+        if (interval.end - rightStart > 1e-6) {
+          rightRuns.push(
+            roadsideRunSpan(
+              run,
+              (rightStart - safe) / (1 - safe),
+              (interval.end - rightStart) / (1 - safe),
+            ),
+          );
+        }
+      }
+    }
+    if (leftRuns.length > 0) {
+      left.push({ ...spline, runs: leftRuns.sort((a, b) => a.start - b.start) });
+    }
+    if (rightRuns.length > 0) {
+      right.push({ ...spline, runs: rightRuns.sort((a, b) => a.start - b.start) });
+    }
+  }
+  return { left, right };
+}
+
+function mapRoadsideSplinesToOpen(
+  splines: readonly ProjectRoadsideSpline[],
+  startDistance: number,
+  pathLength: number,
+  total: number,
+): ProjectRoadsideSpline[] {
+  if (pathLength <= 1e-9 || total <= 1e-9) {
+    return [];
+  }
+  const mapped: ProjectRoadsideSpline[] = [];
+  for (const spline of splines) {
+    const runs: ProjectRoadsideRun[] = [];
+    for (const run of spline.runs) {
+      for (const interval of roadsideRunIntervals(run, true)) {
+        const start = interval.start * total;
+        const end = interval.end * total;
+        for (const offset of [-total, 0, total]) {
+          const from = Math.max(start + offset, startDistance);
+          const to = Math.min(end + offset, startDistance + pathLength);
+          if (to - from <= 1e-6) {
+            continue;
+          }
+          runs.push(
+            roadsideRunSpan(
+              run,
+              Math.max(0, Math.min(1, (from - startDistance) / pathLength)),
+              Math.max(0, Math.min(1, (to - from) / pathLength)),
+            ),
+          );
+        }
+      }
+    }
+    if (runs.length > 0) {
+      mapped.push({ ...spline, runs: runs.sort((a, b) => a.start - b.start) });
+    }
+  }
+  return mapped;
+}
+
+function mapRoadsideSplinesForMerge(
+  splines: readonly ProjectRoadsideSpline[],
+  reversed: boolean,
+  startFraction: number,
+  lengthFraction: number,
+): ProjectRoadsideSpline[] {
+  return splines.map((spline) => ({
+    ...spline,
+    side: reversed ? flipWallSide(spline.side) : spline.side,
+    runs: spline.runs.map((run) => {
+      const start = reversed ? 1 - (run.start + run.length) : run.start;
+      return roadsideRunSpan(
+        run,
+        startFraction + start * lengthFraction,
+        run.length * lengthFraction,
+      );
+    }),
+  }));
+}
+
+function mergeRoadsideSplines(
+  splines: readonly ProjectRoadsideSpline[],
+): ProjectRoadsideSpline[] {
+  const groups = new Map<string, ProjectRoadsideSpline>();
+  for (const spline of splines) {
+    const key = `${spline.side}:${spline.offset.toFixed(6)}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.runs.push(...spline.runs);
+    } else {
+      groups.set(key, {
+        ...spline,
+        runs: [...spline.runs],
+      });
+    }
+  }
+  return [...groups.values()].map((spline) => ({
+    ...spline,
+    runs: spline.runs.sort((a, b) => a.start - b.start),
+  }));
 }
 
 function splitKerbSpans(
@@ -1102,6 +1260,10 @@ export function splitOpenSection(
     const splitKerbs = splitKerbSpans(sourceSection.kerbs ?? [], splitFraction);
     const splitWalls = splitWallSpans(sourceSection.walls ?? [], splitFraction);
     const splitProps = splitPropSpans(sourceSection.props ?? [], splitFraction);
+    const splitRoadside = splitRoadsideSplines(
+      sourceSection.roadside ?? [],
+      splitFraction,
+    );
     original.points = leftPoints;
     original.pointIds = leftIds;
     if (splitKerbs.left.length > 0) {
@@ -1119,6 +1281,11 @@ export function splitOpenSection(
     } else {
       delete original.props;
     }
+    if (splitRoadside.left.length > 0) {
+      original.roadside = splitRoadside.left;
+    } else {
+      delete original.roadside;
+    }
     candidate.centerlines.push({
       id: rightId,
       closed: false,
@@ -1128,6 +1295,9 @@ export function splitOpenSection(
       ...(splitKerbs.right.length > 0 ? { kerbs: splitKerbs.right } : {}),
       ...(splitWalls.right.length > 0 ? { walls: splitWalls.right } : {}),
       ...(splitProps.right.length > 0 ? { props: splitProps.right } : {}),
+      ...(splitRoadside.right.length > 0
+        ? { roadside: splitRoadside.right }
+        : {}),
     });
 
     const leftIdSet = new Set(leftIds);
@@ -1368,6 +1538,20 @@ export function mergeLooseSectionEnds(
       mergedLength > 0 ? lengthB / mergedLength : 0.5,
     ),
   ]);
+  const mergedRoadside = mergeRoadsideSplines([
+    ...mapRoadsideSplinesForMerge(
+      a.section.roadside ?? [],
+      aReversed,
+      0,
+      mergedLength > 0 ? lengthA / mergedLength : 0.5,
+    ),
+    ...mapRoadsideSplinesForMerge(
+      b.section.roadside ?? [],
+      bReversed,
+      mergedLength > 0 ? lengthA / mergedLength : 0.5,
+      mergedLength > 0 ? lengthB / mergedLength : 0.5,
+    ),
+  ]);
   a.section.points = aPoints;
   a.section.pointIds = aPointIds;
   if (mergedKerbs.length > 0) {
@@ -1384,6 +1568,11 @@ export function mergeLooseSectionEnds(
     a.section.props = mergedProps;
   } else {
     delete a.section.props;
+  }
+  if (mergedRoadside.length > 0) {
+    a.section.roadside = mergedRoadside;
+  } else {
+    delete a.section.roadside;
   }
   if (!a.section.spline && b.section.spline) {
     a.section.spline = b.section.spline;
@@ -1599,6 +1788,17 @@ export function splitClosedSection(
     } else {
       delete candidateSection.props;
     }
+    const roadside = mapRoadsideSplinesToOpen(
+      section.roadside ?? [],
+      startDistance,
+      pathLength,
+      total,
+    );
+    if (roadside.length > 0) {
+      candidateSection.roadside = roadside;
+    } else {
+      delete candidateSection.roadside;
+    }
 
     return isCandidateValid(candidate) ? candidate : null;
   };
@@ -1719,6 +1919,17 @@ export function splitClosedSection(
       candidateSection.props = props;
     } else {
       delete candidateSection.props;
+    }
+    const roadside = mapRoadsideSplinesToOpen(
+      section.roadside ?? [],
+      startDistance,
+      pathLength,
+      total,
+    );
+    if (roadside.length > 0) {
+      candidateSection.roadside = roadside;
+    } else {
+      delete candidateSection.roadside;
     }
 
     return isCandidateValid(candidate) ? candidate : null;

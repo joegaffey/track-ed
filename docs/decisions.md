@@ -132,7 +132,7 @@ Kerbs are authored as section-local forward arcs (`side`, `start`, `length`) and
 - The v1 collision policy is **all kerb faces solid**. The profile omits `mountable`, so Lapster includes tops, sides, and end caps in collision.
 - Section split/merge operations remap, split, and side-flip kerb spans.
 - A span crossing a closed-section seam is represented directly by `start + length > 1`; there is no wrap flag. The bake samples `[start, 1]` then `[0, end]` as one continuous run.
-- Kerb authoring uses a Kerbs mode with dashed guide rails, drag-to-paint, and endpoint handles. Start/end sliders are removed; flat/corner dimensions remain numeric UI fields.
+- Kerb authoring uses the unified Roadside mode with dashed offset rails, drag-to-paint, and endpoint handles. Start/end sliders are removed; dimensions remain numeric UI fields.
 
 Rationale: the ground graph's G3–G11 invariants assume an upward-facing, non-overlapping welded surface. Raised kerbs have vertical faces and intentionally occupy space above the shoulder. Keeping them in a separate graph preserves the existing ground invariants while allowing a distinct validation contract (K1–K3).
 
@@ -146,24 +146,25 @@ Kerbs are normalized into consumer-neutral **roadside runs** before baking. A ru
 - Runs are not clipped against junction asphalt. Each section keeps its own continuous kerb run; overlapping geometry at shared junctions is intentional.
 - Exposed run ends remain capped.
 - Section kerbs run continuously to their authored ends and are allowed to overlap at shared junctions. No clipping, setback, or joiner is applied at junctions.
-- The shared run model now drives both kerb and wall baking. `project@4` adds section-local wall spans but keeps the authoring shape close to kerbs.
+- The shared run model now drives kerb, wall, and instance baking. `project@5` exposes it as first-class roadside splines with ordered runs.
 
 Rationale: walls need the same path, offset, junction, collision, and authoring semantics as kerbs. Keeping kerbs as a special bake path would force a second implementation later.
 
-## D18 — `project@4` adds walls and props
+## D18 — `project@5` unifies roadside splines
 
-Walls are section-local roadside spans, parallel to kerbs, and props are section-local runs along the spline.
+Kerbs, walls, trees, tyres, and blocks are all runs on section-local roadside splines. Every section has fixed left/right tarmac-edge splines; free splines have editable offsets. Runs within one spline do not overlap.
 
 - Walls reuse the roadside-run path, offset, terrain sampling, and export plumbing as a separate `wallGraph`.
 - Wall spans use the same forward `start + length` semantics as kerbs, including closed-section seam wrapping.
-- Wall height defaults to `1.0 m`; wall thickness is fixed at `0.3 m`; wall offset defaults to `0 m` so the inner face sits on the tarmac edge.
+- Wall height defaults to `1.0 m`; wall thickness is fixed at `0.3 m`. On a fixed kerb-edge spline the wall starts exactly at the tarmac edge.
 - Walls run continuously and may overlap at junctions. They are not clipped or joined.
-- Prop runs carry `kind`, side, forward `start + length`, offset, spacing, and collision policy. The kernel expands them into deterministic instances with lateral/longitudinal/yaw jitter, tree size variation, terrain height, and tangent-facing quaternions. Blocks stay equal-sized and evenly spaced with a gap.
+- Where a wall span overlaps a kerb span on the same section side, the kerb is suppressed for the overlapped arc; the wall replaces it.
+- Instance runs carry `kind`, forward `start + length`, outward offset, spacing, and collision policy. The kernel expands them into deterministic instances with lateral/longitudinal/yaw jitter, tree size variation, terrain height, and tangent-facing quaternions. Blocks stay equal-sized and evenly spaced with a gap.
 - The Lapster profile maps wall geometry to `surface_wall` and props to `prop_*` visuals plus a merged `col_prop` collision mesh using the `wall` material.
 - Prop visual geometry follows Lapster's procedural prop conventions: concrete barrier blocks, alternating blue/white tyre stacks, and tiered conifer trees.
-- `project@4` is the new authoring schema. `project@3` remains import-only and is upgraded to `project@4` on load. Trees, tyres, and blocks are authored as spline runs, not individual placed objects.
+- `project@5` is the current authoring schema. `project@1`–`project@4` remain import inputs and upgrade on load. Splines may be empty or contain mixed run types.
 
-Rationale: walls, kerbs, and prop runs all follow section splines and share the roadside-path problem. Keeping prop runs section-local matches Lapster's prop-line model and avoids a general scene-graph authoring tool.
+Rationale: walls, kerbs, and prop runs all follow section splines and share the roadside-path problem. First-class splines let one offset edit move every run and match Lapster's prop-line model without becoming a general scene-graph authoring tool.
 
 Trade-off: walls are a fixed rectangular profile in this slice, and props use built-in low-poly meshes rather than an asset library. Both are deliberately narrow until the Lapster conformance loop and performance comparison justify more.
 

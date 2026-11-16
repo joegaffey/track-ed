@@ -39,7 +39,7 @@ Contract decision (D12): terrain has one source of truth per project.
 
 ### G3 — Kerbs (implemented)
 
-- Kerbs mode with dashed guide rails: drag to paint spans, select spans, and drag endpoint handles to resize. Seam-wrapping spans are supported through forward `start + length` arcs.
+- Roadside mode with dashed offset rails: select a spline, drag to paint runs, select runs, and drag endpoint handles to resize. Seam-wrapping spans are supported through forward `start + length` arcs.
 - Red/white kerb runs follow road edges, rounded corners, and junction approaches with equal-length jagged elements: flat approach, one raised corner, then a riser.
 - Flat and corner heights are authorable globally and per span.
 - A separate consumer-neutral `kerbGraph` preserves the welded ground invariants. Spans run continuously to their authored ends and may overlap at junctions; exposed ends are capped.
@@ -49,11 +49,11 @@ Contract decision (D12): terrain has one source of truth per project.
 
 ### G4 — Props and walls (implemented)
 
-- `project@4` adds section-local wall spans and tree/tyre/block prop runs.
+- `project@5` adds fixed left/right kerb-edge splines plus free section-local roadside splines with kerb, wall, tree, tyre, and block runs.
 - Walls use the shared roadside-run path with forward `start + length` spans, fixed `0.3 m` thickness, default `1.0 m` height, and default `0 m` offset so the inner face sits on the tarmac edge.
-- Walls bake into a separate `wallGraph` with the `wall` surface; exposed ends are capped and junction overlaps are intentional.
+- Walls bake into a separate `wallGraph` with the `wall` surface; exposed ends are capped and junction overlaps are intentional. Kerbs on the same side are suppressed under wall spans.
 - Prop runs carry kind, side, forward `start + length`, offset, spacing, and collision. The kernel expands them into deterministic instances along the section spline with terrain-sampled base heights. Tree collision is trunk-only.
-- The app authorises walls and prop runs with guide-rail painting, selection, endpoint handles, and numeric offset/spacing. Exported props use Lapster-derived concrete barrier, blue/white tyre-stack, and conifer-tree geometry rather than track-ed placeholders.
+- The app keeps two fixed kerb-edge splines hidden, shows free splines minimally with id/slider/numeric offset, paints mixed run types, and edits run spacing/height in 3D. Exported props use Lapster-derived concrete barrier, blue/white tyre-stack, and conifer-tree geometry rather than track-ed placeholders.
 - `lapster-glb-track@3` emits `surface_wall`, `prop_*` visuals, and a merged `col_prop` collision mesh using the `wall` material.
 - Props and walls do not alter the welded ground graph.
 - Verified with the Lapster asset compiler: walls/props bake, inspect as `Track`, validate `ok`, and render in the viewer and drive viewer.

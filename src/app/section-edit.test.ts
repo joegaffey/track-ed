@@ -391,6 +391,46 @@ describe("project@3 section editing", () => {
     expectValid(result.project);
   });
 
+  it("remaps roadside splines when splitting an open section", () => {
+    const project = parseVenue({
+      schema: "track-ed/project@5",
+      name: "Roadside split",
+      generator: "track-ed test",
+      road: { halfWidth: 5, shoulderHalfWidth: 8 },
+      terrain: { margin: 20, mode: "conform" },
+      spawn: { centerline: "road", fraction: 0.2, lateral: 0 },
+      cameras: [],
+      sections: [
+        {
+          id: "road",
+          closed: false,
+          points: [
+            { id: "p0", position: [0, 0] },
+            { id: "p1", position: [50, 0] },
+            { id: "p2", position: [100, 0] },
+          ],
+          roadside: [
+            {
+              id: "left-9",
+              side: "left",
+              offset: 9,
+              runs: [{ kind: "tree", start: 0.1, length: 0.7 }],
+            },
+          ],
+        },
+      ],
+    });
+    const result = splitOpenSection(project, "road", 1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.project.centerlines).toHaveLength(2);
+    for (const section of result.project.centerlines) {
+      expect(section.roadside).toBeDefined();
+      expect(section.roadside![0]!.runs.length).toBeGreaterThan(0);
+    }
+    expectValid(result.project);
+  });
+
   it("splits a closed loop into one open section with a road-width gap", () => {
     const project = parseVenue({
       ...venueFixture,

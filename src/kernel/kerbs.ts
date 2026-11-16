@@ -25,6 +25,7 @@ import {
   KERB_WIDTH,
   WALL_SAMPLE_SPACING,
   roadsideRunsFromProject,
+  type RoadsideSurfaceRun,
 } from "./roadside";
 
 const MIN_SEGMENT_LENGTH = 1e-6;
@@ -41,6 +42,7 @@ export {
   DEFAULT_WALL_OFFSET,
   DEFAULT_PROP_OFFSETS,
   DEFAULT_PROP_SPACING,
+  DEFAULT_PROP_CENTERLINE_OFFSETS,
 } from "./roadside";
 
 interface Station {
@@ -621,7 +623,8 @@ export function buildWallGraph(
   bounds: Bounds,
 ): SurfaceGraph | undefined {
   const runs = roadsideRunsFromProject(project).filter(
-    (run) => run.profile.kind === "wall",
+    (run): run is RoadsideSurfaceRun =>
+      run.mechanism === "surface" && run.profile.kind === "wall",
   );
   if (runs.length === 0) {
     return undefined;
@@ -643,7 +646,6 @@ export function buildWallGraph(
       if (!section) {
         throw new BakeError(`wall run "${run.id}" references an unknown section`);
       }
-      const innerDistance = project.road.halfWidth + run.offset.distance;
       const stations = stationsForSpan(
         project,
         bounds,
@@ -651,8 +653,8 @@ export function buildWallGraph(
         run.side,
         leg.start,
         leg.length,
-        innerDistance,
-        innerDistance + profile.width,
+        run.offset,
+        run.offset + profile.width,
         WALL_SAMPLE_SPACING,
       );
       if (stations.length < 2) {
@@ -676,7 +678,8 @@ export function buildKerbGraph(
   bounds: Bounds,
 ): SurfaceGraph | undefined {
   const runs = roadsideRunsFromProject(project).filter(
-    (run) => run.profile.kind === "kerb",
+    (run): run is RoadsideSurfaceRun =>
+      run.mechanism === "surface" && run.profile.kind === "kerb",
   );
   if (runs.length === 0) {
     return undefined;
@@ -707,8 +710,8 @@ export function buildKerbGraph(
         run.side,
         leg.start,
         leg.length,
-        project.road.halfWidth,
-        project.road.halfWidth + KERB_WIDTH,
+        run.offset,
+        run.offset + profile.width,
         KERB_SAMPLE_SPACING,
       );
       if (stations.length < 2) {

@@ -49,18 +49,22 @@ export interface CentrelineOverlayData {
   lineHeights?: readonly number[];
 }
 
-export type RoadsideKind = "kerb" | "wall" | "prop";
+export type RoadsideKind = "kerb" | "wall" | "prop" | "spline";
 
 export interface KerbRailOverlayData {
   kind: RoadsideKind;
   sectionId: string;
+  splineId?: string;
   side: "left" | "right";
+  offset?: number;
+  active?: boolean;
   points: Vec3[];
 }
 
 export interface KerbSpanOverlayData {
   kind: RoadsideKind;
   sectionId: string;
+  splineId?: string;
   spanIndex: number;
   side: "left" | "right";
   selected: boolean;
@@ -85,13 +89,16 @@ export interface KerbOverlayData {
 export interface KerbRailPick {
   kind: RoadsideKind;
   sectionId: string;
+  splineId?: string;
   side: "left" | "right";
+  offset?: number;
   fraction: number;
 }
 
 export interface KerbHandlePick {
   kind: RoadsideKind;
   sectionId: string;
+  splineId?: string;
   spanIndex: number;
   handle: "entry" | "exit";
 }
@@ -359,6 +366,7 @@ export function createTrackView(
     position: Vec3;
     kind: RoadsideKind;
     sectionId: string;
+    splineId?: string;
     spanIndex: number;
     handle: "entry" | "exit";
   }> = [];
@@ -619,6 +627,7 @@ export function createTrackView(
             position: span.entry,
             kind: span.kind,
             sectionId: span.sectionId,
+            ...(span.splineId !== undefined ? { splineId: span.splineId } : {}),
             spanIndex: span.spanIndex,
             handle: "entry",
           },
@@ -626,6 +635,7 @@ export function createTrackView(
             position: span.exit,
             kind: span.kind,
             sectionId: span.sectionId,
+            ...(span.splineId !== undefined ? { splineId: span.splineId } : {}),
             spanIndex: span.spanIndex,
             handle: "exit",
           },
@@ -1315,7 +1325,9 @@ export function createTrackView(
       let best: {
         kind: RoadsideKind;
         sectionId: string;
+        splineId?: string;
         side: "left" | "right";
+        offset?: number;
         fraction: number;
       } | null = null;
       let bestDistance = 14;
@@ -1359,7 +1371,9 @@ export function createTrackView(
             best = {
               kind: rail.kind,
               sectionId: rail.sectionId,
+              ...(rail.splineId !== undefined ? { splineId: rail.splineId } : {}),
               side: rail.side,
+              ...(rail.offset !== undefined ? { offset: rail.offset } : {}),
               fraction: Math.max(
                 0,
                 Math.min(1, (index + t) / (rail.points.length - 1)),
@@ -1393,6 +1407,7 @@ export function createTrackView(
           best = {
             kind: handle.kind,
             sectionId: handle.sectionId,
+            ...(handle.splineId !== undefined ? { splineId: handle.splineId } : {}),
             spanIndex: handle.spanIndex,
             handle: handle.handle,
           };

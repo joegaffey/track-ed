@@ -113,7 +113,7 @@ Camera orbit and damping still animate correctly, and an idle app drops to near-
 
 ## Kerbs (v1-G3)
 
-Kerbs and walls are baked as separate graphs, so ground validation and topology work are unchanged. Each contiguous kerb run is divided into equal-length red/white elements with a flat approach and one raised corner per element. The junction fixtures use continuous kerb overlaps rather than clipping; the two-loop fixture exports to a `track.sima` bundle of 610 KB. The walls/props fixture adds a 0.3 m thick wall graph and three prop runs expanded into 151 instances, exporting to a 986 KB `.sima` with 12,875 visual triangles, 3,563 collision triangles, and 11 draw calls. Lapster's asset compiler baked, inspected, and validated all bundles without warnings beyond the existing Cargo workspace warning.
+Kerbs and walls are baked as separate graphs, so ground validation and topology work are unchanged. Each contiguous kerb run is divided into equal-length red/white elements with a flat approach and one raised corner per element. The junction fixtures use continuous kerb overlaps rather than clipping; the two-loop fixture exports to a `track.sima` bundle of 610 KB. The walls/props fixture adds a 0.3 m thick wall graph and four instance runs expanded into 210 props, exporting to a 1.7 MB `.sima` with 18,987 visual triangles, 4,863 collision triangles, and 11 draw calls. Lapster's asset compiler baked, inspected, and validated all bundles without warnings beyond the existing Cargo workspace warning.
 
 ## Comparison against the current Lapster builder
 
