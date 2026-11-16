@@ -96,6 +96,21 @@ Continuous point and terrain edits now update only the centreline, control-point
 
 A continuous 3-second drag on `venue-two-loops-spur` held 60 fps with no full bakes until release; the final bake still validated, enabled export, and produced one undo entry.
 
+Spawn drags and sliders now update the spawn marker through the same overlay path, so the arrow and ring move before the deferred bake completes.
+
+## Demand-driven rendering
+
+The preview no longer runs `renderer.render` every animation frame. Rendering is scheduled only for content/overlay updates, selection changes, visibility toggles, resize, frame-view, and while OrbitControls damping is still settling.
+
+Measured with the GPU-backed headless browser at 1280x720:
+
+| State | Idle CPU |
+| --- | ---: |
+| Continuous render loop, GPU | 0.28 cores |
+| Demand-driven rendering, GPU | 0.007 cores |
+
+Camera orbit and damping still animate correctly, and an idle app drops to near-zero CPU. The same change would remove the ~5.5 idle cores previously burned by continuous SwiftShader rendering.
+
 ## Comparison against the current Lapster builder
 
 The current Lapster builder (Rust + wgpu) already provides:

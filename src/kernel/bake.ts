@@ -101,7 +101,7 @@ function sceneBounds(project: Project): { min: Vec3; max: Vec3 } {
   };
 }
 
-function spawnFor(project: Project, fallback?: ProjectCenterline): Spawn {
+export function spawnFor(project: Project, fallback?: ProjectCenterline): Spawn {
   const centerline =
     project.centerlines.find((candidate) => candidate.id === project.spawn.centerline) ??
     fallback ??

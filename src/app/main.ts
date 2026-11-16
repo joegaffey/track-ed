@@ -1,6 +1,6 @@
 import "./style.css";
 import loopSplineTerrainJunctionsFixture from "../../fixtures/projects/loop-spline-terrain-junctions.json";
-import { bakeProject, BakeError } from "../kernel/bake";
+import { bakeProject, BakeError, spawnFor } from "../kernel/bake";
 import { parseProject, type Project } from "../kernel/project";
 import { samplePolyline, segmentLengths } from "../kernel/geometry";
 import { fractionAtControlPoint, sampleCenterline } from "../kernel/spline";
@@ -24,7 +24,7 @@ import {
   type TerrainPointOverlayData,
   type TrackView,
 } from "./scene";
-import type { BakedTrack, Vec3 } from "../model/baked-track";
+import type { BakedTrack, Spawn, Vec3 } from "../model/baked-track";
 import { mergeLooseBranchEnds } from "./branch-merge";
 import { convertProjectToV3 } from "./convert-project";
 import {
@@ -332,6 +332,13 @@ function scheduleOverlayUpdate(): void {
       overlayCenterlines(project, currentTrack.bounds),
       overlayTerrainPoints(project),
     );
+    let spawn: Spawn | null = null;
+    try {
+      spawn = spawnFor(project);
+    } catch {
+      spawn = null;
+    }
+    view.updateSpawn(spawn);
   });
 }
 
@@ -2127,6 +2134,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
           return;
         }
         project.spawn.fraction = Math.max(0, Math.min(0.999, fraction));
+        scheduleOverlayUpdate();
         scheduleDragRender();
         return;
       }
@@ -2462,6 +2470,7 @@ spawnFraction.addEventListener("input", () => {
     spawnFractionStart = cloneProject(project);
   }
   project.spawn.fraction = Number(spawnFraction.value);
+  scheduleOverlayUpdate();
   scheduleRender();
   updateAuthoringUI();
 });
@@ -2491,6 +2500,7 @@ spawnLateral.addEventListener("input", () => {
     Math.min(project.road.halfWidth, Number(spawnLateral.value)),
   );
   project.spawn.lateral = lateral;
+  scheduleOverlayUpdate();
   scheduleRender();
   updateAuthoringUI();
 });
@@ -2584,11 +2594,5 @@ const resizeObserver = new ResizeObserver(() => {
   view?.resize();
 });
 resizeObserver.observe(viewport);
-
-const frame = (): void => {
-  view?.render();
-  window.requestAnimationFrame(frame);
-};
-window.requestAnimationFrame(frame);
 
 loadProject(loopSplineTerrainJunctionsFixture, true);

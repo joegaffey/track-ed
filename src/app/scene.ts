@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import type { BakedTrack, Surface, Vec3 } from "../model/baked-track";
+import type { BakedTrack, Spawn, Surface, Vec3 } from "../model/baked-track";
 import type { EdgeInfo, TopologyReport } from "../kernel/topology";
 import {
   distancePointToSegmentSq,
@@ -71,6 +71,7 @@ export interface TrackView {
   setSelectedPoint(point: ControlPointPick | null): void;
   setSelectedTerrainPoint(index: number | null): void;
   setJoinTarget(point: ControlPointPick | null): void;
+  updateSpawn(spawn: Spawn | null): void;
   pick(x: number, y: number): PickResult | null;
   pickControlPoint(x: number, y: number): ControlPointPick | null;
   pickCenterlineSegment(x: number, y: number): CenterlineSegmentPick | null;
@@ -78,7 +79,7 @@ export interface TrackView {
   pickSpawn(x: number, y: number): boolean;
   pickGround(x: number, y: number): Vec2 | null;
   screenUnitsPerPixel(): number;
-  render(): void;
+  requestRender(): void;
   resize(): void;
   dispose(): void;
 }
@@ -218,6 +219,42 @@ export function createTrackView(
   joinTargetMarker.visible = false;
   scene.add(joinTargetMarker);
 
+  let renderFrame: number | null = null;
+  let renderDirty = true;
+  let disposed = false;
+
+  function requestRender(): void {
+    renderDirty = true;
+    if (renderFrame === null && !disposed) {
+      renderFrame = window.requestAnimationFrame(renderNextFrame);
+    }
+  }
+
+  function renderNextFrame(): void {
+    renderFrame = null;
+    if (disposed || document.hidden) {
+      return;
+    }
+    const dirty = renderDirty;
+    renderDirty = false;
+    const controlsChanged = controls.update();
+    if (!dirty && !controlsChanged) {
+      return;
+    }
+    renderer.render(scene, camera);
+    if (controlsChanged) {
+      requestRender();
+    }
+  }
+
+  const onVisibilityChange = (): void => {
+    if (!document.hidden) {
+      requestRender();
+    }
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  controls.addEventListener("change", requestRender);
+
   let track = initialTrack;
   let topology = initialTopology;
   let centerlines = initialCenterlines;
@@ -232,6 +269,8 @@ export function createTrackView(
   }> = [];
   let centerlineOverlayGroup: THREE.Group | null = null;
   let terrainPointOverlayGroup: THREE.Group | null = null;
+  let spawnGroup: THREE.Group | null = null;
+  let activeSpawn: Spawn | undefined = initialTrack.spawns[0];
 
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
@@ -387,11 +426,49 @@ export function createTrackView(
     terrainPointOverlayGroup.add(pointMarkers);
   };
 
+  const buildSpawnOverlay = (spawn: Spawn | undefined): void => {
+    if (spawnGroup) {
+      content.remove(spawnGroup);
+      disposeObject(spawnGroup);
+      spawnGroup = null;
+    }
+    activeSpawn = spawn;
+    if (!spawn) {
+      return;
+    }
+    const group = new THREE.Group();
+    group.position.set(spawn.position[0], spawn.position[1] + 0.1, spawn.position[2]);
+    group.quaternion.copy(quaternionFromArray(spawn.rotation));
+    const arrow = new THREE.ArrowHelper(
+      new THREE.Vector3(0, 0, -1),
+      new THREE.Vector3(0, 0, 0),
+      9,
+      0xff8a4c,
+      2.6,
+      1.4,
+    );
+    group.add(arrow);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(1.1, 1.7, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0xff8a4c,
+        side: THREE.DoubleSide,
+        depthTest: false,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.2;
+    group.add(ring);
+    content.add(group);
+    spawnGroup = group;
+  };
+
   const buildContent = (): void => {
     disposeObject(content);
     content.clear();
     surfaceMesh = null;
     linePickables = [];
+    spawnGroup = null;
 
     centerlineOverlayGroup = new THREE.Group();
     centerlineOverlayGroup.name = "centerline-overlays";
@@ -531,38 +608,13 @@ export function createTrackView(
 
     buildTerrainPointOverlays();
 
-    const spawn = track.spawns[0];
-    if (spawn) {
-      const spawnGroup = new THREE.Group();
-      spawnGroup.position.set(spawn.position[0], spawn.position[1] + 0.1, spawn.position[2]);
-      spawnGroup.quaternion.copy(quaternionFromArray(spawn.rotation));
-      const arrow = new THREE.ArrowHelper(
-        new THREE.Vector3(0, 0, -1),
-        new THREE.Vector3(0, 0, 0),
-        9,
-        0xff8a4c,
-        2.6,
-        1.4,
-      );
-      spawnGroup.add(arrow);
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(1.1, 1.7, 24),
-        new THREE.MeshBasicMaterial({
-          color: 0xff8a4c,
-          side: THREE.DoubleSide,
-          depthTest: false,
-        }),
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.2;
-      spawnGroup.add(ring);
-      content.add(spawnGroup);
-    }
+    buildSpawnOverlay(track.spawns[0]);
 
     updateSun();
     updateSelectionMarker();
     updateTerrainSelectionMarker();
     updateJoinTargetMarker();
+    requestRender();
   };
 
   let wireframeVisible = true;
@@ -594,6 +646,7 @@ export function createTrackView(
     camera.position.set(center.x + span * 0.7, center.y + span * 0.85, center.z + span * 0.7);
     controls.target.copy(center);
     controls.update();
+    requestRender();
   };
 
   const pickGround = (x: number, y: number): Vec2 | null => {
@@ -616,6 +669,7 @@ export function createTrackView(
       centerlines = nextCenterlines;
       terrainPoints = nextTerrainPoints;
       buildContent();
+      requestRender();
     },
     updateOverlays(nextCenterlines, nextTerrainPoints): void {
       centerlines = nextCenterlines;
@@ -625,6 +679,7 @@ export function createTrackView(
       updateSelectionMarker();
       updateTerrainSelectionMarker();
       updateJoinTargetMarker();
+      requestRender();
     },
     frame,
     setWireframeVisible(visible: boolean): void {
@@ -633,6 +688,7 @@ export function createTrackView(
       if (wireframe) {
         wireframe.visible = visible;
       }
+      requestRender();
     },
     setBoundaryVisible(visible: boolean): void {
       boundaryVisible = visible;
@@ -640,6 +696,7 @@ export function createTrackView(
       if (group) {
         group.visible = visible;
       }
+      requestRender();
     },
     setTJunctionsVisible(visible: boolean): void {
       tJunctionsVisible = visible;
@@ -647,6 +704,7 @@ export function createTrackView(
       if (points) {
         points.visible = visible;
       }
+      requestRender();
     },
     setCollisionVisible(visible: boolean): void {
       collisionVisible = visible;
@@ -654,9 +712,11 @@ export function createTrackView(
       if (collision) {
         collision.visible = visible;
       }
+      requestRender();
     },
     setCenterlinesVisible(visible: boolean): void {
       setCenterlineVisibility(visible);
+      requestRender();
     },
     setControlsEnabled(enabled: boolean): void {
       controls.enabled = enabled;
@@ -664,14 +724,36 @@ export function createTrackView(
     setSelectedPoint(point: ControlPointPick | null): void {
       selectedPoint = point;
       updateSelectionMarker();
+      requestRender();
     },
     setSelectedTerrainPoint(index: number | null): void {
       selectedTerrainPoint = index;
       updateTerrainSelectionMarker();
+      requestRender();
     },
     setJoinTarget(point: ControlPointPick | null): void {
       joinTarget = point;
       updateJoinTargetMarker();
+      requestRender();
+    },
+    updateSpawn(spawn: Spawn | null): void {
+      activeSpawn = spawn ?? undefined;
+      if (!spawn) {
+        if (spawnGroup) {
+          spawnGroup.visible = false;
+        }
+        requestRender();
+        return;
+      }
+      if (!spawnGroup) {
+        buildSpawnOverlay(spawn);
+        requestRender();
+        return;
+      }
+      spawnGroup.visible = true;
+      spawnGroup.position.set(spawn.position[0], spawn.position[1] + 0.1, spawn.position[2]);
+      spawnGroup.quaternion.copy(quaternionFromArray(spawn.rotation));
+      requestRender();
     },
     pick(x: number, y: number): PickResult | null {
       if (!surfaceMesh) {
@@ -773,7 +855,7 @@ export function createTrackView(
       return best ? best.index : null;
     },
     pickSpawn(x: number, y: number): boolean {
-      const spawn = track.spawns[0];
+      const spawn = activeSpawn;
       if (!spawn) {
         return false;
       }
@@ -873,18 +955,23 @@ export function createTrackView(
         height
       );
     },
-    render(): void {
-      controls.update();
-      renderer.render(scene, camera);
-    },
+    requestRender,
     resize(): void {
       const width = Math.max(container.clientWidth, 1);
       const height = Math.max(container.clientHeight, 1);
       renderer.setSize(width, height);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
+      requestRender();
     },
     dispose(): void {
+      disposed = true;
+      if (renderFrame !== null) {
+        window.cancelAnimationFrame(renderFrame);
+        renderFrame = null;
+      }
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      controls.removeEventListener("change", requestRender);
       controls.dispose();
       disposeObject(content);
       selectionMarker.geometry.dispose();
