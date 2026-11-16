@@ -1,7 +1,7 @@
 # v1 roadmap — production promotion gates
 
-Status: G1, G2a, G2b, G2c1, G2c4, and the `project@2` multi-junction graph are implemented; road elevation, banking/crown, kerbs, and props remain. v0 remains a spike until these gates pass.
-Date: 2026-11-15.
+Status: G1, G2a, G2b, G2c1, G2c4, the `project@2` multi-junction graph, and the `project@3` venue section graph are implemented; road elevation, banking/crown, kerbs, and props remain. v0 remains a spike until these gates pass.
+Date: 2026-11-16.
 
 ## Decision
 
@@ -90,8 +90,9 @@ Terrain and kerbs depend on the final centreline representation, so splines come
 
 ## Remaining deferred beyond v1
 
-- Multiple loops, shared sections, multiple branches per junction. See `docs/venue-model-plan.md`.
-- Pit lanes, pit boxes, routes, sectors, multiple layouts.
+- Routes, route-based length, sectors, multiple layouts.
+- Pit lanes and pit boxes.
+- Persisted per-section locks. Design only; see `docs/venue-model-plan.md`.
 - Textures and material libraries beyond flat base colours.
 - Direct `.sima` export and CLI/headless export.
 - Additional consumers and interchange formats across sims.

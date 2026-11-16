@@ -161,27 +161,24 @@ function outwardDirection(section: ProjectCenterline, pointIndex: number): Vec2 
   return scale2(leftNormal(sample.tangent), side);
 }
 
-export function addSectionAtPoint(
+function buildSectionAtPoint(
   source: Project,
   sectionId: string,
   pointIndex: number,
+  direction: Vec2,
 ): SectionEditResult {
-  if (source.schema !== "track-ed/project@3") {
-    return { ok: false, message: "Section authoring requires track-ed/project@3." };
-  }
   const project = structuredClone(source);
   const end = sectionEnd(project, sectionId, pointIndex);
   if (!end) {
     return { ok: false, message: "Select a section control point." };
   }
   const position = end.section.points[end.pointIndex]!;
-  const outward = outwardDirection(end.section, end.pointIndex);
   const usedSections = new Set(project.centerlines.map((section) => section.id));
   const sectionIdNew = nextId("section", usedSections);
   const points: [number, number][] = [
     [position[0], position[1]],
-    [position[0] + outward[0] * 30, position[1] + outward[1] * 30],
-    [position[0] + outward[0] * 60, position[1] + outward[1] * 60],
+    [position[0] + direction[0] * 30, position[1] + direction[1] * 30],
+    [position[0] + direction[0] * 60, position[1] + direction[1] * 60],
   ];
   const usedPoints = new Set<string>();
   const pointIds = points.map(() => {
@@ -220,6 +217,91 @@ export function addSectionAtPoint(
   }
 
   return { ok: true, project };
+}
+
+export function addSectionAtPoint(
+  source: Project,
+  sectionId: string,
+  pointIndex: number,
+  flip = false,
+): SectionEditResult {
+  if (source.schema !== "track-ed/project@3") {
+    return { ok: false, message: "Section authoring requires track-ed/project@3." };
+  }
+  const end = sectionEnd(source, sectionId, pointIndex);
+  if (!end) {
+    return { ok: false, message: "Select a section control point." };
+  }
+  const outward = outwardDirection(end.section, end.pointIndex);
+  return buildSectionAtPoint(
+    source,
+    sectionId,
+    pointIndex,
+    flip ? scale2(outward, -1) : outward,
+  );
+}
+
+function buildLooseSectionAtPoint(
+  source: Project,
+  sectionId: string,
+  pointIndex: number,
+  direction: Vec2,
+): SectionEditResult {
+  const project = structuredClone(source);
+  const end = sectionEnd(project, sectionId, pointIndex);
+  if (!end) {
+    return { ok: false, message: "Select a section control point." };
+  }
+
+  const position = end.section.points[end.pointIndex]!;
+  const offset = source.road.shoulderHalfWidth * 2 + 20;
+  const base = add2(position, scale2(direction, offset));
+  const points: [number, number][] = [
+    [base[0], base[1]],
+    add2(base, scale2(direction, 30)),
+    add2(base, scale2(direction, 60)),
+  ];
+
+  const usedSections = new Set(project.centerlines.map((section) => section.id));
+  const sectionIdNew = nextId("section", usedSections);
+  const usedPoints = new Set<string>();
+  const pointIds = points.map(() => {
+    const id = nextPointId(usedPoints, sectionIdNew);
+    usedPoints.add(id);
+    return id;
+  });
+
+  project.centerlines.push({
+    id: sectionIdNew,
+    closed: false,
+    points,
+    pointIds,
+    spline: { type: "catmull-rom", samplesPerSegment: 12 },
+  });
+
+  return { ok: true, project };
+}
+
+export function addLooseSectionAtPoint(
+  source: Project,
+  sectionId: string,
+  pointIndex: number,
+  flip = false,
+): SectionEditResult {
+  if (source.schema !== "track-ed/project@3") {
+    return { ok: false, message: "Section authoring requires track-ed/project@3." };
+  }
+  const end = sectionEnd(source, sectionId, pointIndex);
+  if (!end) {
+    return { ok: false, message: "Select a section control point." };
+  }
+  const outward = outwardDirection(end.section, end.pointIndex);
+  return buildLooseSectionAtPoint(
+    source,
+    sectionId,
+    pointIndex,
+    flip ? scale2(outward, -1) : outward,
+  );
 }
 
 export function addJunctionMember(

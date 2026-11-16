@@ -28,8 +28,8 @@ describe("convertProjectToV3", () => {
   it("converts branch attachments into junction members", () => {
     const project = parsed(loopFixture);
     project.junctions.push(
-      { id: "junction-1", centerline: "main", point: "p1" },
-      { id: "junction-2", centerline: "main", point: "p4" },
+      { id: "junction-1", centerline: "section-1", point: "p1" },
+      { id: "junction-2", centerline: "section-1", point: "p4" },
     );
     project.centerlines.push({
       id: "connector",
@@ -54,11 +54,11 @@ describe("convertProjectToV3", () => {
       (junction) => junction.id === "junction-2",
     )!;
     expect(junction1.members).toEqual([
-      { section: "main", point: "p1" },
+      { section: "section-1", point: "p1" },
       { section: "connector", point: "p1" },
     ]);
     expect(junction2.members).toEqual([
-      { section: "main", point: "p4" },
+      { section: "section-1", point: "p4" },
       { section: "connector", point: "p4" },
     ]);
     expect(result.project.centerlines.find((section) => section.id === "connector")?.attach)

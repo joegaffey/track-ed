@@ -1,6 +1,6 @@
 # Venue section graph — implementation plan
 
-Status: in progress. Slices 1–3 are implemented: `project@3` sections, multiple loops, dead-ended opens, general junctions, open-section and multi-way junctions, app section/junction authoring, automatic `project@2` conversion, loose-end merging, loop closing, junction detach, and splitting of both open and closed sections. Representative Slice 4 Lapster conformance passes; the full fixture matrix, performance check, section-list UI, and routes remain.
+Status: implemented through Slice 4. `project@3` sections, multiple loops, dead-ended opens, general junctions, open-section and multi-way junctions, app section/junction authoring, automatic `project@2` conversion, loose-end merging, loop closing, junction detach, splitting of both open and closed sections, the section-list UI, and the full fixture-matrix Lapster conformance rerun are complete. Routes remain deferred.
 
 ## Goal
 
@@ -178,21 +178,51 @@ Estimate: 2–3 focused days.
 - Multi-way junction anchor choice must remain deterministic.
 - Removing `main` touches validation, baking, app editing, spawn, length, and tests, so partial migrations can leave inconsistent behavior.
 
-## Next session
+## Slice 4 completion
 
-Start here:
+Completed:
 
-1. Finish Slice 4: run the full bake/validate fixture matrix and record performance. Representative venue Lapster conformance already passes.
-2. Add a section list to the authoring UI so sections can be inspected independently of junctions.
-3. Separate “Add section” from “Add junction”; currently Add section creates a section plus a junction.
-4. Decide the legacy `project@1` fraction-attachment migration.
-5. Record split/conformance performance and decide whether the split gap search needs further optimization.
+1. The full 17-fixture bake/validate matrix is enforced by `src/kernel/fixture-matrix.test.ts`, and every fixture was compiled through Lapster `bake-glb-track`, `inspect`, and `validate`.
+2. The authoring sidebar has an independent section list with open/closed state, point count, junction membership, and loose ends. Selection stays in the 3D model; the list highlights the section containing the selected control point.
+3. “Add section” now creates an independent dead-ended section; “Add junction” creates a joined spur at the selected control point.
+4. `project@1` fraction attachments remain import-only; see D15 in `docs/decisions.md`.
+5. Split and conformance performance is recorded in `docs/performance-baseline.md`; the split gap search stays simple because it is under 1 s on the current fixtures.
 
 Known limitations:
 
-- Splitting some spline points can take a few seconds because candidate gaps are baked and validated.
+- Splitting a dense spline loop can still take a few hundred milliseconds because each candidate gap is baked and validated.
 - `project@1` fraction attachments remain import-only.
+- Very large venues are dominated by terrain/boolean triangulation with many holes, not by pairwise crossing validation.
 - Routes/laps, sectors, blank-sheet authoring, kerbs, and props are outside this plan.
+
+## Planned — section lock (design only, not implemented)
+
+Status: planned. No schema, parser, or UI lock behavior exists yet.
+
+Goal: protect a section from accidental edits in large venues without changing baking, validation, or export.
+
+Proposed model:
+
+- Add optional `locked?: boolean` to each `project@3` section, defaulting to `false`.
+- Persist the flag so it survives save/open. Because the project format is strict, this requires a schema, parser, serializer, and contract update. Decide at implementation time whether that is an additive `project@3` field or a `project@4` bump.
+- Toggling a lock is an explicit, undoable authoring edit.
+
+Proposed semantics:
+
+- A locked section cannot have points dragged, inserted, or deleted, and cannot be split.
+- Adding a section or junction that references a point in a locked section is blocked.
+- Joining, merging, or closing a locked section is blocked.
+- If any junction member is locked, moving the junction anchor is blocked, because anchor movement currently synchronizes every member.
+- Removing a junction with a gap is blocked when it would delete points from a locked section. A lock never causes silent partial detachment.
+- Locking does not affect bake, validation, export, terrain, or spawn sampling. Spawn fraction/lateral behavior for locked sections is an open question.
+- The section list stays read-only for selection; it gains a lock indicator/toggle, while selection remains in the 3D model and the selected section stays highlighted.
+
+Required work:
+
+- Schema, parser, serializer, and contract update.
+- UI lock indicator/toggle in the section list.
+- Enforcement in every authoring path: point drag/insert/delete, split, join/merge/close, Add section, Add junction, junction anchor movement, and junction detach.
+- Tests for parse/serialize round-trip, undo/redo, each blocked edit path, junction propagation, and legacy fixtures.
 
 ## Explicitly deferred
 

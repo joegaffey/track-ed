@@ -1,7 +1,7 @@
 # Conformance report — `lapster-glb-track@1`
 
 Status: conformance passed. Outcome: continue the spike; do not promote to production yet.
-Date: 2026-11-15.
+Date: 2026-11-16 (Slice 4 full-fixture rerun).
 
 ## Environment
 
@@ -68,6 +68,34 @@ Merging two loose branch ends into one centreline passed: 67668 B `.sima`, 894 v
 The `project@3` venue fixture with two disjoint closed sections and a dead-ended open spur passed: 128844 B `.sima`, 1728 vertices, 1146 triangles, `Two Loops and Spur (Track)`, `validate ok`.
 
 The `project@3` junction fixture with a closed loop and an open spur attached at an interior loop control point passed: 67536 B `.sima`, 891 vertices, 588 triangles, `Loop and Spur Junction (Track)`, `validate ok`.
+
+## Slice 4 full-fixture rerun
+
+All 17 checked-in project fixtures were parsed, baked, validated in-process, exported to `track.glb` + `track.json`, and compiled with the Lapster debug binary. Every fixture produced `inspect` output ending in `(Track)` and `validate` output `ok`.
+
+| Fixture | `.sima` | Vertices | Triangles | Length | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `loop` | 8260 B | 84 | 50 | 360 m | ok |
+| `loop-spline` | 66380 B | 876 | 578 | 371.36 m | ok |
+| `loop-spline-terrain` | 129100 B | 1758 | 1090 | 371.36 m | ok |
+| `loop-spline-terrain-follow` | 129108 B | 1758 | 1090 | 371.36 m | ok |
+| `loop-spline-terrain-junctions` | 67668 B | 894 | 590 | 371.36 m | ok |
+| `loop-spline-terrain-points` | 67668 B | 894 | 590 | 371.36 m | ok |
+| `loop-two-loose-branches` | 100044 B | 1335 | 884 | 371.36 m | ok |
+| `loop-with-branch-30` | 10068 B | 108 | 66 | 360 m | ok |
+| `loop-with-branch-30-spline` | 82716 B | 1098 | 726 | 371.36 m | ok |
+| `loop-with-branch-45` | 10068 B | 108 | 66 | 360 m | ok |
+| `loop-with-branch-45-spline` | 83356 B | 1107 | 732 | 371.36 m | ok |
+| `loop-with-branch-90` | 10068 B | 108 | 66 | 360 m | ok |
+| `loop-with-branch-90-spline` | 84188 B | 1119 | 740 | 371.36 m | ok |
+| `loop-with-branch-90-spline-terrain` | 166948 B | 2274 | 1432 | 371.36 m | ok |
+| `loop-with-branch-90-spline-terrain-follow` | 166952 B | 2274 | 1432 | 371.36 m | ok |
+| `venue-loop-spur-junction` | 67536 B | 891 | 588 | 444.37 m | ok |
+| `venue-two-loops-spur` | 128844 B | 1728 | 1146 | 813.65 m | ok |
+
+The venue length is the sum of all section lengths. The two-loop venue has two disjoint spline loops plus a dead-ended open spur; the junction venue has a closed loop with an open spur attached at an interior control point.
+
+The fixture matrix is enforced by `src/kernel/fixture-matrix.test.ts`; venue export determinism and manifest length are covered in `src/export/lapster/export.test.ts`.
 
 ## Viewer checks
 

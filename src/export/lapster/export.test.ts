@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import loopFixture from "../../../fixtures/projects/loop.json";
+import loopSpurFixture from "../../../fixtures/projects/venue-loop-spur-junction.json";
+import venueFixture from "../../../fixtures/projects/venue-two-loops-spur.json";
 import { bakeProject } from "../../kernel/bake";
 import { parseProject } from "../../kernel/project";
 import { exportLapsterGlbTrack } from "./index";
@@ -81,6 +83,26 @@ describe("lapster-glb-track@1", () => {
       "dirt",
       "grass",
     ]);
+  });
+
+  it("exports venue fixtures with multiple loops, dead ends, and junctions", () => {
+    for (const fixture of [venueFixture, loopSpurFixture]) {
+      const parsed = parseProject(fixture);
+      expect(parsed.issues).toEqual([]);
+      const track = bakeProject(parsed.project!);
+      const bundle = exportLapsterGlbTrack(track);
+
+      expect(bundle.manifest.length).toBeCloseTo(track.length, 9);
+      expect(bundle.manifest.length).toBeGreaterThan(0);
+      expect(bundle.files.map((file) => file.name)).toEqual(["track.glb", "track.json"]);
+      const glb = bundle.files[0]!.bytes;
+      const gltf = readJsonChunk(glb);
+      expect((gltf.nodes as Array<{ name: string }>).map((node) => node.name)).toEqual([
+        "surface_asphalt",
+        "surface_dirt",
+        "surface_grass",
+      ]);
+    }
   });
 
   it("refuses to export an invalid track", () => {

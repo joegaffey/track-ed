@@ -13,7 +13,7 @@ The TypeScript reference is `src/model/baked-track.ts`. This document defines th
 - The kernel produces `BakedTrack`.
 - An export profile consumes `BakedTrack`.
 - `BakedTrack` MUST NOT contain consumer-specific fields: no `.sima`, pack chunks, rkyv, importer node names, game surface IDs, or game-specific metadata.
-- The model is not persisted. `track-ed/project@1` is the authoring format.
+- The model is not persisted. `track-ed/project@3` is the current authoring format; `project@1` and `project@2` are legacy inputs.
 
 ## Shape
 
@@ -66,7 +66,7 @@ interface Camera {
 - **BM3** `triangleSurfaces.length` MUST equal `indices.length / 3`. Every id MUST exist in `surfaces`.
 - **BM4** `surfaces[].id` MUST be unique. `surfaces[].name` MUST be unique and non-empty.
 - **BM5** `bounds` MUST enclose every position.
-- **BM6** `length` MUST be the main-loop arc length in metres. If the project uses a spline centreline, the length is measured on the sampled polyline.
+- **BM6** `length` MUST be the track length in metres. For `project@3` it is the sum of all section lengths; for legacy single-main-loop projects it is the main-loop arc length. Spline sections are measured on the sampled polyline. Branches and dead ends are included for `project@3`.
 - **BM7** `spawns` MUST contain at least one spawn. Rotations MUST be normalized and face the centreline tangent.
 - **BM8** `cameras` MAY be empty.
 - **BM9** The model MUST satisfy geometry requirements G3–G11 from `SPEC.md` before any profile may export it.

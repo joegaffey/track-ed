@@ -8,6 +8,7 @@ import { sampleCenterline } from "../kernel/spline";
 import { validateBakedTrack } from "../kernel/validate-baked";
 import {
   addJunctionMember,
+  addLooseSectionAtPoint,
   addSectionAtPoint,
   closeSectionLoop,
   isLooseSectionEnd,
@@ -89,6 +90,35 @@ describe("project@3 section editing", () => {
     expect(result.project.centerlines).toHaveLength(4);
     expect(result.project.junctions).toHaveLength(1);
     expect(result.project.junctions[0]!.members).toHaveLength(2);
+    expectValid(result.project);
+  });
+
+  it("adds a standalone section without creating a junction", () => {
+    const project = venue();
+    const result = addLooseSectionAtPoint(project, "loop-a", 1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.project.centerlines).toHaveLength(4);
+    expect(result.project.junctions).toHaveLength(0);
+    const added = result.project.centerlines[3]!;
+    expect(added.closed).toBe(false);
+    expect(added.points).toHaveLength(3);
+    expect(added.points[0]).not.toEqual(project.centerlines[0]!.points[1]);
+    expectValid(result.project);
+  });
+
+  it("adds a junction to a standalone section without overlapping", () => {
+    const project = venue();
+    const loose = addLooseSectionAtPoint(project, "loop-a", 1);
+    expect(loose.ok).toBe(true);
+    if (!loose.ok) return;
+    const standalone = loose.project.centerlines[loose.project.centerlines.length - 1]!;
+
+    const result = addSectionAtPoint(loose.project, standalone.id, 0, true);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.project.centerlines).toHaveLength(5);
+    expect(result.project.junctions).toHaveLength(1);
     expectValid(result.project);
   });
 

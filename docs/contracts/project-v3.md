@@ -1,6 +1,6 @@
 # Contract — `track-ed/project@3`
 
-Status: implementation slice 3. Venue sections, general junctions, and app authoring are implemented. Slice 4 conformance/polish is in progress; routes remain deferred.
+Status: implemented. Venue sections, general junctions, app authoring, split/merge/detach flows, and Slice 4 conformance/polish are complete; routes remain deferred.
 
 ## Purpose
 
@@ -75,7 +75,8 @@ Junctions connect section control points:
 - Multiple sections may share a junction.
 - Disconnected sections MUST NOT intersect; intersections are allowed only at shared junctions.
 - Loose ends may remain disconnected.
-- App authoring supports adding a joined section, joining a loose end to any control point, merging loose ends, closing an open section into a loop, detaching junctions, and splitting any section.
+- App authoring supports adding an independent section, adding a joined section/junction, joining a loose end to any control point, merging loose ends, closing an open section into a loop, detaching junctions, and splitting any section.
+- The section list reports each section independently of junctions, including open/closed state, control-point count, junction membership, and loose ends.
 - Open sections are capped at every loose end.
 - Splitting a closed section produces one open section with two capped ends.
 - Splitting an open section produces two capped open sections with a gap between them.
@@ -85,9 +86,10 @@ Junctions connect section control points:
 
 ## Migration
 
-`project@1` remains import-only. The app converts `project@2` projects to `project@3` on load and writes `project@3` on save. Existing `project@2` junction hosts and branch `attach`/`endAttach` references become junction members; legacy fraction attachments are not converted automatically.
+`project@1` remains import-only. The app converts `project@2` projects to `project@3` on load and writes `project@3` on save. Existing `project@2` junction hosts and branch `attach`/`endAttach` references become junction members. Legacy `project@1` fraction attachments are not converted automatically: inserting a host control point at the sampled attachment would change the authored points, point ids, and spline shape. See D15 in `docs/decisions.md`.
 
 ## Deferred
 
 - Route/lap objects and route-based length.
-- Section list and richer section metadata.
+- Richer section metadata beyond id, open/closed state, point count, junction membership, and loose ends.
+- Per-section lock flags. Design only; see `docs/venue-model-plan.md`.

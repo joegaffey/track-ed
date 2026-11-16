@@ -101,8 +101,10 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 
 ## Length
 
-- `length` is the main-loop arc length in metres. If the project uses a spline centreline, it is the sampled polyline length.
-- Branches are excluded.
+- `length` is `BakedTrack.length` in metres.
+- For `track-ed/project@3` it is the sum of all section lengths, including dead-ended open sections and every loop.
+- For legacy `project@1`/`project@2` projects it is the main-loop arc length and branches are excluded.
+- Spline sections are measured on the sampled polyline.
 
 ## Cameras
 

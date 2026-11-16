@@ -65,6 +65,31 @@ Browser measurement for `branch-90-spline-terrain` (1,432 triangles):
 
 Terrain conversion and welded embankments remain comfortably within the v0 A6 budget.
 
+## v1 venue sections update (Slice 4)
+
+Measured on Node 26 with `performance.now()`, median of 3–5 runs:
+
+| Case | Measurement |
+| --- | ---: |
+| `venue-two-loops-spur` bake | 181 ms |
+| `venue-two-loops-spur` export bundle | 41 ms |
+| `venue-loop-spur-junction` bake | 52 ms |
+| `venue-loop-spur-junction` export bundle | 14 ms |
+| split closed loop (`venue-two-loops-spur`, `loop-a` at point 1) | 728 ms |
+| split open section (`venue-loop-spur-junction`, `spur` at point 1) | 112 ms |
+
+Pairwise section-crossing validation is not the bottleneck. Instrumenting the bake's pair loop on a synthetic venue of disjoint 8-point spline loops gave:
+
+| Sections | Sampled segments | Crossing check |
+| ---: | ---: | ---: |
+| 4 | 384 | 2–12 ms |
+| 9 | 864 | 12–13 ms |
+| 16 | 1536 | 39–41 ms |
+
+The full bake for those synthetic venues was 2.0 s, 9.7 s, and 31.1 s respectively, dominated by polygon clipping and triangulating a terrain region with many holes. Crossing validation therefore stays as the simple pairwise check; the later optimization target is terrain/boolean triangulation for very large venues, not crossing detection.
+
+The closed-loop split gap search remains the slowest authoring operation because each candidate gap is baked and validated. It is under 1 s on the current fixtures, so no further optimization is required for Slice 4.
+
 ## Comparison against the current Lapster builder
 
 The current Lapster builder (Rust + wgpu) already provides:

@@ -16,8 +16,8 @@ function projectFixture(): Project {
 function withTwoLooseBranches(): Project {
   const project = projectFixture();
   project.junctions.push(
-    { id: "junction-a", centerline: "main", point: "p1" },
-    { id: "junction-b", centerline: "main", point: "p4" },
+    { id: "junction-a", centerline: "section-1", point: "p1" },
+    { id: "junction-b", centerline: "section-1", point: "p4" },
   );
   project.centerlines.push(
     {
@@ -134,6 +134,6 @@ describe("mergeLooseBranchEnds", () => {
     if (!result.ok) {
       return;
     }
-    expect(result.project.spawn.centerline).toBe("main");
+    expect(result.project.spawn.centerline).toBe("section-1");
   });
 });

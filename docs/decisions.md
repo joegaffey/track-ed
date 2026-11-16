@@ -112,6 +112,14 @@ Two loose branch ends can be joined by dragging one onto the other. The editor c
 
 Rationale: a branch-hosted junction would still be two roads meeting at a node. The requirement is one road section, so the join point must not remain a junction. The kernel bake path is unchanged because the result is an ordinary open centreline. Attached target ends must be detached first; allowing attached targets would make main-loop and branch targets ambiguous and would silently orphan junctions.
 
+## D15 — `project@1` fraction attachments stay import-only
+
+`project@1` remains import-only and is not converted automatically to `project@3`. In particular, legacy `attach: { to, fraction }` branch roots are preserved when a `project@1` file is opened, but they are not rewritten as junction members.
+
+Rationale: a fraction attachment has no stable target point id. Converting it requires inserting a control point into the host section at the sampled position, which changes the host's authored control points, point ids, and spline shape. Silent migration would make the geometry differ from the source file and would make round-trips lossy without an explicit author decision. Import-only also keeps the `project@2` conversion path small and deterministic.
+
+Limits: `project@1` geometry can be viewed, baked, exported, and edited with its legacy fraction slider, but it cannot use `project@3` section/junction authoring until it is re-authored or explicitly converted in a future migration tool. `project@2` projects continue to convert on load because their junction and `attach`/`endAttach` references already carry stable point ids.
+
 ## Alternatives considered
 
 - **Build inside the Lapster repository** (`web/track-builder/`): cheaper integration and shared CI, but keeps the tool tied to Lapster and does not establish a consumer-neutral boundary. Reconsider if the multi-consumer goal fades.

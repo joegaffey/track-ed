@@ -1,6 +1,6 @@
 # track-ed — Functional Specification v1.0
 
-Status: v1 implementation in progress; M4 conformance passed. Scope: v0 spike plus v1 gates (splines, terrain/TIN, and `project@2` junctions). `project@3` venue sections are in progress.
+Status: v1 implementation in progress; M4 conformance passed. Scope: v0 spike plus v1 gates (splines, terrain/TIN, `project@2` junctions, and `project@3` venue sections). Kerbs and props remain.
 
 ## 1. Purpose
 
@@ -21,7 +21,7 @@ The project model is track-ed's own. Lapster is the first consumer, not the defi
 - v1-G2b is implemented: `follow` mode drapes the road, shoulder, and terrain over the same heightfield while keeping seams welded.
 - v1-G2c1 is implemented: terrain is authored by absolute point heights as a TIN, with click-add, vertical drag, numeric height, delete/clear, and undo/redo. Preview and GLB normals are computed from geometry.
 - v1-G2c4 is implemented: road-follow mode now samples a global TIN built from the terrain points, so the road, shoulder, and terrain follow the same surface.
-- `track-ed/project@3` is in progress: multiple closed sections, dead-ended open sections, multi-way junction members, open-section junctions, section/junction authoring, loose-end merging, loop closing, junction detach, and open/closed section splitting bake without a main loop. Routes remain deferred.
+- `track-ed/project@3` is implemented: multiple closed sections, dead-ended open sections, multi-way junction members, open-section junctions, section/junction authoring, an independent section list, separate Add section and Add junction flows, loose-end merging, loop closing, junction detach, and open/closed section splitting bake without a main loop. The full fixture matrix bakes, validates, exports, and passes Lapster conformance. Routes remain deferred.
 - `track-ed/project@2` is implemented: shared junction nodes with stable point ids support multiple junctions and multi-way branches. Moving a shared junction point moves every connected branch. A loose branch end can be dragged onto a main-loop control point to join it (`endAttach`), and dragging a joined end pulls it free. Dragging one loose branch end onto another merges both branches into a single open centreline.
 - v1-G3 kerbs are next. The v0 performance comparison remains useful baseline input for the v1 decision.
 
@@ -246,10 +246,9 @@ See `docs/toolchain.md`.
 
 These are documented only to bound v0. They MUST NOT introduce design hooks, placeholder interfaces, or unused abstractions in v0.
 
-Terrain elevation and rounded spline centrelines are now implemented as v1 gates (G1, G2). Kerbs and props remain deferred **for v0** and are required for production promotion in v1. See `docs/v1-roadmap.md`.
+Terrain elevation and rounded spline centrelines are now implemented as v1 gates (G1, G2). Multiple loops, shared sections, and multi-way junctions are implemented in `project@3`. Kerbs and props remain deferred **for v0** and are required for production promotion in v1. See `docs/v1-roadmap.md`.
 
-- **Multiple loops and shared sections**: more than one closed centreline, route legs, and section sharing.
-- **Multiple branches per junction**: N-way junctions and branch chains.
+- **Routes, laps, and sectors**: race routes over venue sections, route-based length, sectors, checkpoints, and start/finish logic.
 - **Pit lanes and pit boxes**: pit entry/exit paths, boxes, and metadata.
 - **Elevation and terrain relief**: heightfields, slopes, and cut/fill.
 - **Spline-resampled centrelines**: rounded corners and non-polyline centreline sampling.

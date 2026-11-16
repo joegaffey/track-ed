@@ -29,6 +29,7 @@ import { mergeLooseBranchEnds } from "./branch-merge";
 import { convertProjectToV3 } from "./convert-project";
 import {
   addJunctionMember,
+  addLooseSectionAtPoint,
   addSectionAtPoint,
   closeSectionLoop,
   isLooseSectionEnd,
@@ -86,12 +87,17 @@ app.innerHTML = `
     <aside class="sidebar">
       <section class="panel status-panel" id="status-panel"></section>
       <section class="panel">
+        <h2>Sections</h2>
+        <div class="section-list" id="section-list"></div>
+      </section>
+      <section class="panel">
         <h2>Authoring</h2>
         <div class="edit-actions">
           <button class="edit-button" id="undo-button" type="button">Undo</button>
           <button class="edit-button" id="redo-button" type="button">Redo</button>
           <button class="edit-button" id="delete-button" type="button">Delete point</button>
-          <button class="edit-button" id="branch-button" type="button">Add branch</button>
+          <button class="edit-button" id="add-section-button" type="button">Add section</button>
+          <button class="edit-button" id="add-junction-button" type="button">Add junction</button>
           <button class="edit-button" id="split-loop-button" type="button">Split loop</button>
         </div>
         <div class="edit-field" id="attach-field" hidden>
@@ -101,9 +107,10 @@ app.innerHTML = `
         <div class="junction-list" id="junction-list"></div>
         <p class="edit-hint">
           Drag control points. Double-click a centreline to insert a point. Delete removes the
-          selected point. Select any section control point, then Add section to create a joined
-          spur. Drag a loose end onto another section point to join; drag onto another loose end
-          to merge. Split section opens a closed loop or divides an open section with a gap.
+          selected point. Select any control point, then Add section for an independent dead-ended
+          section, or Add junction for a spur joined at that point. Drag a loose end onto another
+          section point to join; drag onto another loose end to merge. Split section opens a
+          closed loop or divides an open section with a gap.
         </p>
         <div class="edit-status" id="edit-status"></div>
       </section>
@@ -201,7 +208,10 @@ const viewport = document.querySelector<HTMLDivElement>("#viewport")!;
 const undoButton = document.querySelector<HTMLButtonElement>("#undo-button")!;
 const redoButton = document.querySelector<HTMLButtonElement>("#redo-button")!;
 const deleteButton = document.querySelector<HTMLButtonElement>("#delete-button")!;
-const branchButton = document.querySelector<HTMLButtonElement>("#branch-button")!;
+const addSectionButton =
+  document.querySelector<HTMLButtonElement>("#add-section-button")!;
+const addJunctionButton =
+  document.querySelector<HTMLButtonElement>("#add-junction-button")!;
 const splitLoopButton =
   document.querySelector<HTMLButtonElement>("#split-loop-button")!;
 const saveButton = document.querySelector<HTMLButtonElement>("#save-button")!;
@@ -212,6 +222,7 @@ const openFile = document.querySelector<HTMLInputElement>("#open-file")!;
 const attachField = document.querySelector<HTMLDivElement>("#attach-field")!;
 const attachFraction = document.querySelector<HTMLInputElement>("#attach-fraction")!;
 const attachValue = document.querySelector<HTMLSpanElement>("#attach-value")!;
+const sectionList = document.querySelector<HTMLDivElement>("#section-list")!;
 const junctionList = document.querySelector<HTMLDivElement>("#junction-list")!;
 const editStatus = document.querySelector<HTMLDivElement>("#edit-status")!;
 const spawnCenterline = document.querySelector<HTMLSelectElement>("#spawn-centerline")!;
@@ -370,11 +381,14 @@ function updateAuthoringUI(): void {
   redoButton.disabled = redoStack.length === 0;
   deleteButton.disabled = selectedPoint === null;
   const sectionVenue = project?.schema === "track-ed/project@3";
-  branchButton.textContent = sectionVenue ? "Add section" : "Add junction";
-  branchButton.disabled = false;
-  branchButton.title = sectionVenue
+  addSectionButton.disabled = !sectionVenue || selectedPoint === null;
+  addSectionButton.title = sectionVenue
+    ? "Create an independent dead-ended section near the selected control point."
+    : "Independent sections require track-ed/project@3.";
+  addJunctionButton.disabled = project === null || selectedPoint === null;
+  addJunctionButton.title = sectionVenue
     ? "Create a dead-ended section joined at the selected control point."
-    : "";
+    : "Create a junction and spur at the selected main-loop control point.";
   const legacyBranch = project
     ? branchesOf(project).find(
         (candidate) => candidate.attach && "to" in candidate.attach,
@@ -416,7 +430,10 @@ function updateAuthoringUI(): void {
   if (project) {
     updateSpawnUI(project);
     updateTerrainPointsUI(project);
+    updateSectionList(project);
     updateJunctionList(project);
+  } else {
+    sectionList.innerHTML = "";
   }
 }
 
@@ -997,6 +1014,63 @@ function deleteSelectedPoint(): void {
   updateAuthoringUI();
 }
 
+function updateSectionList(source: Project): void {
+  sectionList.innerHTML = "";
+  for (let sectionIndex = 0; sectionIndex < source.centerlines.length; sectionIndex += 1) {
+    const section = source.centerlines[sectionIndex]!;
+    const row = document.createElement("div");
+    const rowSelected = selectedPoint?.centerlineIndex === sectionIndex;
+    row.className = rowSelected ? "section-row selected" : "section-row";
+
+    const label = document.createElement("div");
+    label.className = "section-label";
+    const title = document.createElement("strong");
+    title.textContent = section.id;
+    const detail = document.createElement("span");
+    const junctionIds = new Set<string>();
+    for (const junction of source.junctions) {
+      if (
+        junction.centerline === section.id ||
+        (junction.members ?? []).some((member) => member.section === section.id)
+      ) {
+        junctionIds.add(junction.id);
+      }
+    }
+    if (section.attach && "junction" in section.attach) {
+      junctionIds.add(section.attach.junction);
+    }
+    if (section.endAttach && "junction" in section.endAttach) {
+      junctionIds.add(section.endAttach.junction);
+    }
+    const junctionCount = junctionIds.size;
+    const lastPointIndex = section.points.length - 1;
+    const looseEnds = section.closed
+      ? 0
+      : [0, lastPointIndex].filter((pointIndex) => {
+          if (pointIndex === 0 && section.attach) {
+            return false;
+          }
+          if (pointIndex === lastPointIndex && section.endAttach) {
+            return false;
+          }
+          return isLooseSectionEnd(source, section.id, pointIndex);
+        }).length;
+    const parts = [
+      section.closed ? "closed" : "open",
+      `${section.points.length} pts`,
+      `${junctionCount} junction${junctionCount === 1 ? "" : "s"}`,
+    ];
+    if (!section.closed) {
+      parts.push(`${looseEnds} loose end${looseEnds === 1 ? "" : "s"}`);
+    }
+    detail.textContent = parts.join(" · ");
+    label.append(title, detail);
+
+    row.append(label);
+    sectionList.appendChild(row);
+  }
+}
+
 function updateJunctionList(source: Project): void {
   junctionList.innerHTML = "";
   if (source.junctions.length === 0) {
@@ -1052,19 +1126,76 @@ function addSectionJunctionAtSelected(): void {
     return;
   }
   const before = cloneProject(project);
-  const result = addSectionAtPoint(project, section.id, selectedPoint.pointIndex);
-  if (!result.ok) {
-    setEditStatus(result.message, "error");
-    return;
+  let added = false;
+  let failure = "";
+  for (const flip of [false, true]) {
+    const result = addSectionAtPoint(
+      before,
+      section.id,
+      selectedPoint.pointIndex,
+      flip,
+    );
+    if (!result.ok) {
+      failure = result.message;
+      continue;
+    }
+    if (renderProject(result.project, { frame: false }) && currentReport?.ok) {
+      added = true;
+      break;
+    }
   }
-  if (!renderProject(result.project, { frame: false })) {
+  if (!added) {
     project = before;
     renderProject(project, { frame: false });
-    setEditStatus("The new section would be invalid.", "error");
+    setEditStatus(failure || "The new section would be invalid.", "error");
     return;
   }
   pushUndo(before);
   setEditStatus("Added a section and junction at the selected point.", "ok");
+  updateAuthoringUI();
+}
+
+function addLooseSectionAtSelected(): void {
+  if (!project || !selectedPoint) {
+    setEditStatus("Select a section control point first.", "error");
+    return;
+  }
+  const section = project.centerlines[selectedPoint.centerlineIndex];
+  if (!section) {
+    return;
+  }
+  const before = cloneProject(project);
+  const previousSelection = selectedPoint;
+  let added = false;
+  let failure = "";
+  for (const flip of [false, true]) {
+    const result = addLooseSectionAtPoint(
+      before,
+      section.id,
+      selectedPoint.pointIndex,
+      flip,
+    );
+    if (!result.ok) {
+      failure = result.message;
+      continue;
+    }
+    const newSectionIndex = result.project.centerlines.length - 1;
+    selectedPoint = { centerlineIndex: newSectionIndex, pointIndex: 0 };
+    if (renderProject(result.project, { frame: false }) && currentReport?.ok) {
+      added = true;
+      break;
+    }
+    selectedPoint = previousSelection;
+  }
+  if (!added) {
+    project = before;
+    selectedPoint = previousSelection;
+    renderProject(project, { frame: false });
+    setEditStatus(failure || "The new section would be invalid.", "error");
+    return;
+  }
+  pushUndo(before);
+  setEditStatus("Added an independent section.", "ok");
   updateAuthoringUI();
 }
 
@@ -1684,6 +1815,23 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         let resolved = hit;
         const hitCenterline = project.centerlines[hit.centerlineIndex];
         const hitAttach = hitCenterline?.attach;
+        const resolveJunctionAnchor = (junctionId: string): void => {
+          const junction = project?.junctions.find(
+            (candidate) => candidate.id === junctionId,
+          );
+          if (!junction) {
+            return;
+          }
+          const hostIndex = project!.centerlines.findIndex(
+            (candidate) => candidate.id === junction.centerline,
+          );
+          const host = hostIndex >= 0 ? project!.centerlines[hostIndex] : undefined;
+          const pointIndex = host ? host.pointIds.indexOf(junction.point) : -1;
+          if (pointIndex >= 0) {
+            resolved = { centerlineIndex: hostIndex, pointIndex };
+          }
+        };
+
         if (
           hitCenterline &&
           !hitCenterline.closed &&
@@ -1691,18 +1839,17 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
           hitAttach &&
           "junction" in hitAttach
         ) {
-          const junction = project.junctions.find(
-            (candidate) => candidate.id === hitAttach.junction,
+          resolveJunctionAnchor(hitAttach.junction);
+        } else if (hitCenterline && project.schema === "track-ed/project@3") {
+          const hitPointId = hitCenterline.pointIds[hit.pointIndex];
+          const junction = project.junctions.find((candidate) =>
+            (candidate.members ?? []).some(
+              (member) =>
+                member.section === hitCenterline.id && member.point === hitPointId,
+            ),
           );
           if (junction) {
-            const hostIndex = project.centerlines.findIndex(
-              (candidate) => candidate.id === junction.centerline,
-            );
-            const host = hostIndex >= 0 ? project.centerlines[hostIndex] : undefined;
-            const pointIndex = host ? host.pointIds.indexOf(junction.point) : -1;
-            if (pointIndex >= 0) {
-              resolved = { centerlineIndex: hostIndex, pointIndex };
-            }
+            resolveJunctionAnchor(junction.id);
           }
         }
 
@@ -2081,6 +2228,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
 deleteButton.addEventListener("click", deleteSelectedPoint);
+addSectionButton.addEventListener("click", addLooseSectionAtSelected);
 splitLoopButton.addEventListener("click", splitLoopAtSelection);
 terrainMode.addEventListener("change", () => {
   if (!project) {
@@ -2127,7 +2275,7 @@ terrainPointHeight.addEventListener("change", () => {
   }
   updateAuthoringUI();
 });
-branchButton.addEventListener("click", addJunction);
+addJunctionButton.addEventListener("click", addJunction);
 frameButton.addEventListener("click", () => {
   view?.frame();
 });

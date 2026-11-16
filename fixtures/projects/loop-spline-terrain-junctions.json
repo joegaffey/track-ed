@@ -55,7 +55,7 @@
   },
   "centerlines": [
     {
-      "id": "main",
+      "id": "section-1",
       "closed": true,
       "points": [
         {
@@ -108,7 +108,7 @@
     }
   ],
   "spawn": {
-    "centerline": "main",
+    "centerline": "section-1",
     "fraction": 0,
     "lateral": 0
   },
