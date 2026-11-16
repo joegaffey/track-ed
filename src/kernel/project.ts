@@ -58,6 +58,21 @@ export interface ProjectSpline {
   samplesPerSegment: number;
 }
 
+export type ProjectKerbSide = "left" | "right";
+
+export interface ProjectKerbProfile {
+  flatHeight?: number;
+  cornerHeight?: number;
+}
+
+export interface ProjectKerbSpan {
+  side: ProjectKerbSide;
+  start: number;
+  length: number;
+  flatHeight?: number;
+  cornerHeight?: number;
+}
+
 export interface ProjectCenterline {
   id: string;
   closed: boolean;
@@ -66,6 +81,7 @@ export interface ProjectCenterline {
   attach?: ProjectAttach;
   endAttach?: ProjectAttach;
   spline?: ProjectSpline;
+  kerbs?: ProjectKerbSpan[];
 }
 
 export interface ProjectSpawn {
@@ -87,6 +103,7 @@ export interface Project {
   generator: string;
   road: ProjectRoad;
   terrain: ProjectTerrain;
+  kerbs?: ProjectKerbProfile;
   centerlines: ProjectCenterline[];
   junctions: ProjectJunction[];
   spawn: ProjectSpawn;
@@ -175,6 +192,19 @@ function readPositiveNumber(
   const number = readNumber(value, path, issues);
   if (number !== null && number <= 0) {
     issues.push({ path, message: "must be greater than zero" });
+    return null;
+  }
+  return number;
+}
+
+function readNonNegativeNumber(
+  value: unknown,
+  path: string,
+  issues: ProjectIssue[],
+): number | null {
+  const number = readNumber(value, path, issues);
+  if (number !== null && number < 0) {
+    issues.push({ path, message: "must be greater than or equal to zero" });
     return null;
   }
   return number;
@@ -559,6 +589,152 @@ function parseSpline(
   return type === "catmull-rom" ? { type, samplesPerSegment } : null;
 }
 
+function parseKerbProfile(
+  value: unknown,
+  path: string,
+  issues: ProjectIssue[],
+): ProjectKerbProfile | null {
+  const object = expectObject(value, path, issues);
+  if (!object) {
+    return null;
+  }
+  rejectUnknownKeys(object, ["flatHeight", "cornerHeight"], path, issues);
+  const flatHeight =
+    object.flatHeight === undefined
+      ? undefined
+      : readNonNegativeNumber(object.flatHeight, `${path}.flatHeight`, issues);
+  const cornerHeight =
+    object.cornerHeight === undefined
+      ? undefined
+      : readPositiveNumber(object.cornerHeight, `${path}.cornerHeight`, issues);
+  if (
+    flatHeight !== undefined &&
+    flatHeight !== null &&
+    cornerHeight !== undefined &&
+    cornerHeight !== null &&
+    cornerHeight <= flatHeight
+  ) {
+    issues.push({
+      path: `${path}.cornerHeight`,
+      message: "must be greater than flatHeight",
+    });
+  }
+  return {
+    ...(flatHeight !== undefined && flatHeight !== null ? { flatHeight } : {}),
+    ...(cornerHeight !== undefined && cornerHeight !== null ? { cornerHeight } : {}),
+  };
+}
+
+function parseKerbSpan(
+  value: unknown,
+  path: string,
+  issues: ProjectIssue[],
+): ProjectKerbSpan | null {
+  const object = expectObject(value, path, issues);
+  if (!object) {
+    return null;
+  }
+  rejectUnknownKeys(
+    object,
+    ["side", "start", "length", "flatHeight", "cornerHeight"],
+    path,
+    issues,
+  );
+  const side = readString(object.side, `${path}.side`, issues);
+  if (side !== null && side !== "left" && side !== "right") {
+    issues.push({ path: `${path}.side`, message: 'must be "left" or "right"' });
+  }
+  const start = readNumber(object.start, `${path}.start`, issues);
+  const length = readPositiveNumber(object.length, `${path}.length`, issues);
+  if (start !== null && (start < 0 || start >= 1)) {
+    issues.push({ path: `${path}.start`, message: "must be in [0, 1)" });
+  }
+  if (length !== null && length > 1) {
+    issues.push({ path: `${path}.length`, message: "must be no greater than 1" });
+  }
+  const flatHeight =
+    object.flatHeight === undefined
+      ? undefined
+      : readNonNegativeNumber(object.flatHeight, `${path}.flatHeight`, issues);
+  const cornerHeight =
+    object.cornerHeight === undefined
+      ? undefined
+      : readPositiveNumber(object.cornerHeight, `${path}.cornerHeight`, issues);
+  return side === "left" || side === "right"
+    ? {
+        side,
+        start: start ?? 0,
+        length: length ?? 0,
+        ...(flatHeight !== undefined && flatHeight !== null ? { flatHeight } : {}),
+        ...(cornerHeight !== undefined && cornerHeight !== null ? { cornerHeight } : {}),
+      }
+    : null;
+}
+
+function kerbSpanIntervals(
+  start: number,
+  length: number,
+  closed: boolean,
+): Array<[number, number]> {
+  const end = start + length;
+  if (closed && end > 1) {
+    return [
+      [start, 1],
+      [0, end - 1],
+    ];
+  }
+  return [[start, end]];
+}
+
+function parseKerbSpans(
+  value: unknown,
+  path: string,
+  issues: ProjectIssue[],
+  closed: boolean,
+): ProjectKerbSpan[] | null {
+  if (!Array.isArray(value)) {
+    issues.push({ path, message: "must be an array" });
+    return null;
+  }
+  const spans: ProjectKerbSpan[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const span = parseKerbSpan(value[index], `${path}[${index}]`, issues);
+    if (!span) {
+      return null;
+    }
+    if (!closed && span.start + span.length > 1 + 1e-9) {
+      issues.push({
+        path: `${path}[${index}].length`,
+        message: "must not extend past the end of an open section",
+      });
+    }
+    if (closed && span.length >= 1 - 1e-9) {
+      issues.push({
+        path: `${path}[${index}].length`,
+        message:
+          "a closed-section kerb span must be shorter than the full loop; use two spans that meet at a seam",
+      });
+    }
+    spans.push(span);
+  }
+  for (const side of ["left", "right"] as const) {
+    const intervals = spans
+      .filter((span) => span.side === side)
+      .flatMap((span) => kerbSpanIntervals(span.start, span.length, closed))
+      .sort((a, b) => a[0] - b[0]);
+    for (let index = 1; index < intervals.length; index += 1) {
+      if (intervals[index]![0] < intervals[index - 1]![1] - 1e-9) {
+        issues.push({
+          path,
+          message: `${side} kerb spans must not overlap`,
+        });
+        return null;
+      }
+    }
+  }
+  return spans;
+}
+
 function parseCenterline(
   value: unknown,
   path: string,
@@ -573,7 +749,7 @@ function parseCenterline(
   rejectUnknownKeys(
     object,
     isV3
-      ? ["id", "closed", "points", "spline"]
+      ? ["id", "closed", "points", "spline", "kerbs"]
       : ["id", "closed", "points", "attach", "endAttach", "spline"],
     path,
     issues,
@@ -594,6 +770,20 @@ function parseCenterline(
   let spline: ProjectSpline | null = null;
   if (object.spline !== undefined) {
     spline = parseSpline(object.spline, `${path}.spline`, issues);
+  }
+
+  let kerbs: ProjectKerbSpan[] | undefined;
+  if (isV3 && object.kerbs !== undefined) {
+    const parsedKerbs = parseKerbSpans(
+      object.kerbs,
+      `${path}.kerbs`,
+      issues,
+      closed === true,
+    );
+    if (parsedKerbs === null) {
+      return null;
+    }
+    kerbs = parsedKerbs;
   }
 
   let attach: ProjectAttach | null = null;
@@ -654,6 +844,7 @@ function parseCenterline(
     ...(attach ? { attach } : {}),
     ...(endAttach ? { endAttach } : {}),
     ...(spline ? { spline } : {}),
+    ...(kerbs && kerbs.length > 0 ? { kerbs } : {}),
   };
 }
 
@@ -1013,6 +1204,7 @@ export function parseProject(input: unknown): ProjectParseResult {
       "generator",
       "road",
       "terrain",
+      "kerbs",
       "centerlines",
       "sections",
       "junctions",
@@ -1046,6 +1238,21 @@ export function parseProject(input: unknown): ProjectParseResult {
   const road = parseRoad(object.road, "$.road", issues);
   const terrain = parseTerrain(object.terrain, "$.terrain", issues);
   const spawn = parseSpawn(object.spawn, "$.spawn", issues);
+  let kerbs: ProjectKerbProfile | undefined;
+  if (object.kerbs !== undefined) {
+    if (!isV3) {
+      issues.push({
+        path: "$.kerbs",
+        message: "global kerb profiles are only supported in track-ed/project@3",
+      });
+    } else {
+      const parsedKerbs = parseKerbProfile(object.kerbs, "$.kerbs", issues);
+      if (parsedKerbs === null) {
+        return { project: null, issues, warnings };
+      }
+      kerbs = parsedKerbs;
+    }
+  }
 
   if (isV3 && object.centerlines !== undefined) {
     issues.push({
@@ -1149,6 +1356,7 @@ export function parseProject(input: unknown): ProjectParseResult {
     generator,
     road,
     terrain,
+    ...(kerbs ? { kerbs } : {}),
     centerlines,
     junctions,
     spawn,

@@ -9,6 +9,8 @@ import {
 } from "../kernel/math2";
 
 export const SURFACE_COLORS: Record<string, number> = {
+  kerb_red: 0xb32424,
+  kerb_white: 0xededed,
   asphalt: 0x4b5563,
   dirt: 0x8b5e3c,
   grass: 0x2f6b3a,
@@ -39,6 +41,46 @@ export interface CentrelineOverlayData {
   lineHeights?: readonly number[];
 }
 
+export interface KerbRailOverlayData {
+  sectionId: string;
+  side: "left" | "right";
+  points: Vec3[];
+}
+
+export interface KerbSpanOverlayData {
+  sectionId: string;
+  spanIndex: number;
+  side: "left" | "right";
+  selected: boolean;
+  pieces: Vec3[][];
+  entry: Vec3;
+  exit: Vec3;
+}
+
+export interface KerbPreviewOverlayData {
+  pieces: Vec3[][];
+  entry: Vec3;
+  exit: Vec3;
+}
+
+export interface KerbOverlayData {
+  rails: KerbRailOverlayData[];
+  spans: KerbSpanOverlayData[];
+  preview?: KerbPreviewOverlayData | null;
+}
+
+export interface KerbRailPick {
+  sectionId: string;
+  side: "left" | "right";
+  fraction: number;
+}
+
+export interface KerbHandlePick {
+  sectionId: string;
+  spanIndex: number;
+  handle: "entry" | "exit";
+}
+
 export interface ControlPointPick {
   centerlineIndex: number;
   pointIndex: number;
@@ -56,10 +98,13 @@ export interface TrackView {
     topology: TopologyReport,
     centerlines: readonly CentrelineOverlayData[],
     terrainPoints: readonly TerrainPointOverlayData[],
+    kerbTopology?: TopologyReport,
+    kerbs?: KerbOverlayData,
   ): void;
   updateOverlays(
     centerlines: readonly CentrelineOverlayData[],
     terrainPoints: readonly TerrainPointOverlayData[],
+    kerbs?: KerbOverlayData,
   ): void;
   frame(): void;
   setWireframeVisible(visible: boolean): void;
@@ -75,6 +120,8 @@ export interface TrackView {
   pick(x: number, y: number): PickResult | null;
   pickControlPoint(x: number, y: number): ControlPointPick | null;
   pickCenterlineSegment(x: number, y: number): CenterlineSegmentPick | null;
+  pickKerbRail(x: number, y: number): KerbRailPick | null;
+  pickKerbHandle(x: number, y: number): KerbHandlePick | null;
   pickTerrainPoint(x: number, y: number): number | null;
   pickSpawn(x: number, y: number): boolean;
   pickGround(x: number, y: number): Vec2 | null;
@@ -164,6 +211,8 @@ export function createTrackView(
   initialTopology: TopologyReport,
   initialCenterlines: readonly CentrelineOverlayData[],
   initialTerrainPoints: readonly TerrainPointOverlayData[],
+  initialKerbTopology?: TopologyReport,
+  initialKerbs: KerbOverlayData = { rails: [], spans: [] },
 ): TrackView {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -257,9 +306,12 @@ export function createTrackView(
 
   let track = initialTrack;
   let topology = initialTopology;
+  let kerbTopology = initialKerbTopology;
+  let kerbs = initialKerbs;
   let centerlines = initialCenterlines;
   let terrainPoints = initialTerrainPoints;
   let surfaceMesh: THREE.Mesh | null = null;
+  let kerbMesh: THREE.Mesh | null = null;
   let selectedPoint: ControlPointPick | null = null;
   let selectedTerrainPoint: number | null = null;
   let joinTarget: ControlPointPick | null = null;
@@ -269,6 +321,14 @@ export function createTrackView(
   }> = [];
   let centerlineOverlayGroup: THREE.Group | null = null;
   let terrainPointOverlayGroup: THREE.Group | null = null;
+  let kerbOverlayGroup: THREE.Group | null = null;
+  let kerbRailPickables: KerbRailOverlayData[] = [];
+  let kerbHandlePickables: Array<{
+    position: Vec3;
+    sectionId: string;
+    spanIndex: number;
+    handle: "entry" | "exit";
+  }> = [];
   let spawnGroup: THREE.Group | null = null;
   let activeSpawn: Spawn | undefined = initialTrack.spawns[0];
 
@@ -426,6 +486,143 @@ export function createTrackView(
     terrainPointOverlayGroup.add(pointMarkers);
   };
 
+  const buildKerbOverlays = (): void => {
+    if (!kerbOverlayGroup) {
+      return;
+    }
+    disposeObject(kerbOverlayGroup);
+    kerbOverlayGroup.clear();
+    kerbRailPickables = [];
+    kerbHandlePickables = [];
+
+    for (const rail of kerbs.rails) {
+      if (rail.points.length < 2) {
+        continue;
+      }
+      const data = new Float32Array(rail.points.length * 3);
+      for (let index = 0; index < rail.points.length; index += 1) {
+        const point = rail.points[index]!;
+        data[index * 3] = point[0];
+        data[index * 3 + 1] = point[1];
+        data[index * 3 + 2] = point[2];
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(data, 3));
+      const material = new THREE.LineDashedMaterial({
+        color: 0xf472b6,
+        dashSize: 1.2,
+        gapSize: 1.2,
+        transparent: true,
+        opacity: 0.7,
+        depthTest: false,
+        depthWrite: false,
+      });
+      const line = new THREE.Line(geometry, material);
+      line.computeLineDistances();
+      line.name = `kerb-rail-${rail.sectionId}-${rail.side}`;
+      line.renderOrder = 5;
+      kerbOverlayGroup.add(line);
+      kerbRailPickables.push(rail);
+    }
+
+    for (const span of kerbs.spans) {
+      const color = span.selected ? 0x67e8f9 : 0xf472b6;
+      for (const piece of span.pieces) {
+        if (piece.length < 2) {
+          continue;
+        }
+        const data = new Float32Array(piece.length * 3);
+        for (let index = 0; index < piece.length; index += 1) {
+          const point = piece[index]!;
+          data[index * 3] = point[0];
+          data[index * 3 + 1] = point[1];
+          data[index * 3 + 2] = point[2];
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.BufferAttribute(data, 3));
+        const line = new THREE.Line(
+          geometry,
+          new THREE.LineBasicMaterial({
+            color,
+            transparent: true,
+            opacity: span.selected ? 1 : 0.85,
+            depthTest: false,
+            depthWrite: false,
+          }),
+        );
+        line.name = `kerb-span-${span.sectionId}-${span.spanIndex}`;
+        line.renderOrder = 6;
+        kerbOverlayGroup.add(line);
+      }
+      if (span.selected) {
+        const handleData = new Float32Array(6);
+        handleData.set(span.entry, 0);
+        handleData.set(span.exit, 3);
+        const handleGeometry = new THREE.BufferGeometry();
+        handleGeometry.setAttribute(
+          "position",
+          new THREE.BufferAttribute(handleData, 3),
+        );
+        const handles = new THREE.Points(
+          handleGeometry,
+          new THREE.PointsMaterial({
+            color: 0xffffff,
+            size: 12,
+            sizeAttenuation: false,
+            depthTest: false,
+          }),
+        );
+        handles.name = `kerb-handles-${span.sectionId}-${span.spanIndex}`;
+        handles.renderOrder = 8;
+        kerbOverlayGroup.add(handles);
+        kerbHandlePickables.push(
+          {
+            position: span.entry,
+            sectionId: span.sectionId,
+            spanIndex: span.spanIndex,
+            handle: "entry",
+          },
+          {
+            position: span.exit,
+            sectionId: span.sectionId,
+            spanIndex: span.spanIndex,
+            handle: "exit",
+          },
+        );
+      }
+    }
+
+    if (kerbs.preview) {
+      for (const piece of kerbs.preview.pieces) {
+        if (piece.length < 2) {
+          continue;
+        }
+        const data = new Float32Array(piece.length * 3);
+        for (let index = 0; index < piece.length; index += 1) {
+          const point = piece[index]!;
+          data[index * 3] = point[0];
+          data[index * 3 + 1] = point[1];
+          data[index * 3 + 2] = point[2];
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.BufferAttribute(data, 3));
+        const line = new THREE.Line(
+          geometry,
+          new THREE.LineBasicMaterial({
+            color: 0xfde047,
+            transparent: true,
+            opacity: 1,
+            depthTest: false,
+            depthWrite: false,
+          }),
+        );
+        line.name = "kerb-preview";
+        line.renderOrder = 7;
+        kerbOverlayGroup.add(line);
+      }
+    }
+  };
+
   const buildSpawnOverlay = (spawn: Spawn | undefined): void => {
     if (spawnGroup) {
       content.remove(spawnGroup);
@@ -467,6 +664,7 @@ export function createTrackView(
     disposeObject(content);
     content.clear();
     surfaceMesh = null;
+    kerbMesh = null;
     linePickables = [];
     spawnGroup = null;
 
@@ -477,6 +675,9 @@ export function createTrackView(
     terrainPointOverlayGroup = new THREE.Group();
     terrainPointOverlayGroup.name = "terrain-point-overlays";
     content.add(terrainPointOverlayGroup);
+    kerbOverlayGroup = new THREE.Group();
+    kerbOverlayGroup.name = "kerb-overlays";
+    content.add(kerbOverlayGroup);
 
     const surfaces = [...track.surfaces].sort((a, b) => a.id - b.id);
     const materialIndexById = new Map(surfaces.map((surface, index) => [surface.id, index]));
@@ -490,49 +691,71 @@ export function createTrackView(
         }),
     );
 
-    const graph = track.surfaceGraph;
-    const geometry = new THREE.BufferGeometry();
-    const positionData = new Float32Array(graph.positions.length * 3);
-    for (let i = 0; i < graph.positions.length; i += 1) {
-      const position = graph.positions[i]!;
-      positionData[i * 3] = position[0];
-      positionData[i * 3 + 1] = position[1];
-      positionData[i * 3 + 2] = position[2];
-    }
-    geometry.setAttribute("position", new THREE.BufferAttribute(positionData, 3));
-    geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(graph.indices), 1));
-    geometry.computeVertexNormals();
-
-    const triangleCount = graph.triangleSurfaces.length;
-    let runStart = 0;
-    while (runStart < triangleCount) {
-      const surfaceId = graph.triangleSurfaces[runStart]!;
-      let runEnd = runStart + 1;
-      while (runEnd < triangleCount && graph.triangleSurfaces[runEnd] === surfaceId) {
-        runEnd += 1;
+    const buildGraphMesh = (
+      graph: NonNullable<typeof track.surfaceGraph>,
+      name: string,
+    ): THREE.Mesh => {
+      const geometry = new THREE.BufferGeometry();
+      const positionData = new Float32Array(graph.positions.length * 3);
+      for (let i = 0; i < graph.positions.length; i += 1) {
+        const position = graph.positions[i]!;
+        positionData[i * 3] = position[0];
+        positionData[i * 3 + 1] = position[1];
+        positionData[i * 3 + 2] = position[2];
       }
-      const materialIndex = materialIndexById.get(surfaceId);
-      if (materialIndex !== undefined) {
-        geometry.addGroup(runStart * 3, (runEnd - runStart) * 3, materialIndex);
+      geometry.setAttribute("position", new THREE.BufferAttribute(positionData, 3));
+      geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(graph.indices), 1));
+      geometry.computeVertexNormals();
+
+      const triangleCount = graph.triangleSurfaces.length;
+      let runStart = 0;
+      while (runStart < triangleCount) {
+        const surfaceId = graph.triangleSurfaces[runStart]!;
+        let runEnd = runStart + 1;
+        while (runEnd < triangleCount && graph.triangleSurfaces[runEnd] === surfaceId) {
+          runEnd += 1;
+        }
+        const materialIndex = materialIndexById.get(surfaceId);
+        if (materialIndex !== undefined) {
+          geometry.addGroup(runStart * 3, (runEnd - runStart) * 3, materialIndex);
+        }
+        runStart = runEnd;
       }
-      runStart = runEnd;
+      geometry.computeBoundingSphere();
+      const mesh = new THREE.Mesh(geometry, materials);
+      mesh.name = name;
+      content.add(mesh);
+      return mesh;
+    };
+
+    surfaceMesh = buildGraphMesh(track.surfaceGraph, "track-surfaces");
+    if (track.kerbGraph) {
+      kerbMesh = buildGraphMesh(track.kerbGraph, "track-kerbs");
     }
-    geometry.computeBoundingSphere();
 
-    const mesh = new THREE.Mesh(geometry, materials);
-    mesh.name = "track-surfaces";
-    surfaceMesh = mesh;
-    content.add(mesh);
-
-    const wireframe = buildEdgeLines(
+    const wireframe = new THREE.Group();
+    wireframe.name = "wireframe";
+    wireframe.visible = wireframeVisible;
+    const groundWireframe = buildEdgeLines(
       topology.edges,
       topology.weldedPositions,
       0x9fb0c8,
       0.35,
       true,
     );
-    wireframe.name = "wireframe";
-    wireframe.visible = wireframeVisible;
+    groundWireframe.name = "ground-wireframe";
+    wireframe.add(groundWireframe);
+    if (kerbTopology) {
+      const kerbWireframe = buildEdgeLines(
+        kerbTopology.edges,
+        kerbTopology.weldedPositions,
+        0x38bdf8,
+        0.7,
+        true,
+      );
+      kerbWireframe.name = "kerb-wireframe";
+      wireframe.add(kerbWireframe);
+    }
     content.add(wireframe);
 
     const interiorBoundary = buildEdgeLines(
@@ -560,34 +783,56 @@ export function createTrackView(
     boundaryGroup.name = "boundary-edges";
     boundaryGroup.visible = boundaryVisible;
     boundaryGroup.add(interiorBoundary, outerBoundary, nonManifold);
+    if (kerbTopology && kerbTopology.nonManifoldEdges.length > 0) {
+      const kerbNonManifold = buildEdgeLines(
+        kerbTopology.nonManifoldEdges,
+        kerbTopology.weldedPositions,
+        0xff3df2,
+        1,
+        false,
+      );
+      kerbNonManifold.name = "kerb-non-manifold";
+      boundaryGroup.add(kerbNonManifold);
+    }
     content.add(boundaryGroup);
 
-    const tJunctionVertices = new Set<number>();
-    for (const tJunction of topology.tJunctions) {
-      tJunctionVertices.add(tJunction.vertex);
-    }
-    const tJunctionData = new Float32Array(tJunctionVertices.size * 3);
-    let tJunctionIndex = 0;
-    for (const vertex of tJunctionVertices) {
-      const position = topology.weldedPositions[vertex]!;
-      tJunctionData[tJunctionIndex * 3] = position[0];
-      tJunctionData[tJunctionIndex * 3 + 1] = position[1] + 0.08;
-      tJunctionData[tJunctionIndex * 3 + 2] = position[2];
-      tJunctionIndex += 1;
-    }
-    const tJunctionGeometry = new THREE.BufferGeometry();
-    tJunctionGeometry.setAttribute("position", new THREE.BufferAttribute(tJunctionData, 3));
-    const tJunctions = new THREE.Points(
-      tJunctionGeometry,
-      new THREE.PointsMaterial({
-        color: 0xffd166,
-        size: 9,
-        sizeAttenuation: false,
-        depthTest: false,
-      }),
-    );
+    const tJunctions = new THREE.Group();
     tJunctions.name = "t-junctions";
     tJunctions.visible = tJunctionsVisible;
+    const addTJunctionPoints = (source: TopologyReport): void => {
+      if (source.tJunctions.length === 0) {
+        return;
+      }
+      const vertices = new Set<number>();
+      for (const tJunction of source.tJunctions) {
+        vertices.add(tJunction.vertex);
+      }
+      const data = new Float32Array(vertices.size * 3);
+      let index = 0;
+      for (const vertex of vertices) {
+        const position = source.weldedPositions[vertex]!;
+        data[index * 3] = position[0];
+        data[index * 3 + 1] = position[1] + 0.08;
+        data[index * 3 + 2] = position[2];
+        index += 1;
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(data, 3));
+      const points = new THREE.Points(
+        geometry,
+        new THREE.PointsMaterial({
+          color: 0xffd166,
+          size: 9,
+          sizeAttenuation: false,
+          depthTest: false,
+        }),
+      );
+      tJunctions.add(points);
+    };
+    addTJunctionPoints(topology);
+    if (kerbTopology) {
+      addTJunctionPoints(kerbTopology);
+    }
     content.add(tJunctions);
 
     buildCenterlineOverlays();
@@ -599,14 +844,22 @@ export function createTrackView(
       opacity: 0.85,
       depthTest: false,
     });
-    const collision = new THREE.Mesh(geometry, collisionMaterial);
+    const collision = new THREE.Group();
     collision.name = "collision-overlay";
-    collision.position.y = 0.03;
-    collision.renderOrder = 2;
     collision.visible = collisionVisible;
+    for (const mesh of [surfaceMesh, kerbMesh]) {
+      if (!mesh) {
+        continue;
+      }
+      const overlay = new THREE.Mesh(mesh.geometry, collisionMaterial);
+      overlay.position.y = 0.03;
+      overlay.renderOrder = 2;
+      collision.add(overlay);
+    }
     content.add(collision);
 
     buildTerrainPointOverlays();
+    buildKerbOverlays();
 
     buildSpawnOverlay(track.spawns[0]);
 
@@ -663,19 +916,23 @@ export function createTrackView(
   frame();
 
   return {
-    update(nextTrack, nextTopology, nextCenterlines, nextTerrainPoints): void {
+    update(nextTrack, nextTopology, nextCenterlines, nextTerrainPoints, nextKerbTopology, nextKerbs): void {
       track = nextTrack;
       topology = nextTopology;
+      kerbTopology = nextKerbTopology;
       centerlines = nextCenterlines;
       terrainPoints = nextTerrainPoints;
+      kerbs = nextKerbs ?? kerbs;
       buildContent();
       requestRender();
     },
-    updateOverlays(nextCenterlines, nextTerrainPoints): void {
+    updateOverlays(nextCenterlines, nextTerrainPoints, nextKerbs): void {
       centerlines = nextCenterlines;
       terrainPoints = nextTerrainPoints;
+      kerbs = nextKerbs ?? kerbs;
       buildCenterlineOverlays();
       buildTerrainPointOverlays();
+      buildKerbOverlays();
       updateSelectionMarker();
       updateTerrainSelectionMarker();
       updateJoinTargetMarker();
@@ -756,23 +1013,29 @@ export function createTrackView(
       requestRender();
     },
     pick(x: number, y: number): PickResult | null {
-      if (!surfaceMesh) {
+      const pickMeshes = [surfaceMesh, kerbMesh].filter(
+        (mesh): mesh is THREE.Mesh => mesh !== null,
+      );
+      if (pickMeshes.length === 0) {
         return null;
       }
       pointer.set(x, y);
       raycaster.setFromCamera(pointer, camera);
-      const hits = raycaster.intersectObject(surfaceMesh, false);
+      const hits = raycaster.intersectObjects(pickMeshes, false);
       const hit = hits[0];
       if (!hit || hit.faceIndex === undefined || hit.faceIndex === null) {
         return null;
       }
+      const graph = hit.object === kerbMesh ? track.kerbGraph : track.surfaceGraph;
+      if (!graph) {
+        return null;
+      }
       const triangle: number = hit.faceIndex;
-      const surfaceId = track.surfaceGraph.triangleSurfaces[triangle];
+      const surfaceId = graph.triangleSurfaces[triangle];
       const surface = track.surfaces.find((candidate) => candidate.id === surfaceId);
       if (surfaceId === undefined || !surface) {
         return null;
       }
-      const graph = track.surfaceGraph;
       const a = graph.positions[graph.indices[triangle * 3]!]!;
       const b = graph.positions[graph.indices[triangle * 3 + 1]!]!;
       const c = graph.positions[graph.indices[triangle * 3 + 2]!]!;
@@ -893,6 +1156,94 @@ export function createTrackView(
       const closestX = baseX + segmentX * t;
       const closestY = baseY + segmentY * t;
       return Math.hypot(closestX, closestY) <= 16;
+    },
+    pickKerbRail(x: number, y: number): KerbRailPick | null {
+      const width = Math.max(renderer.domElement.clientWidth, 1);
+      const height = Math.max(renderer.domElement.clientHeight, 1);
+      const targetX = (x * 0.5 + 0.5) * width;
+      const targetY = (-y * 0.5 + 0.5) * height;
+      const projected = new THREE.Vector3();
+      let best: { sectionId: string; side: "left" | "right"; fraction: number } | null =
+        null;
+      let bestDistance = 14;
+      for (const rail of kerbRailPickables) {
+        if (rail.points.length < 2) {
+          continue;
+        }
+        const points = rail.points.map((point) => {
+          projected.set(point[0], point[1], point[2]).project(camera);
+          return {
+            x: (projected.x * 0.5 + 0.5) * width,
+            y: (-projected.y * 0.5 + 0.5) * height,
+            z: projected.z,
+          };
+        });
+        for (let index = 0; index < points.length - 1; index += 1) {
+          const a = points[index]!;
+          const b = points[index + 1]!;
+          if ((a.z < -1 || a.z > 1) && (b.z < -1 || b.z > 1)) {
+            continue;
+          }
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const lengthSq = dx * dx + dy * dy;
+          const t =
+            lengthSq > 1e-6
+              ? Math.max(
+                  0,
+                  Math.min(
+                    1,
+                    ((targetX - a.x) * dx + (targetY - a.y) * dy) / lengthSq,
+                  ),
+                )
+              : 0;
+          const distance = Math.hypot(
+            targetX - (a.x + dx * t),
+            targetY - (a.y + dy * t),
+          );
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            best = {
+              sectionId: rail.sectionId,
+              side: rail.side,
+              fraction: Math.max(
+                0,
+                Math.min(1, (index + t) / (rail.points.length - 1)),
+              ),
+            };
+          }
+        }
+      }
+      return best;
+    },
+    pickKerbHandle(x: number, y: number): KerbHandlePick | null {
+      const width = Math.max(renderer.domElement.clientWidth, 1);
+      const height = Math.max(renderer.domElement.clientHeight, 1);
+      const targetX = (x * 0.5 + 0.5) * width;
+      const targetY = (-y * 0.5 + 0.5) * height;
+      const projected = new THREE.Vector3();
+      let best: KerbHandlePick | null = null;
+      let bestDistance = 15;
+      for (const handle of kerbHandlePickables) {
+        projected
+          .set(handle.position[0], handle.position[1], handle.position[2])
+          .project(camera);
+        if (projected.z < -1 || projected.z > 1) {
+          continue;
+        }
+        const screenX = (projected.x * 0.5 + 0.5) * width;
+        const screenY = (-projected.y * 0.5 + 0.5) * height;
+        const distance = Math.hypot(screenX - targetX, screenY - targetY);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = {
+            sectionId: handle.sectionId,
+            spanIndex: handle.spanIndex,
+            handle: handle.handle,
+          };
+        }
+      }
+      return best;
     },
     pickCenterlineSegment(x: number, y: number): CenterlineSegmentPick | null {
       const ground = pickGround(x, y);

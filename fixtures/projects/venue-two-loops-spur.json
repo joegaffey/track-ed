@@ -67,6 +67,23 @@
             40
           ]
         }
+      ],
+      "kerbs": [
+        {
+          "side": "left",
+          "start": 0.05,
+          "length": 0.17
+        },
+        {
+          "side": "right",
+          "start": 0.35,
+          "length": 0.15
+        },
+        {
+          "side": "left",
+          "start": 0.6,
+          "length": 0.25
+        }
       ]
     },
     {
@@ -105,6 +122,18 @@
             80
           ]
         }
+      ],
+      "kerbs": [
+        {
+          "side": "left",
+          "start": 0.1,
+          "length": 0.3
+        },
+        {
+          "side": "right",
+          "start": 0.55,
+          "length": 0.35
+        }
       ]
     },
     {
@@ -135,6 +164,18 @@
             245,
             155
           ]
+        }
+      ],
+      "kerbs": [
+        {
+          "side": "left",
+          "start": 0.05,
+          "length": 0.3
+        },
+        {
+          "side": "right",
+          "start": 0.15,
+          "length": 0.6
         }
       ]
     }

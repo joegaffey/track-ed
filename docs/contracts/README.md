@@ -3,7 +3,7 @@
 The v0 pipeline has three layers:
 
 ```text
-track-ed/project@3  ->  BakedTrack v1  ->  lapster-glb-track@1
+track-ed/project@3  ->  BakedTrack v1  ->  lapster-glb-track@2
    venue sections          neutral model        export profile
 ```
 

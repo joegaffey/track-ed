@@ -242,6 +242,82 @@ describe("project@3 section editing", () => {
     expectValid(result.project);
   });
 
+  it("splits authored kerb spans across an open-section split", () => {
+    const project = parseVenue({
+      schema: "track-ed/project@3",
+      name: "Kerb split",
+      generator: "track-ed v1",
+      road: { halfWidth: 5, shoulderHalfWidth: 8 },
+      terrain: { margin: 20, mode: "conform" },
+      spawn: { centerline: "road", fraction: 0.2, lateral: 0 },
+      cameras: [],
+      sections: [
+        {
+          id: "road",
+          closed: false,
+          points: [
+            { id: "p0", position: [0, 0] },
+            { id: "p1", position: [50, 0] },
+            { id: "p2", position: [100, 0] },
+          ],
+          kerbs: [{ side: "left", start: 0.1, length: 0.7 }],
+        },
+      ],
+    });
+    const result = splitOpenSection(project, "road", 1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const left = result.project.centerlines.find((section) => section.id === "road")!;
+    const right = result.project.centerlines.find((section) => section.id !== "road")!;
+    expect(left.kerbs?.length).toBeGreaterThan(0);
+    expect(right.kerbs?.length).toBeGreaterThan(0);
+    expect(left.kerbs?.every((span) => span.side === "left")).toBe(true);
+    expect(right.kerbs?.every((span) => span.side === "left")).toBe(true);
+    expectValid(result.project);
+  });
+
+  it("remaps and flips authored kerbs when merging a reversed section", () => {
+    const project = parseVenue({
+      schema: "track-ed/project@3",
+      name: "Kerb merge",
+      generator: "track-ed v1",
+      road: { halfWidth: 5, shoulderHalfWidth: 8 },
+      terrain: { margin: 20, mode: "conform" },
+      spawn: { centerline: "a", fraction: 0.2, lateral: 0 },
+      cameras: [],
+      sections: [
+        {
+          id: "a",
+          closed: false,
+          points: [
+            { id: "a0", position: [0, 0] },
+            { id: "a1", position: [20, 0] },
+            { id: "a2", position: [40, 0] },
+          ],
+          kerbs: [{ side: "left", start: 0.2, length: 0.3 }],
+        },
+        {
+          id: "b",
+          closed: false,
+          points: [
+            { id: "b0", position: [40, 20] },
+            { id: "b1", position: [40, 10] },
+            { id: "b2", position: [40, 0] },
+          ],
+          kerbs: [{ side: "right", start: 0.2, length: 0.3 }],
+        },
+      ],
+    });
+    const result = mergeLooseSectionEnds(project, "a", 2, "b", 2);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const merged = result.project.centerlines[0]!;
+    expect(merged.kerbs).toBeDefined();
+    expect(merged.kerbs!.some((span) => span.side === "left")).toBe(true);
+    expect(merged.kerbs!.every((span) => span.start >= 0 && span.start + span.length <= 1 + 1e-9)).toBe(true);
+    expectValid(result.project);
+  });
+
   it("splits an open section into two capped sections", () => {
     const project = parseVenue({
       schema: "track-ed/project@3",

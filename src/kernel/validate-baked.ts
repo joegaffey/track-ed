@@ -16,6 +16,7 @@ export interface ValidationReport {
   ok: boolean;
   violations: ValidationViolation[];
   topology: TopologyReport;
+  kerbTopology?: TopologyReport;
 }
 
 function isFiniteVec3(value: unknown): value is Vec3 {
@@ -71,36 +72,45 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
     addError(violations, "BM6", "track.length must be a finite, non-negative number");
   }
 
-  const positions = graph.positions;
-  const indices = graph.indices;
-  const triangleSurfaces = graph.triangleSurfaces;
+  const graphs: Array<{ name: string; graph: typeof graph }> = [
+    { name: "surface", graph },
+  ];
+  if (track.kerbGraph) {
+    graphs.push({ name: "kerb", graph: track.kerbGraph });
+  }
 
-  for (let i = 0; i < positions.length; i += 1) {
-    const position = positions[i];
-    if (!isFiniteVec3(position)) {
-      addError(violations, "BM2", `position ${i} must be a finite vec3`);
-      continue;
+  for (const entry of graphs) {
+    const graphPositions = entry.graph.positions;
+    const graphIndices = entry.graph.indices;
+    for (let i = 0; i < graphPositions.length; i += 1) {
+      const position = graphPositions[i];
+      if (!isFiniteVec3(position)) {
+        addError(violations, "BM2", `${entry.name} position ${i} must be a finite vec3`);
+        continue;
+      }
     }
-  }
-
-  if (indices.length % 3 !== 0) {
-    addError(violations, "BM2", "indices must contain whole triangles");
-  }
-
-  for (let i = 0; i < indices.length; i += 1) {
-    const index = indices[i];
-    if (!Number.isInteger(index) || index === undefined || index < 0 || index >= positions.length) {
-      addError(violations, "BM2", `index ${i} is outside the position range`);
-      break;
+    if (graphIndices.length % 3 !== 0) {
+      addError(violations, "BM2", `${entry.name} indices must contain whole triangles`);
     }
-  }
-
-  if (triangleSurfaces.length !== indices.length / 3) {
-    addError(
-      violations,
-      "BM3",
-      "triangleSurfaces length must equal the number of triangles",
-    );
+    for (let i = 0; i < graphIndices.length; i += 1) {
+      const index = graphIndices[i];
+      if (
+        !Number.isInteger(index) ||
+        index === undefined ||
+        index < 0 ||
+        index >= graphPositions.length
+      ) {
+        addError(violations, "BM2", `${entry.name} index ${i} is outside the position range`);
+        break;
+      }
+    }
+    if (entry.graph.triangleSurfaces.length !== graphIndices.length / 3) {
+      addError(
+        violations,
+        "BM3",
+        `${entry.name} triangleSurfaces length must equal the number of triangles`,
+      );
+    }
   }
 
   const surfaceIds = new Set<number>();
@@ -125,16 +135,18 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
     }
   }
 
-  for (let triangle = 0; triangle < triangleSurfaces.length; triangle += 1) {
-    const surfaceId = triangleSurfaces[triangle];
-    if (surfaceId === undefined || !surfaceIds.has(surfaceId)) {
-      addError(
-        violations,
-        "BM3",
-        `triangle ${triangle} references an undeclared surface`,
-        { triangle },
-      );
-      break;
+  for (const entry of graphs) {
+    for (let triangle = 0; triangle < entry.graph.triangleSurfaces.length; triangle += 1) {
+      const surfaceId = entry.graph.triangleSurfaces[triangle];
+      if (surfaceId === undefined || !surfaceIds.has(surfaceId)) {
+        addError(
+          violations,
+          "BM3",
+          `${entry.name} triangle ${triangle} references an undeclared surface`,
+          { triangle },
+        );
+        break;
+      }
     }
   }
 
@@ -147,25 +159,27 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
   ) {
     addError(violations, "BM5", "bounds must be finite and ordered");
   } else {
-    for (let i = 0; i < positions.length; i += 1) {
-      const position = positions[i];
-      if (!isFiniteVec3(position)) {
-        continue;
-      }
-      if (
-        position[0] < track.bounds.min[0] - WELD_EPSILON ||
-        position[0] > track.bounds.max[0] + WELD_EPSILON ||
-        position[1] < track.bounds.min[1] - WELD_EPSILON ||
-        position[1] > track.bounds.max[1] + WELD_EPSILON ||
-        position[2] < track.bounds.min[2] - WELD_EPSILON ||
-        position[2] > track.bounds.max[2] + WELD_EPSILON
-      ) {
-        addError(
-          violations,
-          "BM5",
-          `bounds do not enclose position ${i}`,
-        );
-        break;
+    for (const entry of graphs) {
+      for (let i = 0; i < entry.graph.positions.length; i += 1) {
+        const position = entry.graph.positions[i];
+        if (!isFiniteVec3(position)) {
+          continue;
+        }
+        if (
+          position[0] < track.bounds.min[0] - WELD_EPSILON ||
+          position[0] > track.bounds.max[0] + WELD_EPSILON ||
+          position[1] < track.bounds.min[1] - WELD_EPSILON ||
+          position[1] > track.bounds.max[1] + WELD_EPSILON ||
+          position[2] < track.bounds.min[2] - WELD_EPSILON ||
+          position[2] > track.bounds.max[2] + WELD_EPSILON
+        ) {
+          addError(
+            violations,
+            "BM5",
+            `bounds do not enclose ${entry.name} position ${i}`,
+          );
+          break;
+        }
       }
     }
   }
@@ -258,7 +272,40 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
     );
   }
 
+  const kerbTopology = track.kerbGraph
+    ? analyzeSurfaceGraph(track.kerbGraph, track.bounds)
+    : undefined;
+  if (kerbTopology) {
+    if (kerbTopology.degenerateTriangles.length > 0) {
+      addError(
+        violations,
+        "K1",
+        `${kerbTopology.degenerateTriangles.length} degenerate kerb triangle(s)`,
+        { triangle: kerbTopology.degenerateTriangles[0]! },
+      );
+    }
+    if (kerbTopology.duplicateTriangles.length > 0) {
+      addError(
+        violations,
+        "K1",
+        `${kerbTopology.duplicateTriangles.length} duplicate kerb triangle pair(s)`,
+        { triangle: kerbTopology.duplicateTriangles[0]![0] },
+      );
+    }
+    if (kerbTopology.tJunctions.length > 0) {
+      addError(
+        violations,
+        "K2",
+        `${kerbTopology.tJunctions.length} kerb T-junction(s) detected`,
+        { edge: [kerbTopology.tJunctions[0]!.edgeA, kerbTopology.tJunctions[0]!.edgeB] },
+      );
+    }
+  }
+
   const coveredSurfaces = new Set(topology.surfaceTriangleCounts.map(([id]) => id));
+  for (const [id] of kerbTopology?.surfaceTriangleCounts ?? []) {
+    coveredSurfaces.add(id);
+  }
   for (const surface of track.surfaces) {
     if (!coveredSurfaces.has(surface.id)) {
       addWarning(violations, "G10", `declared surface "${surface.name}" has no triangles`);
@@ -269,5 +316,6 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
     ok: violations.every((violation) => violation.severity !== "error"),
     violations,
     topology,
+    ...(kerbTopology ? { kerbTopology } : {}),
   };
 }

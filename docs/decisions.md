@@ -12,7 +12,7 @@ Trade-off: another repository, CI, deploy, and contract to maintain. The v0 spik
 
 ## D2 — Lapster is the first consumer, not the definition
 
-The kernel and `BakedTrack` model are consumer-neutral. v0 ships one export profile, `lapster-glb-track@1`.
+The kernel and `BakedTrack` model are consumer-neutral. track-ed ships one export profile, currently `lapster-glb-track@2` (`@1` was the v0 profile).
 
 Future consumers such as Assetto Corsa or rFactor 2 would be additional export profiles. v0 does not add a plugin system, exporter registry, or generic exporter interface.
 
@@ -119,6 +119,24 @@ Rationale: a branch-hosted junction would still be two roads meeting at a node. 
 Rationale: a fraction attachment has no stable target point id. Converting it requires inserting a control point into the host section at the sampled position, which changes the host's authored control points, point ids, and spline shape. Silent migration would make the geometry differ from the source file and would make round-trips lossy without an explicit author decision. Import-only also keeps the `project@2` conversion path small and deterministic.
 
 Limits: `project@1` geometry can be viewed, baked, exported, and edited with its legacy fraction slider, but it cannot use `project@3` section/junction authoring until it is re-authored or explicitly converted in a future migration tool. `project@2` projects continue to convert on load because their junction and `attach`/`endAttach` references already carry stable point ids.
+
+## D16 — Authorable kerbs are a separate solid graph
+
+Kerbs are authored as section-local forward arcs (`side`, `start`, `length`) and baked into a separate `kerbGraph` rather than merged into the welded ground surface graph.
+
+- Spans are clipped against junction asphalt and against previously emitted kerb spans. Any exposed span end is capped.
+- Kerb geometry uses a fixed 0.8 m width and alternating red/white elements. Each contiguous kerb run is divided into equal-length elements, nominally 2 m, so blocks stay the same size even when a run is clipped by a junction.
+- Every element starts flat at `flatHeight` and rises to one raised corner at `cornerHeight`, producing the jagged profile. The next element drops back to flat at a riser. Riser faces point forward along the direction of travel so they are the exterior faces under front-face culling.
+- `flatHeight` and `cornerHeight` are authorable globally and per span. Defaults are 0.06 m and 0.155 m; the effective corner height MUST exceed the effective flat height.
+- Kerb surfaces are consumer-neutral `kerb_red` and `kerb_white` surfaces. The Lapster profile emits `surface_kerb_red` and `surface_kerb_white` nodes.
+- The v1 collision policy is **all kerb faces solid**. The profile omits `mountable`, so Lapster includes tops, sides, and end caps in collision.
+- Section split/merge operations remap, clip, and side-flip kerb spans.
+- A span crossing a closed-section seam is represented directly by `start + length > 1`; there is no wrap flag. The bake samples `[start, 1]` then `[0, end]` as one continuous run.
+- Kerb authoring uses a Kerbs mode with dashed guide rails, drag-to-paint, and endpoint handles. Start/end sliders are removed; flat/corner dimensions remain numeric UI fields.
+
+Rationale: the ground graph's G3–G11 invariants assume an upward-facing, non-overlapping welded surface. Raised kerbs have vertical faces and intentionally occupy space above the shoulder. Keeping them in a separate graph preserves the existing ground invariants while allowing a distinct validation contract (K1–K3).
+
+Trade-off: kerbs are not welded into the ground mesh, so visual seams between kerb bases and shoulders rely on shared height sampling rather than shared vertices. Junction clipping uses the baked asphalt footprint and may leave capped gaps around junction mouths, which is preferable to a kerb crossing live tarmac.
 
 ## Alternatives considered
 

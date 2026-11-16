@@ -1,6 +1,6 @@
 # Contract — `BakedTrack` v1
 
-Status: normative for v0.
+Status: normative for v1. `kerbGraph` is an additive optional graph.
 
 ## Purpose
 
@@ -27,6 +27,7 @@ interface BakedTrack {
   length: number;
   bounds: { min: Vec3; max: Vec3 };
   surfaceGraph: SurfaceGraph;
+  kerbGraph?: SurfaceGraph;
   surfaces: Surface[];
   spawns: Spawn[];
   cameras: Camera[];
@@ -69,7 +70,8 @@ interface Camera {
 - **BM6** `length` MUST be the track length in metres. For `project@3` it is the sum of all section lengths; for legacy single-main-loop projects it is the main-loop arc length. Spline sections are measured on the sampled polyline. Branches and dead ends are included for `project@3`.
 - **BM7** `spawns` MUST contain at least one spawn. Rotations MUST be normalized and face the centreline tangent.
 - **BM8** `cameras` MAY be empty.
-- **BM9** The model MUST satisfy geometry requirements G3–G11 from `SPEC.md` before any profile may export it.
+- **BM9** `surfaceGraph` MUST satisfy geometry requirements G3–G11 from `SPEC.md` before any profile may export it. `kerbGraph`, when present, MUST satisfy K1–K3.
+- **BM9a** `kerbGraph` is separate from `surfaceGraph` and does not change the welded ground graph. It contains raised kerb tops, sides, and end caps. Kerb triangles MAY have non-vertical or vertical normals.
 - **BM10** The model MUST be deterministic: the same project yields the same positions, indices, surface ids, and ordering.
 - **BM11** No timestamps, generated-by strings, or environment-dependent values may appear in the model.
 - **BM12** The model is not persisted.
@@ -91,6 +93,15 @@ The kernel MUST validate, and the inspector MUST expose:
 - every triangle assigned exactly one surface;
 - collision geometry identical to visual geometry;
 - branch ends capped and integrated into the terrain.
+
+Kerb rules:
+
+- **K1** Kerb triangles MUST be non-degenerate and MUST NOT duplicate one another.
+- **K2** After welding, the kerb graph MUST NOT contain T-junctions.
+- **K3** Kerb surfaces MUST use declared `kerb_*` surfaces and MUST be separate from the ground surface graph. Collision policy is declared by the export profile; v1 exports all kerb faces as solid.
+- **K4** Each contiguous kerb run MUST use equal-length elements with a flat leading edge and one raised corner per element. The raised corner MUST be higher than the flat edge. Riser faces MUST point along the direction of travel.
+- Kerb spans MAY terminate at junction mouths. Their exposed ends MUST be capped, and no kerb top may cover junction asphalt.
+- Kerb base heights MUST follow the same ground/terrain height source as the adjacent road and shoulder.
 
 ## Profile obligations
 

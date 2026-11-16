@@ -1,12 +1,12 @@
 # track-ed — Functional Specification v1.0
 
-Status: v1 implementation in progress; M4 conformance passed. Scope: v0 spike plus v1 gates (splines, terrain/TIN, `project@2` junctions, and `project@3` venue sections). Kerbs and props remain.
+Status: v1 implementation in progress; M4 conformance passed. Scope: v0 spike plus v1 gates (splines, terrain/TIN, `project@2` junctions, `project@3` venue sections, and kerbs). Props remain.
 
 ## 1. Purpose
 
 `track-ed` is a standalone browser editor for authoring simple track geometry, inspecting the baked result, and exporting a GLB plus a manifest. The v0 goal is to prove whether a clean-room three.js-based editor and geometry pipeline can produce acceptable closed-loop and junction geometry faster and more inspectably than the current in-engine builder.
 
-The project model is track-ed's own. Lapster is the first consumer, not the definition of the tool. v0 ships one export profile, `lapster-glb-track@1`, which emits `track.glb` + `track.json` satisfying Lapster's `sim-track-glb-v1` importer. The `.sima` pack is produced downstream by Lapster's asset compiler.
+The project model is track-ed's own. Lapster is the first consumer, not the definition of the tool. v0 ships one export profile, `lapster-glb-track@2`, which emits `track.glb` + `track.json` satisfying Lapster's `sim-track-glb-v1` importer. The `.sima` pack is produced downstream by Lapster's asset compiler.
 
 ## 2. Status
 
@@ -23,7 +23,8 @@ The project model is track-ed's own. Lapster is the first consumer, not the defi
 - v1-G2c4 is implemented: road-follow mode now samples a global TIN built from the terrain points, so the road, shoulder, and terrain follow the same surface.
 - `track-ed/project@3` is implemented: multiple closed sections, dead-ended open sections, multi-way junction members, open-section junctions, section/junction authoring, an independent section list, separate Add section and Add junction flows, loose-end merging, loop closing, junction detach, and open/closed section splitting bake without a main loop. The full fixture matrix bakes, validates, exports, and passes Lapster conformance. Routes remain deferred.
 - `track-ed/project@2` is implemented: shared junction nodes with stable point ids support multiple junctions and multi-way branches. Moving a shared junction point moves every connected branch. A loose branch end can be dragged onto a main-loop control point to join it (`endAttach`), and dragging a joined end pulls it free. Dragging one loose branch end onto another merges both branches into a single open centreline.
-- v1-G3 kerbs are next. The v0 performance comparison remains useful baseline input for the v1 decision.
+- v1-G3 kerbs are implemented: authorable section-local spans, junction-clipped red/white kerb geometry, a separate consumer-neutral kerb graph, and solid kerb collision in the Lapster profile.
+- v1-G4 props are next. The v0 performance comparison remains useful baseline input for the v1 decision.
 
 ## 3. Scope
 
@@ -62,7 +63,7 @@ The project model is track-ed's own. Lapster is the first consumer, not the defi
 ```text
 src/kernel/         consumer-neutral geometry
 src/model/          BakedTrack contract
-src/export/lapster/ lapster-glb-track@1 profile
+src/export/lapster/ lapster-glb-track@2 profile
 src/app/            three.js editor and inspector
 ```
 
@@ -114,7 +115,8 @@ The model contains:
 
 - track name and main-loop length;
 - bounds;
-- one surface graph (positions, indices, per-triangle surface ids);
+- one welded ground surface graph (positions, indices, per-triangle surface ids);
+- an optional separate kerb surface graph;
 - surfaces (id, name, friction, roughness);
 - spawns;
 - cameras.
@@ -123,7 +125,7 @@ The model MUST be consumer-agnostic. It MUST NOT contain `.sima`, pack chunks, r
 
 ## 9. Export profile v0
 
-The v0 export profile is `lapster-glb-track@1`. The normative contract is `docs/contracts/lapster-glb-track.md`; the manifest schema is `schemas/lapster-track-manifest.schema.json`.
+The export profile is `lapster-glb-track@2`. The normative contract is `docs/contracts/lapster-glb-track.md`; the manifest schema is `schemas/lapster-track-manifest.schema.json`.
 
 The `track.glb` payload is standard glTF 2.0. The Lapster-specific parts are the `track.json` manifest, the `surface_*` node/material naming convention, surface metadata, spawn/collision rules, and the two-file bundle contract.
 
@@ -153,6 +155,10 @@ All requirements are normative.
 - **G13 — Flat v0; elevation in v1.** v0 fixtures are flat at `y = 0`. v1 terrain and road-follow mode may elevate surfaces; connected road, shoulder, and terrain boundaries MUST share the same height.
 - **G14 — Path validity.** Minimum turn radius SHOULD warn (default 6 m). Main-loop self-intersection MUST be rejected. Branch/host attachment is the only permitted crossing.
 - **G15 — Bounds.** Scene bounds MUST cover the drivable area plus `terrain.margin`. The outer perimeter is the scene-bounds rectangle. Walls and outer-edge fall protection are out of scope.
+- **K1 — Kerb validity.** Kerb triangles MUST be non-degenerate and MUST NOT duplicate one another.
+- **K2 — Kerb topology.** After welding, the kerb graph MUST NOT contain T-junctions.
+- **K3 — Kerb separation and policy.** Kerbs MUST be stored in a separate consumer-neutral graph, use declared `kerb_*` surfaces, follow the adjacent ground height, and MUST NOT cover junction asphalt. Exposed span ends MUST be capped. The export profile declares collision policy; v1 includes all kerb faces as solid.
+- **K4 — Kerb profile and authoring.** Kerb spans are forward section-local arcs (`start + length`); on closed sections an arc may wrap through the seam. Kerb authoring MUST use direct guide-rail painting and endpoint handles rather than start/end sliders. Each contiguous run MUST use equal-length elements. Each element MUST start at the effective flat height and rise to one raised corner at the effective corner height. Flat and corner heights MAY be set globally and overridden per span; the effective corner height MUST be greater than the effective flat height.
 
 Implementation hint, not a requirement: a uniform terrain grid clipped and welded to the road footprint is the easiest way to satisfy G3, G6, and G7. Polygon-with-holes terrain is allowed but harder to keep hole-free.
 
@@ -160,13 +166,13 @@ Implementation hint, not a requirement: a uniform terrain grid clipped and welde
 
 Because inspection is the spike's primary validation surface, the editor MUST provide:
 
-- **I1** Wireframe/edge overlay toggle.
-- **I2** Boundary-edge overlay with counts. Edges with `!= 2` adjacent triangles after welding are highlighted; outer-perimeter edges are shown separately.
-- **I3** T-junction highlight.
+- **I1** Wireframe/edge overlay toggle covering both the ground graph and the separate kerb graph.
+- **I2** Boundary-edge overlay with counts. Ground edges with `!= 2` adjacent triangles after welding are highlighted; outer-perimeter edges are shown separately. Kerb base boundary edges are expected and are not treated as ground-boundary errors; kerb non-manifold edges are shown if present.
+- **I3** T-junction highlight for both the ground graph and the kerb graph.
 - **I4** Degenerate-triangle and duplicate/overlapping-triangle report.
 - **I5** Surface legend. Hover/click a triangle to report material, area, and triangle id.
 - **I6** Collision overlay to compare collision and visual surfaces.
-- **I7** Validation summary: boundary edge count, non-manifold edge count, degenerate count, overlap pairs, T-junction count, surface coverage status.
+- **I7** Validation summary: ground boundary edge count, non-manifold edge count, degenerate count, overlap pairs, T-junction count, surface coverage status, and kerb vertex/triangle/non-manifold/T-junction counts.
 - **I8** Export is blocked while any MUST-level validation fails.
 
 ## 12. Functional flows
@@ -274,7 +280,7 @@ The independent research agent brief is `docs/research-brief.md`. It is free-rei
 - **M4 — Decision.** Conformance run, comparison report, continue or discard. Production promotion is deferred to the v1 gates in `docs/v1-roadmap.md`.
 - **V1-G1 — Splines.** Deterministic rounded-centreline sampling with stable arc-length parameterization.
 - **V1-G2 — Terrain.** Elevation and road/terrain integration with visual/collision consistency.
-- **V1-G3 — Kerbs.** Corner and junction-aware kerb geometry with export mapping.
+- **V1-G3 — Kerbs.** Implemented: authorable section-local spans, corner and junction-aware kerb geometry, separate kerb graph validation, and export mapping.
 - **V1-G4 — Props.** Consumer-neutral prop placement and export mapping.
 - **V1-G5 — Promotion.** Re-conformance, performance, comparison, and production decision.
 
@@ -317,7 +323,7 @@ After promotion, decide explicitly which editor owns track authoring. Do not mai
 
 - track-ed owns `track-ed/project@1` and `BakedTrack` v1.
 - Lapster owns `sim-track-glb-v1`; track-ed pins its copy in `schemas/lapster-track-manifest.schema.json`.
-- The v0 export profile is `lapster-glb-track@1`.
-- v1 terrain, kerbs, and props are expected to require `BakedTrack` v2 and a project schema version bump.
-- Changes to node names, materials, or manifest fields require a `lapster-glb-track@2` profile bump and a conformance run.
+- The current export profile is `lapster-glb-track@2`.
+- v1 terrain and kerbs remained additive on `project@3` and `BakedTrack` v1 (optional `kerbGraph`); props may require a schema bump.
+- Changes to node names, materials, or manifest fields require a further profile version bump and a conformance run.
 - Breaking changes to the project format or baked model require a version bump.

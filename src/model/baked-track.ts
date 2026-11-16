@@ -38,6 +38,7 @@ export interface BakedTrack {
   length: number;
   bounds: Bounds;
   surfaceGraph: SurfaceGraph;
+  kerbGraph?: SurfaceGraph;
   surfaces: Surface[];
   spawns: Spawn[];
   cameras: Camera[];

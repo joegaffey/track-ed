@@ -14,6 +14,7 @@ import type {
   ProjectCenterline,
   ProjectJunction,
   ProjectJunctionMember,
+  ProjectKerbSpan,
 } from "../kernel/project";
 import { fractionAtControlPoint, sampleCenterline } from "../kernel/spline";
 import { validateBakedTrack } from "../kernel/validate-baked";
@@ -27,6 +28,206 @@ export interface SectionEnd {
   sectionIndex: number;
   pointIndex: number;
   pointId: string;
+}
+
+function flipKerbSide(side: ProjectKerbSpan["side"]): ProjectKerbSpan["side"] {
+  return side === "left" ? "right" : "left";
+}
+
+interface KerbInterval {
+  side: ProjectKerbSpan["side"];
+  start: number;
+  end: number;
+  flatHeight?: number;
+  cornerHeight?: number;
+}
+
+function spanIntervals(span: ProjectKerbSpan, closed: boolean): KerbInterval[] {
+  const end = span.start + span.length;
+  const heights = {
+    ...(span.flatHeight !== undefined ? { flatHeight: span.flatHeight } : {}),
+    ...(span.cornerHeight !== undefined ? { cornerHeight: span.cornerHeight } : {}),
+  };
+  if (closed && end > 1) {
+    return [
+      { side: span.side, start: span.start, end: 1, ...heights },
+      { side: span.side, start: 0, end: end - 1, ...heights },
+    ];
+  }
+  return [{ side: span.side, start: span.start, end, ...heights }];
+}
+
+function sameKerbProfile(a: KerbInterval, b: KerbInterval): boolean {
+  return (
+    a.side === b.side &&
+    a.flatHeight === b.flatHeight &&
+    a.cornerHeight === b.cornerHeight
+  );
+}
+
+function mergeKerbSpans(
+  spans: readonly ProjectKerbSpan[],
+  closed = false,
+): ProjectKerbSpan[] {
+  const intervals = spans
+    .flatMap((span) => spanIntervals(span, closed))
+    .filter((interval) => interval.end - interval.start > 1e-6)
+    .sort(
+      (a, b) =>
+        a.side.localeCompare(b.side) ||
+        (a.flatHeight ?? -1) - (b.flatHeight ?? -1) ||
+        (a.cornerHeight ?? -1) - (b.cornerHeight ?? -1) ||
+        a.start - b.start,
+    );
+  const merged: KerbInterval[] = [];
+  for (const interval of intervals) {
+    const previous = merged[merged.length - 1];
+    if (
+      previous &&
+      sameKerbProfile(previous, interval) &&
+      interval.start <= previous.end + 1e-6
+    ) {
+      previous.end = Math.max(previous.end, interval.end);
+    } else {
+      merged.push({ ...interval });
+    }
+  }
+
+  if (closed) {
+    for (let index = 0; index < merged.length; index += 1) {
+      const first = merged[index]!;
+      if (first.start > 1e-6) {
+        continue;
+      }
+      const last = merged.find(
+        (candidate, candidateIndex) =>
+          candidateIndex > index &&
+          candidate.end >= 1 - 1e-6 &&
+          sameKerbProfile(candidate, first),
+      );
+      if (!last || last.start <= first.end + 1e-9) {
+        continue;
+      }
+      merged.splice(merged.indexOf(last), 1);
+      merged.splice(index, 1, {
+        ...first,
+        start: last.start,
+        end: first.end + 1 + 1e-9,
+      });
+      break;
+    }
+  }
+
+  return merged
+    .filter((interval) => interval.end - interval.start > 1e-6)
+    .map((interval) => {
+      const length = interval.end - interval.start;
+      const start = interval.start >= 1 ? interval.start - 1 : interval.start;
+      return {
+        side: interval.side,
+        start: Math.max(0, Math.min(1 - 1e-9, start)),
+        length: Math.max(0, Math.min(1 - 1e-9, length)),
+        ...(interval.flatHeight !== undefined ? { flatHeight: interval.flatHeight } : {}),
+        ...(interval.cornerHeight !== undefined
+          ? { cornerHeight: interval.cornerHeight }
+          : {}),
+      };
+    });
+}
+
+function splitKerbSpans(
+  spans: readonly ProjectKerbSpan[],
+  fraction: number,
+): { left: ProjectKerbSpan[]; right: ProjectKerbSpan[] } {
+  const safe = Math.max(1e-6, Math.min(1 - 1e-6, fraction));
+  const left: ProjectKerbSpan[] = [];
+  const right: ProjectKerbSpan[] = [];
+  for (const span of spans) {
+    for (const interval of spanIntervals(span, false)) {
+      const leftEnd = Math.min(interval.end, safe);
+      if (leftEnd - interval.start > 1e-6) {
+        left.push({
+          side: interval.side,
+          start: interval.start / safe,
+          length: (leftEnd - interval.start) / safe,
+          ...(interval.flatHeight !== undefined ? { flatHeight: interval.flatHeight } : {}),
+          ...(interval.cornerHeight !== undefined
+            ? { cornerHeight: interval.cornerHeight }
+            : {}),
+        });
+      }
+      const rightStart = Math.max(interval.start, safe);
+      if (interval.end - rightStart > 1e-6) {
+        right.push({
+          side: interval.side,
+          start: (rightStart - safe) / (1 - safe),
+          length: (interval.end - rightStart) / (1 - safe),
+          ...(interval.flatHeight !== undefined ? { flatHeight: interval.flatHeight } : {}),
+          ...(interval.cornerHeight !== undefined
+            ? { cornerHeight: interval.cornerHeight }
+            : {}),
+        });
+      }
+    }
+  }
+  return {
+    left: mergeKerbSpans(left, false),
+    right: mergeKerbSpans(right, false),
+  };
+}
+
+function mapKerbSpansToOpen(
+  spans: readonly ProjectKerbSpan[],
+  closed: boolean,
+  startDistance: number,
+  pathLength: number,
+  total: number,
+): ProjectKerbSpan[] {
+  if (pathLength <= 1e-9 || total <= 1e-9) {
+    return [];
+  }
+  const mapped: ProjectKerbSpan[] = [];
+  for (const span of spans) {
+    for (const interval of spanIntervals(span, closed)) {
+      const start = interval.start * total;
+      const end = interval.end * total;
+      for (const offset of [-total, 0, total]) {
+        const from = Math.max(start + offset, startDistance);
+        const to = Math.min(end + offset, startDistance + pathLength);
+        if (to - from <= 1e-6) {
+          continue;
+        }
+        mapped.push({
+          side: interval.side,
+          start: Math.max(0, Math.min(1, (from - startDistance) / pathLength)),
+          length: Math.max(0, Math.min(1, (to - from) / pathLength)),
+          ...(interval.flatHeight !== undefined ? { flatHeight: interval.flatHeight } : {}),
+          ...(interval.cornerHeight !== undefined
+            ? { cornerHeight: interval.cornerHeight }
+            : {}),
+        });
+      }
+    }
+  }
+  return mergeKerbSpans(mapped, false);
+}
+
+function mapKerbSpansForMerge(
+  spans: readonly ProjectKerbSpan[],
+  reversed: boolean,
+  startFraction: number,
+  lengthFraction: number,
+): ProjectKerbSpan[] {
+  return spans.map((span) => {
+    const start = reversed ? 1 - (span.start + span.length) : span.start;
+    return {
+      side: reversed ? flipKerbSide(span.side) : span.side,
+      start: startFraction + start * lengthFraction,
+      length: span.length * lengthFraction,
+      ...(span.flatHeight !== undefined ? { flatHeight: span.flatHeight } : {}),
+      ...(span.cornerHeight !== undefined ? { cornerHeight: span.cornerHeight } : {}),
+    };
+  });
 }
 
 function sectionEnd(
@@ -511,14 +712,28 @@ export function splitOpenSection(
     leftIds.push(leftEndId);
     rightIds.unshift(rightStartId);
 
+    const splitFraction =
+      fractionAtControlPoint(
+        sourceSection.points as Vec2[],
+        false,
+        sourceSection.spline,
+        pointIndex,
+      ) ?? 0.5;
+    const splitKerbs = splitKerbSpans(sourceSection.kerbs ?? [], splitFraction);
     original.points = leftPoints;
     original.pointIds = leftIds;
+    if (splitKerbs.left.length > 0) {
+      original.kerbs = splitKerbs.left;
+    } else {
+      delete original.kerbs;
+    }
     candidate.centerlines.push({
       id: rightId,
       closed: false,
       points: rightPoints,
       pointIds: rightIds,
       ...(original.spline ? { spline: original.spline } : {}),
+      ...(splitKerbs.right.length > 0 ? { kerbs: splitKerbs.right } : {}),
     });
 
     const leftIdSet = new Set(leftIds);
@@ -539,13 +754,6 @@ export function splitOpenSection(
     }
 
     if (candidate.spawn.centerline === sectionId) {
-      const splitFraction =
-        fractionAtControlPoint(
-          sourceSection.points as Vec2[],
-          false,
-          sourceSection.spline,
-          pointIndex,
-        ) ?? 0.5;
       if (candidate.spawn.fraction > splitFraction) {
         candidate.spawn.centerline = rightId;
       }
@@ -608,6 +816,12 @@ export function closeSectionLoop(
   candidate.points.splice(draggedPointIndex, 1);
   candidate.pointIds.splice(draggedPointIndex, 1);
   candidate.closed = true;
+  if (candidate.kerbs) {
+    candidate.kerbs = mergeKerbSpans(candidate.kerbs, true);
+    if (candidate.kerbs.length === 0) {
+      delete candidate.kerbs;
+    }
+  }
   return { ok: true, project };
 }
 
@@ -705,8 +919,28 @@ export function mergeLooseSectionEnds(
     );
   }
 
+  const mergedLength = lengthA + lengthB;
+  const mergedKerbs = mergeKerbSpans([
+    ...mapKerbSpansForMerge(
+      a.section.kerbs ?? [],
+      aReversed,
+      0,
+      mergedLength > 0 ? lengthA / mergedLength : 0.5,
+    ),
+    ...mapKerbSpansForMerge(
+      b.section.kerbs ?? [],
+      bReversed,
+      mergedLength > 0 ? lengthA / mergedLength : 0.5,
+      mergedLength > 0 ? lengthB / mergedLength : 0.5,
+    ),
+  ]);
   a.section.points = aPoints;
   a.section.pointIds = aPointIds;
+  if (mergedKerbs.length > 0) {
+    a.section.kerbs = mergedKerbs;
+  } else {
+    delete a.section.kerbs;
+  }
   if (!a.section.spline && b.section.spline) {
     a.section.spline = b.section.spline;
   }
@@ -871,13 +1105,13 @@ export function splitClosedSection(
     if (!candidateSection) {
       return null;
     }
+    const distanceWithin = (segment.length / 2 + gap / 2) / segment.length;
+    const startDistance =
+      (fractions[segment.startIndex]! * total + segmentDistance * distanceWithin) %
+      total;
+    const pathLength = Math.max(1e-9, total - gap);
     if (candidate.spawn.centerline === sectionId) {
-      const distanceWithin = (segment.length / 2 + gap / 2) / segment.length;
-      const startDistance =
-        (fractions[segment.startIndex]! * total + segmentDistance * distanceWithin) %
-        total;
       const spawnDistance = candidate.spawn.fraction * total;
-      const pathLength = Math.max(1e-9, total - gap);
       const forward = (spawnDistance - startDistance + total) % total;
       candidate.spawn.fraction =
         forward <= pathLength ? Math.min(0.999, forward / pathLength) : 0;
@@ -885,6 +1119,18 @@ export function splitClosedSection(
     candidateSection.closed = false;
     candidateSection.points = newPoints;
     candidateSection.pointIds = newPointIds;
+    const kerbs = mapKerbSpansToOpen(
+      section.kerbs ?? [],
+      true,
+      startDistance,
+      pathLength,
+      total,
+    );
+    if (kerbs.length > 0) {
+      candidateSection.kerbs = kerbs;
+    } else {
+      delete candidateSection.kerbs;
+    }
 
     return isCandidateValid(candidate) ? candidate : null;
   };
@@ -946,6 +1192,7 @@ export function splitClosedSection(
     const pointsForCandidate =
       tolerance > 0 ? simplifyOpenPolyline(rawPoints, tolerance) : rawPoints;
 
+    const pathLength = Math.max(1e-9, total - gap);
     const candidate = structuredClone(source);
     const candidateSection = candidate.centerlines.find(
       (candidateCenterline) => candidateCenterline.id === sectionId,
@@ -969,6 +1216,18 @@ export function splitClosedSection(
     candidateSection.closed = false;
     candidateSection.points = pointsForCandidate.map((point) => [point[0], point[1]]);
     candidateSection.pointIds = pointIds;
+    const kerbs = mapKerbSpansToOpen(
+      section.kerbs ?? [],
+      true,
+      startDistance,
+      pathLength,
+      total,
+    );
+    if (kerbs.length > 0) {
+      candidateSection.kerbs = kerbs;
+    } else {
+      delete candidateSection.kerbs;
+    }
 
     return isCandidateValid(candidate) ? candidate : null;
   };

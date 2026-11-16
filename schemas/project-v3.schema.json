@@ -55,6 +55,9 @@
         "$ref": "#/$defs/junction"
       },
       "default": []
+    },
+    "kerbs": {
+      "$ref": "#/$defs/kerbProfile"
     }
   },
   "$defs": {
@@ -297,6 +300,12 @@
         },
         "spline": {
           "$ref": "#/$defs/spline"
+        },
+        "kerbs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/kerbSpan"
+          }
         }
       },
       "allOf": [
@@ -361,6 +370,55 @@
         },
         "anchor": {
           "$ref": "#/$defs/junctionMember"
+        }
+      }
+    },
+    "kerbSpan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "side",
+        "start",
+        "length"
+      ],
+      "properties": {
+        "side": {
+          "enum": [
+            "left",
+            "right"
+          ]
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "length": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "flatHeight": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cornerHeight": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "kerbProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "flatHeight": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cornerHeight": {
+          "type": "number",
+          "exclusiveMinimum": 0
         }
       }
     }

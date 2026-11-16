@@ -1,10 +1,10 @@
-# Contract — `lapster-glb-track@1`
+# Contract — `lapster-glb-track@2`
 
-Status: normative for v0.
+Status: normative for v1. `@2` adds kerb nodes and surfaces; the manifest schema remains `sim-track-glb-v1`.
 
 ## Purpose
 
-`lapster-glb-track@1` is the first export profile. It maps a valid `BakedTrack` to two files consumed by Lapster's asset compiler:
+`lapster-glb-track@2` is the current export profile. It maps a valid `BakedTrack` to two files consumed by Lapster's asset compiler:
 
 - `track.glb`;
 - `track.json`, satisfying Lapster's `sim-track-glb-v1` manifest.
@@ -52,7 +52,9 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
   "surfaces": [
     { "id": 0, "name": "asphalt", "friction": 1.0, "roughness": 0.02, "materials": ["asphalt"] },
     { "id": 1, "name": "dirt", "friction": 0.7, "roughness": 1.0, "materials": ["dirt"] },
-    { "id": 2, "name": "grass", "friction": 0.35, "roughness": 0.8, "materials": ["grass"] }
+    { "id": 2, "name": "grass", "friction": 0.35, "roughness": 0.8, "materials": ["grass"] },
+    { "id": 3, "name": "kerb_red", "friction": 0.9, "roughness": 0.2, "materials": ["kerb_red"] },
+    { "id": 4, "name": "kerb_white", "friction": 0.9, "roughness": 0.2, "materials": ["kerb_white"] }
   ],
   "default_surface": 0
 }
@@ -66,16 +68,18 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 - `cameras` -> `cameras`, or omitted when empty.
 - `surfaces` -> `surfaces`.
 - surface graph -> GLB visual and collision meshes without geometry changes.
+- `kerbGraph` -> additional `surface_kerb_*` GLB visual and collision meshes without geometry changes. When `kerbGraph` is absent, no kerb nodes or surfaces are emitted.
 
 ## Lapster GLB conventions
 
-- GLB scene nodes MUST be named `surface_asphalt`, `surface_dirt`, `surface_grass`.
-- Each node MUST use a material with the matching name: `asphalt`, `dirt`, `grass`.
+- Ground GLB scene nodes MUST be named `surface_asphalt`, `surface_dirt`, `surface_grass`.
+- Kerb GLB scene nodes MUST be named `surface_kerb_red` and `surface_kerb_white`.
+- Each node MUST use a material with the matching surface name.
 - `visual.include` MUST be `["surface_*"]` and non-empty.
 - `visual.exclude` MUST be `[]`.
 - `collision.include` MUST be `["surface_*"]` and non-empty.
 - `collision.exclude` MUST be `[]`.
-- v0 MAY use the same GLB nodes for visual and collision.
+- v1 uses the same GLB nodes for visual and collision.
 - If visual detail diverges later, emit separate `col_*` nodes and include those for collision.
 - `visual.scale` MUST be `1`, `yaw_degrees` MUST be `0`, and `offset` MUST be `[0, 0, 0]`.
 
@@ -85,18 +89,21 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 - `name` MUST be unique and non-empty.
 - `default_surface` MUST reference a declared surface.
 - `materials` MUST contain at least one material name.
-- v0 defaults:
+- v1 defaults:
   - asphalt: id `0`, friction `1.0`, roughness `0.02`;
   - dirt: id `1`, friction `0.7`, roughness `1.0`;
-  - grass: id `2`, friction `0.35`, roughness `0.8`.
-- `mountable` is irrelevant for v0 surfaces.
+  - grass: id `2`, friction `0.35`, roughness `0.8`;
+  - kerb_red: id `3`, friction `0.9`, roughness `0.2`;
+  - kerb_white: id `4`, friction `0.9`, roughness `0.2`.
+- Kerb surfaces are emitted only when a kerb graph is present.
+- `mountable` is omitted in `@2`; Lapster treats omitted as `false`, so all kerb tops, risers, sides, and end caps participate in collision. This matches the v1 all-kerb-faces-solid decision.
 
 ## Spawn
 
 - `position` is `[x, y, z]` in metres.
 - `rotation_xyzw` is a normalized `xyzw` quaternion that maps track-ed's local `-Z` forward axis to the centreline tangent with `+Y` up.
 - `position.y` MAY be `0`; Lapster snaps it to the collision height.
-- v0 applies no axis conversion. The GLB geometry is authored in track-ed axes; glTF defines the asset front as `+Z`, and this profile does not rotate the asset to match it. Conformance MUST verify that Lapster uses the manifest spawn rotation and does not apply an additional asset-front rotation.
+- v1 applies no axis conversion. The GLB geometry is authored in track-ed axes; glTF defines the asset front as `+Z`, and this profile does not rotate the asset to match it. Conformance MUST verify that Lapster uses the manifest spawn rotation and does not apply an additional asset-front rotation.
 - If Lapster requires a different forward axis or asset orientation, the conversion MUST be declared in this profile and the profile version bumped.
 
 ## Length
@@ -108,7 +115,7 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 
 ## Cameras
 
-- v0 SHOULD omit `cameras`; Lapster synthesises a start camera.
+- v1 SHOULD omit `cameras`; Lapster synthesises a start camera.
 - If present, camera fields are `name`, `position`, `target`, and `fov_y` in radians.
 
 ## Profile obligations
@@ -151,6 +158,7 @@ Acceptance: the pack validates, `inspect` reports `Track`, the track viewer show
 
 ## Versioning
 
-- The profile version is `lapster-glb-track@1`.
+- The profile version is `lapster-glb-track@2`.
 - Changes to node names, material names, manifest fields, or surface defaults require a version bump.
+- `@2` extends `@1` with optional kerb nodes and surfaces; ground nodes and manifest fields are unchanged.
 - Lapster owns `sim-track-glb-v1`; track-ed pins a copy of the schema.

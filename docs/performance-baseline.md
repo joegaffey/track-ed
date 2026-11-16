@@ -1,6 +1,6 @@
 # Performance baseline — pre-v1
 
-Status: baseline captured before spline/terrain/kerb/prop work.
+Status: baseline captured before spline/terrain work; kerb results appended.
 Date: 2026-11-15.
 
 ## Environment
@@ -110,6 +110,10 @@ Measured with the GPU-backed headless browser at 1280x720:
 | Demand-driven rendering, GPU | 0.007 cores |
 
 Camera orbit and damping still animate correctly, and an idle app drops to near-zero CPU. The same change would remove the ~5.5 idle cores previously burned by continuous SwiftShader rendering.
+
+## Kerbs (v1-G3)
+
+Kerbs are baked as a separate graph, so ground validation and topology work are unchanged. Each contiguous kerb run is divided into equal-length red/white elements with a flat approach and one raised corner per element. The junction-clipped fixtures add 1,107 and 1,834 kerb triangles respectively and export to `track.sima` bundles of 353 KB and 610 KB. Lapster's asset compiler baked, inspected, and validated both without warnings beyond the existing Cargo workspace warning.
 
 ## Comparison against the current Lapster builder
 

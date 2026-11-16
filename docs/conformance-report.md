@@ -1,6 +1,6 @@
-# Conformance report — `lapster-glb-track@1`
+# Conformance report — `lapster-glb-track@2`
 
-Status: conformance passed. Outcome: continue the spike; do not promote to production yet.
+Status: conformance passed, including v1-G3 kerbs. Outcome: continue the spike; do not promote to production yet.
 Date: 2026-11-16 (Slice 4 full-fixture rerun).
 
 ## Environment
@@ -65,9 +65,20 @@ A connector branch joined at both ends (`endAttach`) also passed: 66580 B `.sima
 
 Merging two loose branch ends into one centreline passed: 67668 B `.sima`, 894 vertices, 590 triangles, `Track`, `validate ok`.
 
-The `project@3` venue fixture with two disjoint closed sections and a dead-ended open spur passed: 128844 B `.sima`, 1728 vertices, 1146 triangles, `Two Loops and Spur (Track)`, `validate ok`.
+The `project@3` venue fixture with two disjoint closed sections and a dead-ended open spur passed (with authored kerbs): 609928 B `.sima`, 9460 vertices, 2980 triangles, `Two Loops and Spur (Track)`, `validate ok`.
 
-The `project@3` junction fixture with a closed loop and an open spur attached at an interior loop control point passed: 67536 B `.sima`, 891 vertices, 588 triangles, `Loop and Spur Junction (Track)`, `validate ok`.
+The `project@3` junction fixture with a closed loop and an open spur attached at an interior loop control point passed (with authored kerbs): 352588 B `.sima`, 5460 vertices, 1695 triangles, `Loop and Spur Junction (Track)`, `validate ok`.
+
+## Kerb conformance (v1-G3)
+
+Two checked-in venue fixtures now author kerb spans across straights, corners, and junction approaches. The kerbs are exported as separate `surface_kerb_red` and `surface_kerb_white` nodes with solid collision on all faces.
+
+| Fixture | `track.sima` | Vertices | Triangles | Surfaces | Inspect | Validate |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| `venue-loop-spur-junction` | 352588 B | 5460 | 1695 | 5 | `venue-loop-spur-junction (Track)` | ok |
+| `venue-two-loops-spur` | 609928 B | 9460 | 2980 | 5 | `venue-two-loops-spur (Track)` | ok |
+
+The loop-spur fixture has 1107 kerb triangles; the two-loop venue has 1834. Each contiguous kerb run is split into equal-length elements with a flat approach and one raised corner per element. Collision triangle counts equal the visual totals, confirming that kerb tops, risers, sides, and end caps are included. Junction-adjacent kerb segments are clipped before export, so no kerb top covers junction asphalt.
 
 ## Slice 4 full-fixture rerun
 
@@ -90,10 +101,10 @@ All 17 checked-in project fixtures were parsed, baked, validated in-process, exp
 | `loop-with-branch-90-spline` | 84188 B | 1119 | 740 | 371.36 m | ok |
 | `loop-with-branch-90-spline-terrain` | 166948 B | 2274 | 1432 | 371.36 m | ok |
 | `loop-with-branch-90-spline-terrain-follow` | 166952 B | 2274 | 1432 | 371.36 m | ok |
-| `venue-loop-spur-junction` | 67536 B | 891 | 588 | 444.37 m | ok |
-| `venue-two-loops-spur` | 128844 B | 1728 | 1146 | 813.65 m | ok |
+| `venue-loop-spur-junction` | 352588 B | 5460 | 1695 | 444.37 m | ok |
+| `venue-two-loops-spur` | 609928 B | 9460 | 2980 | 813.65 m | ok |
 
-The venue length is the sum of all section lengths. The two-loop venue has two disjoint spline loops plus a dead-ended open spur; the junction venue has a closed loop with an open spur attached at an interior control point.
+The venue length is the sum of all section lengths. Kerb fixtures add two surfaces and a separate kerb graph; ground node names, manifest fields, and spawn/collision include rules are unchanged from `@1`. The two-loop venue has two disjoint spline loops plus a dead-ended open spur; the junction venue has a closed loop with an open spur attached at an interior control point.
 
 The fixture matrix is enforced by `src/kernel/fixture-matrix.test.ts`; venue export determinism and manifest length are covered in `src/export/lapster/export.test.ts`.
 
@@ -109,8 +120,9 @@ The fixture matrix is enforced by `src/kernel/fixture-matrix.test.ts`; venue exp
 ## Decision
 
 - v0 conformance passes.
+- v1-G1 splines, v1-G2 terrain, and v1-G3 kerbs pass conformance.
 - Outcome: **continue the spike**.
-- Production promotion is deferred until the v1 gates in `docs/v1-roadmap.md` pass: rounded spline centrelines, terrain, kerbs, props, re-conformance, performance, and comparison.
+- Production promotion is deferred until the remaining v1 gates in `docs/v1-roadmap.md` pass: props, re-conformance, performance, and comparison.
 
 ## Remaining baseline work
 

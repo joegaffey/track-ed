@@ -4,6 +4,7 @@ import branch30 from "../../fixtures/projects/loop-with-branch-30.json";
 import branch45 from "../../fixtures/projects/loop-with-branch-45.json";
 import branch90 from "../../fixtures/projects/loop-with-branch-90.json";
 import twoLooseBranches from "../../fixtures/projects/loop-two-loose-branches.json";
+import venueFixture from "../../fixtures/projects/venue-two-loops-spur.json";
 import { parseProject } from "./project";
 
 function cloneFixture<T>(value: T): T {
@@ -139,5 +140,99 @@ describe("parseProject", () => {
     (value.road as Record<string, unknown>).shoulderHalfWidth = 4;
     const result = parseProject(value);
     expect(result.project).toBeNull();
+  });
+
+  it("accepts authorable kerb spans on project@3 sections", () => {
+    const result = parseProject(venueFixture);
+    expect(result.issues).toEqual([]);
+    const section = result.project?.centerlines.find((candidate) => candidate.id === "loop-a");
+    expect(section?.kerbs?.length).toBeGreaterThan(0);
+  });
+
+  it("accepts global and per-span kerb heights", () => {
+    const value = cloneFixture(venueFixture) as Record<string, unknown>;
+    value.kerbs = { flatHeight: 0.04, cornerHeight: 0.2 };
+    const sections = value.sections as Array<Record<string, unknown>>;
+    sections[0]!.kerbs = [
+      {
+        side: "left",
+        start: 0.1,
+        length: 0.2,
+        flatHeight: 0.08,
+        cornerHeight: 0.12,
+      },
+    ];
+    const result = parseProject(value);
+    expect(result.issues).toEqual([]);
+    expect(result.project?.kerbs?.cornerHeight).toBe(0.2);
+    const span = result.project?.centerlines[0]?.kerbs?.[0];
+    expect(span?.flatHeight).toBe(0.08);
+    expect(span?.cornerHeight).toBe(0.12);
+  });
+
+  it("rejects a global kerb corner below the flat height", () => {
+    const value = cloneFixture(venueFixture) as Record<string, unknown>;
+    value.kerbs = { flatHeight: 0.12, cornerHeight: 0.08 };
+    const result = parseProject(value);
+    expect(result.project).toBeNull();
+    expect(result.issues.some((issue) => issue.path === "$.kerbs.cornerHeight")).toBe(true);
+  });
+
+  it("rejects overlapping kerb spans on the same side", () => {
+    const value = cloneFixture(venueFixture) as Record<string, unknown>;
+    const sections = value.sections as Array<Record<string, unknown>>;
+    sections[0]!.kerbs = [
+      { side: "left", start: 0.1, length: 0.3 },
+      { side: "left", start: 0.3, length: 0.3 },
+    ];
+    const result = parseProject(value);
+    expect(result.project).toBeNull();
+    expect(
+      result.issues.some((issue) => issue.message === "left kerb spans must not overlap"),
+    ).toBe(true);
+  });
+
+  it("accepts a wrapped kerb span on a closed section", () => {
+    const value = cloneFixture(venueFixture) as Record<string, unknown>;
+    const sections = value.sections as Array<Record<string, unknown>>;
+    sections[0]!.kerbs = [{ side: "left", start: 0.9, length: 0.2 }];
+    const result = parseProject(value);
+    expect(result.issues).toEqual([]);
+    expect(result.project?.centerlines[0]?.kerbs?.[0]).toEqual({
+      side: "left",
+      start: 0.9,
+      length: 0.2,
+    });
+  });
+
+  it("rejects a kerb span that runs past an open section", () => {
+    const value = cloneFixture(venueFixture) as Record<string, unknown>;
+    const sections = value.sections as Array<Record<string, unknown>>;
+    sections[2]!.kerbs = [{ side: "left", start: 0.9, length: 0.2 }];
+    const result = parseProject(value);
+    expect(result.project).toBeNull();
+    expect(
+      result.issues.some((issue) => issue.path.endsWith(".length")),
+    ).toBe(true);
+  });
+
+  it("rejects a full-loop kerb span on a closed section", () => {
+    const value = cloneFixture(venueFixture) as Record<string, unknown>;
+    const sections = value.sections as Array<Record<string, unknown>>;
+    sections[0]!.kerbs = [{ side: "left", start: 0, length: 1 }];
+    const result = parseProject(value);
+    expect(result.project).toBeNull();
+    expect(
+      result.issues.some((issue) => issue.path.endsWith(".length")),
+    ).toBe(true);
+  });
+
+  it("rejects kerb spans outside project@3", () => {
+    const value = cloneFixture(loopFixture) as Record<string, unknown>;
+    const centerlines = value.centerlines as Array<Record<string, unknown>>;
+    centerlines[0]!.kerbs = [{ side: "left", start: 0.1, length: 0.1 }];
+    const result = parseProject(value);
+    expect(result.project).toBeNull();
+    expect(result.issues.some((issue) => issue.path.endsWith(".kerbs"))).toBe(true);
   });
 });

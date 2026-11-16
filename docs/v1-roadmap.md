@@ -1,6 +1,6 @@
 # v1 roadmap — production promotion gates
 
-Status: G1, G2a, G2b, G2c1, G2c4, the `project@2` multi-junction graph, and the `project@3` venue section graph are implemented; road elevation, banking/crown, kerbs, and props remain. v0 remains a spike until these gates pass.
+Status: G1, G2a, G2b, G2c1, G2c4, the `project@2` multi-junction graph, the `project@3` venue section graph, and G3 kerbs are implemented; road elevation, banking/crown, and props remain. v0 remains a spike until these gates pass.
 Date: 2026-11-16.
 
 ## Decision
@@ -37,12 +37,15 @@ Contract decision (D12): terrain has one source of truth per project.
 - Extend scene bounds and validation rules beyond the flat rectangle.
 - Preserve flat terrain as a special case so existing fixtures remain valid.
 
-### G3 — Kerbs
+### G3 — Kerbs (implemented)
 
-- Generate kerb geometry along road edges, including rounded corners and junction approaches.
-- Assign consumer-neutral surfaces/materials and collision policy.
-- Avoid gaps, overlaps, and floating kerbs at junction transitions.
-- Extend the export profile with kerb nodes/materials and verify the Lapster importer.
+- Kerbs mode with dashed guide rails: drag to paint spans, select spans, and drag endpoint handles to resize. Seam-wrapping spans are supported through forward `start + length` arcs.
+- Red/white kerb runs follow road edges, rounded corners, and junction approaches with equal-length jagged elements: flat approach, one raised corner, then a riser.
+- Flat and corner heights are authorable globally and per span.
+- A separate consumer-neutral `kerbGraph` preserves the welded ground invariants. Spans are clipped against junction asphalt and other kerbs; exposed ends are capped.
+- Kerbs sample the same ground/terrain height source as the road and shoulder.
+- `lapster-glb-track@2` emits `surface_kerb_red` and `surface_kerb_white` with solid collision on all faces.
+- Verified with the Lapster asset compiler: the two kerb fixtures bake, inspect as `Track`, and validate `ok`.
 
 ### G4 — Props
 
@@ -63,9 +66,9 @@ Contract decision (D12): terrain has one source of truth per project.
 
 These gates are expected to require:
 
-- `BakedTrack` v2 for terrain, kerbs, and props;
-- a project schema version bump for spline, terrain, kerb, and prop authoring fields;
-- a `lapster-glb-track@2` profile bump if node names, materials, or manifest fields change;
+- `BakedTrack` v2 for props;
+- a project schema version bump for prop authoring fields;
+- a further `lapster-glb-track` profile bump if node names, materials, or manifest fields change;
 - updates to the project, baked-track, and Lapster profile contracts.
 
 Consumer-neutral boundaries remain: no Lapster names or `.sima` concepts in `src/kernel/` or `src/model/`.

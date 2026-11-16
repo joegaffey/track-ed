@@ -1,7 +1,12 @@
 import "./style.css";
 import loopSplineTerrainJunctionsFixture from "../../fixtures/projects/loop-spline-terrain-junctions.json";
 import { bakeProject, BakeError, spawnFor } from "../kernel/bake";
-import { parseProject, type Project } from "../kernel/project";
+import {
+  DEFAULT_KERB_FLAT_HEIGHT,
+  DEFAULT_KERB_CORNER_HEIGHT,
+  KERB_WIDTH,
+} from "../kernel/kerbs";
+import { parseProject, type Project, type ProjectKerbSpan } from "../kernel/project";
 import { samplePolyline, segmentLengths } from "../kernel/geometry";
 import { fractionAtControlPoint, sampleCenterline } from "../kernel/spline";
 import { buildPointTerrainSampler, rawTerrainHeight } from "../kernel/terrain";
@@ -21,6 +26,8 @@ import {
   type CenterlineSegmentPick,
   type CentrelineOverlayData,
   type ControlPointPick,
+  type KerbOverlayData,
+  type KerbRailOverlayData,
   type TerrainPointOverlayData,
   type TrackView,
 } from "./scene";
@@ -52,6 +59,22 @@ type DragState =
   | { kind: "attach"; startProject: Project }
   | { kind: "spawn"; startProject: Project }
   | {
+      kind: "kerb-paint";
+      sectionId: string;
+      side: "left" | "right";
+      closed: boolean;
+      originFraction: number;
+      previousFraction: number;
+      signedLength: number;
+      startProject: Project;
+    }
+  | {
+      kind: "kerb-entry" | "kerb-exit";
+      sectionId: string;
+      spanIndex: number;
+      startProject: Project;
+    }
+  | {
       kind: "terrain-point";
       index: number;
       startProject: Project;
@@ -79,6 +102,10 @@ app.innerHTML = `
       <span class="badge">v1</span>
     </div>
     <div class="topbar-right">
+      <div class="mode-switch" role="group" aria-label="Editing mode">
+        <button class="mode-button active" id="mode-points" type="button">Points</button>
+        <button class="mode-button" id="mode-kerbs" type="button">Kerbs</button>
+      </div>
       <div class="project-meta" id="project-meta"></div>
     </div>
   </header>
@@ -165,6 +192,38 @@ app.innerHTML = `
         <div class="edit-status" id="terrain-point-status"></div>
       </section>
       <section class="panel">
+        <h2>Kerbs</h2>
+        <div class="edit-field">
+          <label for="kerb-global-flat">global flat height (m)</label>
+          <input type="number" id="kerb-global-flat" min="0" step="0.005" />
+        </div>
+        <div class="edit-field">
+          <label for="kerb-global-corner">global corner height (m)</label>
+          <input type="number" id="kerb-global-corner" min="0" step="0.005" />
+        </div>
+        <div class="junction-list" id="kerb-list"></div>
+        <div class="edit-field" id="kerb-span-heights" hidden>
+          <label class="toggle"><input type="checkbox" id="kerb-span-override" /> override heights for this span</label>
+        </div>
+        <div class="edit-field" id="kerb-span-flat-field" hidden>
+          <label for="kerb-span-flat">span flat height (m)</label>
+          <input type="number" id="kerb-span-flat" min="0" step="0.005" />
+        </div>
+        <div class="edit-field" id="kerb-span-corner-field" hidden>
+          <label for="kerb-span-corner">span corner height (m)</label>
+          <input type="number" id="kerb-span-corner" min="0" step="0.005" />
+        </div>
+        <div class="edit-actions">
+          <button class="edit-button" id="kerb-remove" type="button">Remove span</button>
+        </div>
+        <p class="edit-hint">
+          Switch to Kerbs mode, then drag a dotted guide rail to paint a kerb span.
+          Select a span and drag its endpoint handles to resize it. Delete removes the selected span.
+          Flat and corner heights apply globally, with optional per-span overrides.
+        </p>
+        <div class="edit-status" id="kerb-status"></div>
+      </section>
+      <section class="panel">
         <h2>Overlays</h2>
         <div class="toggle-list">
           <label class="toggle"><input type="checkbox" id="toggle-centerline" checked /> Centreline</label>
@@ -240,6 +299,19 @@ const terrainPointHeightField =
   document.querySelector<HTMLDivElement>("#terrain-point-height-field")!;
 const terrainPointHeight = document.querySelector<HTMLInputElement>("#terrain-point-height")!;
 const terrainPointStatus = document.querySelector<HTMLDivElement>("#terrain-point-status")!;
+const modePointsButton = document.querySelector<HTMLButtonElement>("#mode-points")!;
+const modeKerbsButton = document.querySelector<HTMLButtonElement>("#mode-kerbs")!;
+const kerbGlobalFlat = document.querySelector<HTMLInputElement>("#kerb-global-flat")!;
+const kerbGlobalCorner = document.querySelector<HTMLInputElement>("#kerb-global-corner")!;
+const kerbSpanHeights = document.querySelector<HTMLDivElement>("#kerb-span-heights")!;
+const kerbSpanOverride = document.querySelector<HTMLInputElement>("#kerb-span-override")!;
+const kerbSpanFlatField = document.querySelector<HTMLDivElement>("#kerb-span-flat-field")!;
+const kerbSpanFlat = document.querySelector<HTMLInputElement>("#kerb-span-flat")!;
+const kerbSpanCornerField = document.querySelector<HTMLDivElement>("#kerb-span-corner-field")!;
+const kerbSpanCorner = document.querySelector<HTMLInputElement>("#kerb-span-corner")!;
+const kerbRemoveButton = document.querySelector<HTMLButtonElement>("#kerb-remove")!;
+const kerbList = document.querySelector<HTMLDivElement>("#kerb-list")!;
+const kerbStatus = document.querySelector<HTMLDivElement>("#kerb-status")!;
 
 const centerlineToggle = document.querySelector<HTMLInputElement>("#toggle-centerline")!;
 const wireframeToggle = document.querySelector<HTMLInputElement>("#toggle-wireframe")!;
@@ -260,6 +332,9 @@ let spawnFractionStart: Project | null = null;
 let spawnLateralStart: Project | null = null;
 let selectedTerrainPoint: number | null = null;
 let addTerrainPointMode = false;
+let selectedKerbSpan: { sectionId: string; index: number } | null = null;
+let kerbEditStart: Project | null = null;
+let editorMode: "points" | "kerbs" = "points";
 let bakeValid = false;
 
 const RENDER_DELAY_MS = 150;
@@ -331,6 +406,7 @@ function scheduleOverlayUpdate(): void {
     view.updateOverlays(
       overlayCenterlines(project, currentTrack.bounds),
       overlayTerrainPoints(project),
+      overlayKerbs(project, currentTrack.bounds),
     );
     let spawn: Spawn | null = null;
     try {
@@ -457,6 +533,7 @@ function pushUndo(snapshot: Project): void {
 }
 
 function updateAuthoringUI(): void {
+  updateModeUI();
   undoButton.disabled = undoStack.length === 0;
   redoButton.disabled = redoStack.length === 0;
   deleteButton.disabled = selectedPoint === null;
@@ -513,9 +590,36 @@ function updateAuthoringUI(): void {
     updateTerrainPointsUI(project);
     updateSectionList(project);
     updateJunctionList(project);
+    updateKerbsUI(project);
   } else {
     sectionList.innerHTML = "";
+    kerbList.innerHTML = "";
   }
+}
+
+function updateModeUI(): void {
+  modePointsButton.classList.toggle("active", editorMode === "points");
+  modeKerbsButton.classList.toggle("active", editorMode === "kerbs");
+  view?.setCenterlinesVisible(editorMode === "points" && centerlineToggle.checked);
+}
+
+function setEditorMode(mode: "points" | "kerbs"): void {
+  if (editorMode === mode) {
+    return;
+  }
+  editorMode = mode;
+  drag = null;
+  if (mode === "kerbs") {
+    setSelection(null);
+    setTerrainSelection(null);
+    addTerrainPointMode = false;
+    selectedKerbSpan = null;
+  } else {
+    selectedKerbSpan = null;
+  }
+  updateModeUI();
+  scheduleOverlayUpdate();
+  updateAuthoringUI();
 }
 
 function updateTerrainPointsUI(source: Project): void {
@@ -613,9 +717,15 @@ function renderStatus(track: BakedTrack, report: ValidationReport): void {
 
   const grid = document.createElement("div");
   grid.className = "metrics";
+  const kerbVertices = track.kerbGraph?.positions.length ?? 0;
+  const kerbTriangles = track.kerbGraph
+    ? Math.floor(track.kerbGraph.indices.length / 3)
+    : 0;
   grid.append(
     metric("vertices", formatNumber(track.surfaceGraph.positions.length)),
     metric("triangles", formatNumber(topology.triangleCount)),
+    metric("kerb vertices", formatNumber(kerbVertices)),
+    metric("kerb triangles", formatNumber(kerbTriangles)),
     metric(
       "interior boundary edges",
       formatNumber(topology.interiorBoundaryEdges.length),
@@ -631,6 +741,16 @@ function renderStatus(track: BakedTrack, report: ValidationReport): void {
       "T-junctions",
       formatNumber(topology.tJunctions.length),
       topology.tJunctions.length > 0 ? "bad" : "good",
+    ),
+    metric(
+      "kerb non-manifold",
+      formatNumber(report.kerbTopology?.nonManifoldEdges.length ?? 0),
+      (report.kerbTopology?.nonManifoldEdges.length ?? 0) > 0 ? "bad" : "good",
+    ),
+    metric(
+      "kerb T-junctions",
+      formatNumber(report.kerbTopology?.tJunctions.length ?? 0),
+      (report.kerbTopology?.tJunctions.length ?? 0) > 0 ? "bad" : "good",
     ),
     metric(
       "degenerate triangles",
@@ -651,7 +771,9 @@ function renderStatus(track: BakedTrack, report: ValidationReport): void {
     topology.interiorBoundaryEdges.length === 0 &&
     topology.nonManifoldEdges.length === 0 &&
     topology.tJunctions.length === 0
-      ? "One welded surface graph. The only open edges lie on the scene perimeter."
+      ? track.kerbGraph
+        ? "One welded ground graph plus a separate kerb graph. Kerb base edges are expected; ground open edges lie on the scene perimeter."
+        : "One welded surface graph. The only open edges lie on the scene perimeter."
       : "Topology errors detected. Export is blocked until the MUST checks pass.";
   statusPanel.appendChild(note);
 }
@@ -659,6 +781,9 @@ function renderStatus(track: BakedTrack, report: ValidationReport): void {
 function renderLegend(track: BakedTrack, report: ValidationReport): void {
   surfaceLegend.innerHTML = "";
   const counts = new Map(report.topology.surfaceTriangleCounts);
+  for (const [id, count] of report.kerbTopology?.surfaceTriangleCounts ?? []) {
+    counts.set(id, (counts.get(id) ?? 0) + count);
+  }
   for (const surface of track.surfaces) {
     const row = document.createElement("div");
     row.className = "legend-row";
@@ -767,6 +892,176 @@ function overlayTerrainPoints(source: Project): TerrainPointOverlayData[] {
   }));
 }
 
+function kerbSpanIntervals(
+  start: number,
+  length: number,
+  closed: boolean,
+): Array<[number, number]> {
+  const end = start + length;
+  if (closed && end > 1) {
+    return [
+      [start, 1],
+      [0, end - 1],
+    ];
+  }
+  return [[start, end]];
+}
+
+function kerbSpanEnd(start: number, length: number): number {
+  return (start + length) % 1;
+}
+
+function kerbSpansOverlap(
+  aStart: number,
+  aLength: number,
+  bStart: number,
+  bLength: number,
+  closed: boolean,
+): boolean {
+  for (const a of kerbSpanIntervals(aStart, aLength, closed)) {
+    for (const b of kerbSpanIntervals(bStart, bLength, closed)) {
+      if (a[0] < b[1] - 1e-9 && a[1] > b[0] + 1e-9) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function kerbSpanContains(
+  start: number,
+  length: number,
+  fraction: number,
+  closed: boolean,
+): boolean {
+  return kerbSpanIntervals(start, length, closed).some(
+    (interval) =>
+      fraction >= interval[0] - 1e-9 && fraction <= interval[1] + 1e-9,
+  );
+}
+
+function kerbRailPoints(
+  source: Project,
+  bounds: { min: Vec3; max: Vec3 },
+  section: Project["centerlines"][number],
+  side: "left" | "right",
+  start: number,
+  length: number,
+): Vec3[][] {
+  const heightAt = centerlineHeightSampler(source, bounds);
+  const sampled = sampleCenterline(
+    section.points as Vec2[],
+    section.closed,
+    section.spline,
+  );
+  const offset = source.road.halfWidth + KERB_WIDTH / 2;
+  const sideSign = side === "left" ? 1 : -1;
+  const pieces: Array<[number, number]> = [];
+  if (!section.closed || start + length <= 1 + 1e-9) {
+    pieces.push([start, Math.min(1, start + length)]);
+  } else {
+    pieces.push([start, 1], [0, start + length - 1]);
+  }
+  return pieces.map(([from, to]) => {
+    const steps = Math.max(2, Math.ceil(160 * Math.max(0, to - from)));
+    const points: Vec3[] = [];
+    for (let index = 0; index <= steps; index += 1) {
+      const fraction = from + ((to - from) * index) / steps;
+      const sample = samplePolyline(sampled, section.closed, fraction);
+      const lateral = scale2(leftNormal(sample.tangent), sideSign * offset);
+      const x = sample.position[0] + lateral[0];
+      const z = sample.position[1] + lateral[1];
+      points.push([x, heightAt([x, z]) + 0.25, z]);
+    }
+    return points;
+  });
+}
+
+function overlayKerbs(
+  source: Project,
+  bounds: { min: Vec3; max: Vec3 },
+): KerbOverlayData {
+  if (editorMode !== "kerbs") {
+    return { rails: [], spans: [] };
+  }
+  const rails: KerbRailOverlayData[] = [];
+  for (const section of source.centerlines) {
+    for (const side of ["left", "right"] as const) {
+      const [points] = kerbRailPoints(source, bounds, section, side, 0, 1);
+      if (points && points.length >= 2) {
+        rails.push({ sectionId: section.id, side, points });
+      }
+    }
+  }
+
+  const spans: KerbOverlayData["spans"] = [];
+  for (const section of source.centerlines) {
+    const sectionSpans = section.kerbs ?? [];
+    for (let spanIndex = 0; spanIndex < sectionSpans.length; spanIndex += 1) {
+      const span = sectionSpans[spanIndex]!;
+      const pieces = kerbRailPoints(
+        source,
+        bounds,
+        section,
+        span.side,
+        span.start,
+        span.length,
+      );
+      const first = pieces[0];
+      const last = pieces[pieces.length - 1];
+      if (!first || !last || first.length === 0 || last.length === 0) {
+        continue;
+      }
+      spans.push({
+        sectionId: section.id,
+        spanIndex,
+        side: span.side,
+        selected:
+          selectedKerbSpan?.sectionId === section.id &&
+          selectedKerbSpan.index === spanIndex,
+        pieces,
+        entry: first[0]!,
+        exit: last[last.length - 1]!,
+      });
+    }
+  }
+
+  let preview: KerbOverlayData["preview"] = null;
+  if (drag?.kind === "kerb-paint" && project) {
+    const activeDrag = drag;
+    const section = project.centerlines.find(
+      (candidate) => candidate.id === activeDrag.sectionId,
+    );
+    if (section) {
+      const signed = activeDrag.signedLength;
+      const start =
+        signed >= 0 ? activeDrag.originFraction : activeDrag.previousFraction;
+      const length = Math.abs(signed);
+      if (length > 1e-5) {
+        const pieces = kerbRailPoints(
+          project,
+          bounds,
+          section,
+          activeDrag.side,
+          start,
+          length,
+        );
+        const first = pieces[0];
+        const last = pieces[pieces.length - 1];
+        if (first && last && first.length > 0 && last.length > 0) {
+          preview = {
+            pieces,
+            entry: first[0]!,
+            exit: last[last.length - 1]!,
+          };
+        }
+      }
+    }
+  }
+
+  return { rails, spans, preview };
+}
+
 function serializeProject(source: Project): unknown {
   if (source.schema === "track-ed/project@1") {
     return {
@@ -796,6 +1091,7 @@ function serializeProject(source: Project): unknown {
       generator: source.generator,
       road: source.road,
       terrain: source.terrain,
+      ...(source.kerbs ? { kerbs: source.kerbs } : {}),
       spawn: source.spawn,
       cameras: source.cameras,
       junctions: source.junctions.map((junction) => ({
@@ -813,6 +1109,9 @@ function serializeProject(source: Project): unknown {
           position,
         })),
         ...(centerline.spline ? { spline: centerline.spline } : {}),
+        ...(centerline.kerbs && centerline.kerbs.length > 0
+          ? { kerbs: centerline.kerbs }
+          : {}),
       })),
     };
   }
@@ -936,6 +1235,8 @@ function renderProject(
       report.topology,
       overlayCenterlines(project, baked.bounds),
       overlayTerrainPoints(project),
+      report.kerbTopology,
+      overlayKerbs(project, baked.bounds),
     );
     const canvas = viewport.querySelector<HTMLCanvasElement>("canvas");
     if (canvas) {
@@ -947,6 +1248,8 @@ function renderProject(
       report.topology,
       overlayCenterlines(project, baked.bounds),
       overlayTerrainPoints(project),
+      report.kerbTopology,
+      overlayKerbs(project, baked.bounds),
     );
   }
   view.setSelectedPoint(selectedPoint);
@@ -984,6 +1287,8 @@ function loadProject(input: unknown, frame: boolean): void {
   redoStack = [];
   selectedPoint = null;
   selectedTerrainPoint = null;
+  selectedKerbSpan = null;
+  kerbEditStart = null;
   addTerrainPointMode = false;
   drag = null;
   sliderStart = null;
@@ -1002,6 +1307,8 @@ function undo(): void {
   project = previous;
   selectedPoint = null;
   selectedTerrainPoint = null;
+  selectedKerbSpan = null;
+  kerbEditStart = null;
   addTerrainPointMode = false;
   drag = null;
   sliderStart = null;
@@ -1021,6 +1328,8 @@ function redo(): void {
   project = next;
   selectedPoint = null;
   selectedTerrainPoint = null;
+  selectedKerbSpan = null;
+  kerbEditStart = null;
   addTerrainPointMode = false;
   drag = null;
   sliderStart = null;
@@ -1158,6 +1467,201 @@ function updateSectionList(source: Project): void {
     row.append(label);
     sectionList.appendChild(row);
   }
+}
+
+function findKerbSpan(
+  source: Project,
+  sectionId: string,
+  spanIndex: number,
+): { section: Project["centerlines"][number]; span: ProjectKerbSpan } | null {
+  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
+  const span = section?.kerbs?.[spanIndex];
+  return section && span ? { section, span } : null;
+}
+
+function findKerbSpanAt(
+  source: Project,
+  sectionId: string,
+  side: "left" | "right",
+  fraction: number,
+): number | null {
+  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
+  if (!section) {
+    return null;
+  }
+  const spans = section.kerbs ?? [];
+  for (let index = 0; index < spans.length; index += 1) {
+    const span = spans[index]!;
+    if (
+      span.side === side &&
+      kerbSpanContains(span.start, span.length, fraction, section.closed)
+    ) {
+      return index;
+    }
+  }
+  return null;
+}
+
+function kerbPaintSpan(
+  drag: Extract<NonNullable<DragState>, { kind: "kerb-paint" }>,
+): { start: number; length: number } | null {
+  const length = Math.abs(drag.signedLength);
+  if (length <= 1e-5) {
+    return null;
+  }
+  const start =
+    drag.signedLength >= 0 ? drag.originFraction : drag.previousFraction;
+  return {
+    start: ((start % 1) + 1) % 1,
+    length: Math.min(1 - 1e-9, length),
+  };
+}
+
+function updateKerbsUI(source: Project): void {
+  const editable = source.schema === "track-ed/project@3";
+  if (
+    selectedKerbSpan &&
+    !findKerbSpan(source, selectedKerbSpan.sectionId, selectedKerbSpan.index)
+  ) {
+    selectedKerbSpan = null;
+  }
+
+  kerbList.innerHTML = "";
+  let spanCount = 0;
+  for (const section of source.centerlines) {
+    const spans = section.kerbs ?? [];
+    for (let index = 0; index < spans.length; index += 1) {
+      spanCount += 1;
+      const span = spans[index]!;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className =
+        selectedKerbSpan?.sectionId === section.id && selectedKerbSpan.index === index
+          ? "section-row selected"
+          : "section-row";
+      const label = document.createElement("div");
+      label.className = "section-label";
+      const title = document.createElement("strong");
+      title.textContent = `${section.id} · ${span.side}`;
+      const detail = document.createElement("span");
+      const rawEnd = span.start + span.length;
+      const end = section.closed ? rawEnd % 1 : rawEnd;
+      const wraps = section.closed && rawEnd > 1 + 1e-9;
+      detail.textContent = `${span.start.toFixed(3)} – ${end.toFixed(3)}${
+        wraps ? " (wraps)" : ""
+      }`;
+      label.append(title, detail);
+      row.append(label);
+      row.addEventListener("click", () => {
+        selectedKerbSpan = { sectionId: section.id, index };
+        scheduleOverlayUpdate();
+        updateKerbsUI(source);
+      });
+      kerbList.appendChild(row);
+    }
+  }
+  if (spanCount === 0) {
+    const empty = document.createElement("div");
+    empty.className = "junction-empty";
+    empty.textContent =
+      source.schema === "track-ed/project@3"
+        ? "No kerb spans. Switch to Kerbs mode and drag a dotted guide rail."
+        : "Kerb authoring requires track-ed/project@3.";
+    kerbList.appendChild(empty);
+  }
+
+  const selected = selectedKerbSpan
+    ? findKerbSpan(source, selectedKerbSpan.sectionId, selectedKerbSpan.index)
+    : null;
+
+  const globalFlat = source.kerbs?.flatHeight ?? DEFAULT_KERB_FLAT_HEIGHT;
+  const globalCorner = source.kerbs?.cornerHeight ?? DEFAULT_KERB_CORNER_HEIGHT;
+  if (document.activeElement !== kerbGlobalFlat) {
+    kerbGlobalFlat.value = String(globalFlat);
+  }
+  if (document.activeElement !== kerbGlobalCorner) {
+    kerbGlobalCorner.value = String(globalCorner);
+  }
+  kerbGlobalFlat.disabled = !editable;
+  kerbGlobalCorner.disabled = !editable;
+
+  kerbRemoveButton.disabled = !editable || selected === null;
+  kerbSpanHeights.hidden = selected === null;
+  if (selected) {
+    const overridden =
+      selected.span.flatHeight !== undefined ||
+      selected.span.cornerHeight !== undefined;
+    kerbSpanOverride.checked = overridden;
+    kerbSpanOverride.disabled = !editable;
+    kerbSpanFlatField.hidden = !overridden;
+    kerbSpanCornerField.hidden = !overridden;
+    const flat = selected.span.flatHeight ?? globalFlat;
+    const corner = selected.span.cornerHeight ?? globalCorner;
+    if (document.activeElement !== kerbSpanFlat) {
+      kerbSpanFlat.value = String(flat);
+    }
+    if (document.activeElement !== kerbSpanCorner) {
+      kerbSpanCorner.value = String(corner);
+    }
+    kerbSpanFlat.disabled = !editable || !overridden;
+    kerbSpanCorner.disabled = !editable || !overridden;
+  }
+
+  kerbStatus.textContent = selected
+    ? `Editing ${selected.section.id} · ${selected.span.side} kerb span.`
+    : spanCount > 0
+      ? `${spanCount} kerb span${spanCount === 1 ? "" : "s"}.`
+      : "No kerb spans.";
+}
+
+function removeKerbSpan(): void {
+  if (!project || !selectedKerbSpan) {
+    return;
+  }
+  const located = findKerbSpan(project, selectedKerbSpan.sectionId, selectedKerbSpan.index);
+  if (!located) {
+    return;
+  }
+  const before = cloneProject(project);
+  located.section.kerbs!.splice(selectedKerbSpan.index, 1);
+  if (located.section.kerbs!.length === 0) {
+    delete located.section.kerbs;
+  }
+  selectedKerbSpan = null;
+  if (!renderProject(project, { frame: false })) {
+    project = before;
+    renderProject(project, { frame: false });
+    setKerbStatus("The kerb change does not bake.", "error");
+    return;
+  }
+  pushUndo(before);
+  setKerbStatus("Removed kerb span.", "ok");
+  scheduleOverlayUpdate();
+}
+
+function setKerbStatus(message: string, tone: "ok" | "error" | "" = ""): void {
+  kerbStatus.textContent = message;
+  kerbStatus.className = `edit-status ${tone}`.trim();
+}
+
+function editSelectedKerbSpan(
+  mutate: (span: NonNullable<Project["centerlines"][number]["kerbs"]>[number]) => void,
+): void {
+  if (!project || !selectedKerbSpan) {
+    return;
+  }
+  const located = findKerbSpan(project, selectedKerbSpan.sectionId, selectedKerbSpan.index);
+  if (!located) {
+    return;
+  }
+  if (!kerbEditStart) {
+    kerbEditStart = cloneProject(project);
+  }
+  mutate(located.span);
+  scheduleRender();
+  scheduleOverlayUpdate();
+  updateKerbsUI(project);
+  updateMeta(project);
 }
 
 function updateJunctionList(source: Project): void {
@@ -1876,6 +2380,67 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         return;
       }
       const point = pointerNdc(event, canvas);
+      if (editorMode === "kerbs") {
+        const handle = trackView.pickKerbHandle(point.x, point.y);
+        if (handle) {
+          event.stopPropagation();
+          event.preventDefault();
+          selectedKerbSpan = { sectionId: handle.sectionId, index: handle.spanIndex };
+          drag = {
+            kind: handle.handle === "entry" ? "kerb-entry" : "kerb-exit",
+            sectionId: handle.sectionId,
+            spanIndex: handle.spanIndex,
+            startProject: cloneProject(project),
+          };
+          trackView.setControlsEnabled(false);
+          canvas.setPointerCapture(event.pointerId);
+          canvas.style.cursor = "grabbing";
+          scheduleOverlayUpdate();
+          updateKerbsUI(project);
+          return;
+        }
+        const rail = trackView.pickKerbRail(point.x, point.y);
+        if (rail) {
+          const section = project.centerlines.find(
+            (candidate) => candidate.id === rail.sectionId,
+          );
+          if (!section) {
+            return;
+          }
+          const spanIndex = findKerbSpanAt(
+            project,
+            rail.sectionId,
+            rail.side,
+            rail.fraction,
+          );
+          if (spanIndex !== null) {
+            event.stopPropagation();
+            event.preventDefault();
+            selectedKerbSpan = { sectionId: rail.sectionId, index: spanIndex };
+            scheduleOverlayUpdate();
+            updateKerbsUI(project);
+            return;
+          }
+          event.stopPropagation();
+          event.preventDefault();
+          drag = {
+            kind: "kerb-paint",
+            sectionId: rail.sectionId,
+            side: rail.side,
+            closed: section.closed,
+            originFraction: rail.fraction,
+            previousFraction: rail.fraction,
+            signedLength: 0,
+            startProject: cloneProject(project),
+          };
+          trackView.setControlsEnabled(false);
+          canvas.setPointerCapture(event.pointerId);
+          canvas.style.cursor = "crosshair";
+          scheduleOverlayUpdate();
+          return;
+        }
+        return;
+      }
       const terrainPointIndex = trackView.pickTerrainPoint(point.x, point.y);
       if (terrainPointIndex !== null) {
         event.stopPropagation();
@@ -2010,6 +2575,96 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
       if (!ground) {
         return;
       }
+      if (drag.kind === "kerb-paint") {
+        const activeDrag = drag;
+        const section = project.centerlines.find(
+          (candidate) => candidate.id === activeDrag.sectionId,
+        );
+        if (!section) {
+          return;
+        }
+        const fraction = nearestPolylineFraction(section, ground);
+        if (fraction === null) {
+          return;
+        }
+        if (activeDrag.closed) {
+          let delta = fraction - activeDrag.previousFraction;
+          if (delta > 0.5) {
+            delta -= 1;
+          } else if (delta < -0.5) {
+            delta += 1;
+          }
+          activeDrag.signedLength += delta;
+          activeDrag.previousFraction = fraction;
+        } else {
+          activeDrag.signedLength = fraction - activeDrag.originFraction;
+          activeDrag.previousFraction = fraction;
+        }
+        scheduleOverlayUpdate();
+        return;
+      }
+
+      if (drag.kind === "kerb-entry" || drag.kind === "kerb-exit") {
+        const activeDrag = drag;
+        const section = project.centerlines.find(
+          (candidate) => candidate.id === activeDrag.sectionId,
+        );
+        const span = section?.kerbs?.[activeDrag.spanIndex];
+        if (!section || !span) {
+          return;
+        }
+        const fraction = nearestPolylineFraction(section, ground);
+        if (fraction === null) {
+          return;
+        }
+        const minimum = 0.002;
+        let start = span.start;
+        let length = span.length;
+        if (activeDrag.kind === "kerb-entry") {
+          const exit = kerbSpanEnd(span.start, span.length);
+          const forward = section.closed
+            ? (exit - fraction + 1) % 1
+            : exit - fraction;
+          if (forward <= minimum || forward >= 1) {
+            return;
+          }
+          start = fraction;
+          length = forward;
+        } else {
+          const forward = section.closed
+            ? (fraction - span.start + 1) % 1
+            : fraction - span.start;
+          if (forward <= minimum || forward >= 1) {
+            return;
+          }
+          length = forward;
+        }
+        if (!section.closed && start + length > 1 + 1e-9) {
+          return;
+        }
+        const overlaps = (section.kerbs ?? []).some(
+          (candidate, index) =>
+            index !== activeDrag.spanIndex &&
+            candidate.side === span.side &&
+            kerbSpansOverlap(
+              start,
+              length,
+              candidate.start,
+              candidate.length,
+              section.closed,
+            ),
+        );
+        if (overlaps) {
+          return;
+        }
+        span.start = start;
+        span.length = length;
+        scheduleOverlayUpdate();
+        scheduleDragRender();
+        updateKerbsUI(project);
+        return;
+      }
+
       if (drag.kind === "terrain-point") {
         const terrainPoint = project.terrain.points?.[drag.index];
         if (!terrainPoint) {
@@ -2160,6 +2815,37 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
       return;
     }
 
+    if (editorMode === "kerbs") {
+      const handle = trackView.pickKerbHandle(point.x, point.y);
+      if (handle) {
+        canvas.style.cursor = "grab";
+        pickInfo.innerHTML = `
+          <div class="pick-row"><span>kerb handle</span><strong>${handle.handle}</strong></div>
+          <div class="pick-row"><span>section</span><strong>${handle.sectionId}</strong></div>
+        `;
+        return;
+      }
+      const rail = trackView.pickKerbRail(point.x, point.y);
+      if (rail) {
+        const section = project?.centerlines.find(
+          (candidate) => candidate.id === rail.sectionId,
+        );
+        const spanIndex = section
+          ? findKerbSpanAt(project!, rail.sectionId, rail.side, rail.fraction)
+          : null;
+        canvas.style.cursor = spanIndex === null ? "crosshair" : "pointer";
+        pickInfo.innerHTML = `
+          <div class="pick-row"><span>kerb rail</span><strong>${rail.sectionId} · ${rail.side}</strong></div>
+          <div class="pick-row"><span>fraction</span><strong>${rail.fraction.toFixed(3)}</strong></div>
+        `;
+        return;
+      }
+      canvas.style.cursor = "default";
+      pickInfo.textContent =
+        "Drag a dotted kerb rail to paint a span. Select a span to show endpoint handles.";
+      return;
+    }
+
     const hoverTerrainPoint = trackView.pickTerrainPoint(point.x, point.y);
     if (hoverTerrainPoint !== null) {
       canvas.style.cursor = "grab";
@@ -2222,6 +2908,88 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
     drag = null;
     if (project) {
       flushPendingRender();
+    }
+
+    if (currentDrag.kind === "kerb-paint" && project) {
+      const painted = kerbPaintSpan(currentDrag);
+      if (!painted) {
+        scheduleOverlayUpdate();
+        updateAuthoringUI();
+        return;
+      }
+      const section = project.centerlines.find(
+        (candidate) => candidate.id === currentDrag.sectionId,
+      );
+      if (!section) {
+        return;
+      }
+      if (
+        !section.closed &&
+        painted.start + painted.length > 1 + 1e-9
+      ) {
+        setKerbStatus("The kerb span must stay within this open section.", "error");
+        scheduleOverlayUpdate();
+        return;
+      }
+      const overlaps = (section.kerbs ?? []).some(
+        (span) =>
+          span.side === currentDrag.side &&
+          kerbSpansOverlap(
+            painted.start,
+            painted.length,
+            span.start,
+            span.length,
+            section.closed,
+          ),
+      );
+      if (overlaps) {
+        setKerbStatus("Kerbs on the same side cannot overlap.", "error");
+        scheduleOverlayUpdate();
+        return;
+      }
+      const before = currentDrag.startProject;
+      section.kerbs = [
+        ...(section.kerbs ?? []),
+        { side: currentDrag.side, start: painted.start, length: painted.length },
+      ].sort((a, b) => a.side.localeCompare(b.side) || a.start - b.start);
+      selectedKerbSpan = {
+        sectionId: section.id,
+        index: section.kerbs.findIndex(
+          (span) =>
+            span.side === currentDrag.side &&
+            span.start === painted.start &&
+            span.length === painted.length,
+        ),
+      };
+      if (!renderProject(project, { frame: false })) {
+        project = before;
+        selectedKerbSpan = null;
+        renderProject(project, { frame: false });
+        setKerbStatus("The painted kerb span does not bake.", "error");
+        scheduleOverlayUpdate();
+        return;
+      }
+      pushUndo(before);
+      setKerbStatus("Painted kerb span.", "ok");
+      scheduleOverlayUpdate();
+      updateAuthoringUI();
+      return;
+    }
+
+    if (currentDrag.kind === "kerb-entry" || currentDrag.kind === "kerb-exit") {
+      if (project && !bakeValid) {
+        project = currentDrag.startProject;
+        renderProject(project, { frame: false });
+        setKerbStatus("Kerb resize rejected: the track would become invalid.", "error");
+      } else if (
+        project &&
+        JSON.stringify(currentDrag.startProject) !== JSON.stringify(project)
+      ) {
+        pushUndo(currentDrag.startProject);
+      }
+      scheduleOverlayUpdate();
+      updateAuthoringUI();
+      return;
     }
 
     if (currentDrag.kind === "point" && project) {
@@ -2518,8 +3286,136 @@ spawnLateral.addEventListener("change", () => {
   updateAuthoringUI();
 });
 
+kerbGlobalFlat.addEventListener("input", () => {
+  if (!project) {
+    return;
+  }
+  if (!kerbEditStart) {
+    kerbEditStart = cloneProject(project);
+  }
+  const corner = project.kerbs?.cornerHeight ?? DEFAULT_KERB_CORNER_HEIGHT;
+  const requested = Math.max(0, Number(kerbGlobalFlat.value) || 0);
+  const flat = Math.min(requested, corner - 0.005);
+  kerbGlobalFlat.value = String(flat);
+  project.kerbs = { ...project.kerbs, flatHeight: flat };
+  scheduleRender();
+  updateKerbsUI(project);
+});
+
+kerbGlobalCorner.addEventListener("input", () => {
+  if (!project) {
+    return;
+  }
+  if (!kerbEditStart) {
+    kerbEditStart = cloneProject(project);
+  }
+  const flat = project.kerbs?.flatHeight ?? DEFAULT_KERB_FLAT_HEIGHT;
+  const requested = Math.max(0.005, Number(kerbGlobalCorner.value) || 0.005);
+  const corner = Math.max(requested, flat + 0.005);
+  kerbGlobalCorner.value = String(corner);
+  project.kerbs = { ...project.kerbs, cornerHeight: corner };
+  scheduleRender();
+  updateKerbsUI(project);
+});
+
+kerbGlobalFlat.addEventListener("change", finishKerbEdit);
+kerbGlobalCorner.addEventListener("change", finishKerbEdit);
+
+kerbSpanOverride.addEventListener("change", () => {
+  if (!project || !selectedKerbSpan) {
+    return;
+  }
+  const located = findKerbSpan(project, selectedKerbSpan.sectionId, selectedKerbSpan.index);
+  if (!located) {
+    return;
+  }
+  const span = located.span;
+  const before = cloneProject(project);
+  if (kerbSpanOverride.checked) {
+    span.flatHeight = project.kerbs?.flatHeight ?? DEFAULT_KERB_FLAT_HEIGHT;
+    span.cornerHeight = project.kerbs?.cornerHeight ?? DEFAULT_KERB_CORNER_HEIGHT;
+  } else {
+    delete span.flatHeight;
+    delete span.cornerHeight;
+  }
+  if (!renderProject(project, { frame: false })) {
+    project = before;
+    renderProject(project, { frame: false });
+    setKerbStatus("Those kerb heights do not bake.", "error");
+    return;
+  }
+  pushUndo(before);
+  updateKerbsUI(project);
+});
+
+kerbSpanFlat.addEventListener("input", () => {
+  if (!project || !selectedKerbSpan) {
+    return;
+  }
+  const located = findKerbSpan(project, selectedKerbSpan.sectionId, selectedKerbSpan.index);
+  const span = located?.span;
+  if (!span || (span.flatHeight === undefined && span.cornerHeight === undefined)) {
+    return;
+  }
+  const corner =
+    span.cornerHeight ?? project.kerbs?.cornerHeight ?? DEFAULT_KERB_CORNER_HEIGHT;
+  const requested = Math.max(0, Number(kerbSpanFlat.value) || 0);
+  const flat = Math.min(requested, corner - 0.005);
+  kerbSpanFlat.value = String(flat);
+  editSelectedKerbSpan((editableSpan) => {
+    editableSpan.flatHeight = flat;
+    editableSpan.cornerHeight ??= corner;
+  });
+});
+
+kerbSpanCorner.addEventListener("input", () => {
+  if (!project || !selectedKerbSpan) {
+    return;
+  }
+  const located = findKerbSpan(project, selectedKerbSpan.sectionId, selectedKerbSpan.index);
+  const span = located?.span;
+  if (!span || (span.flatHeight === undefined && span.cornerHeight === undefined)) {
+    return;
+  }
+  const flat = span.flatHeight ?? project.kerbs?.flatHeight ?? DEFAULT_KERB_FLAT_HEIGHT;
+  const requested = Math.max(0.005, Number(kerbSpanCorner.value) || 0.005);
+  const corner = Math.max(requested, flat + 0.005);
+  kerbSpanCorner.value = String(corner);
+  editSelectedKerbSpan((editableSpan) => {
+    editableSpan.cornerHeight = corner;
+    editableSpan.flatHeight ??= flat;
+  });
+});
+
+kerbSpanFlat.addEventListener("change", finishKerbEdit);
+kerbSpanCorner.addEventListener("change", finishKerbEdit);
+
+function finishKerbEdit(): void {
+  if (!kerbEditStart) {
+    return;
+  }
+  const start = kerbEditStart;
+  kerbEditStart = null;
+  if (!flushPendingRender()) {
+    project = start;
+    renderProject(project, { frame: false });
+    setKerbStatus("The kerb span does not bake. Adjust or remove it.", "error");
+    updateAuthoringUI();
+    return;
+  }
+  if (project && JSON.stringify(start) !== JSON.stringify(project)) {
+    pushUndo(start);
+  }
+  updateAuthoringUI();
+}
+
+kerbRemoveButton.addEventListener("click", removeKerbSpan);
+
+modePointsButton.addEventListener("click", () => setEditorMode("points"));
+modeKerbsButton.addEventListener("click", () => setEditorMode("kerbs"));
+
 centerlineToggle.addEventListener("change", () => {
-  view?.setCenterlinesVisible(centerlineToggle.checked);
+  view?.setCenterlinesVisible(editorMode === "points" && centerlineToggle.checked);
 });
 wireframeToggle.addEventListener("change", () => {
   view?.setWireframeVisible(wireframeToggle.checked);
@@ -2583,9 +3479,22 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   if (event.key === "Delete" || event.key === "Backspace") {
-    if (selectedPoint) {
+    if (editorMode === "kerbs" && selectedKerbSpan) {
+      event.preventDefault();
+      removeKerbSpan();
+    } else if (selectedPoint) {
       event.preventDefault();
       deleteSelectedPoint();
+    }
+  }
+  if (event.key === "Escape") {
+    if (editorMode === "kerbs") {
+      event.preventDefault();
+      drag = null;
+      view?.setControlsEnabled(true);
+      selectedKerbSpan = null;
+      scheduleOverlayUpdate();
+      updateAuthoringUI();
     }
   }
 });

@@ -6,6 +6,7 @@ export interface LapsterSurface {
   friction: number;
   roughness: number;
   materials: string[];
+  mountable?: boolean;
 }
 
 export interface LapsterCamera {

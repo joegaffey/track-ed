@@ -1,6 +1,6 @@
 # Contract — `track-ed/project@3`
 
-Status: implemented. Venue sections, general junctions, app authoring, split/merge/detach flows, and Slice 4 conformance/polish are complete; routes remain deferred.
+Status: implemented. Venue sections, general junctions, app authoring, split/merge/detach flows, authorable kerb spans, and Slice 4/G3 conformance are complete; routes remain deferred.
 
 ## Purpose
 
@@ -35,6 +35,42 @@ The executable schema is `schemas/project-v3.schema.json`.
 ```
 
 Road, terrain, spawn, and camera fields follow `track-ed/project@2`.
+
+Global kerb profile heights are optional:
+
+```json
+"kerbs": { "flatHeight": 0.06, "cornerHeight": 0.155 }
+```
+
+Sections may author kerb spans:
+
+```json
+{
+  "id": "loop-a",
+  "closed": true,
+  "kerbs": [
+    { "side": "left", "start": 0.05, "length": 0.3 },
+    {
+      "side": "right",
+      "start": 0.9,
+      "length": 0.2,
+      "flatHeight": 0.08,
+      "cornerHeight": 0.12
+    }
+  ]
+}
+```
+
+Kerb spans are forward arcs in section-local arc-length fractions. `start` is the entry fraction and `length` is the forward arc length. `left` and `right` are relative to increasing section parameterisation.
+
+- On an open section, `start + length` MUST be at most 1.
+- On a closed section, the arc wraps through the seam when `start + length > 1`; no separate wrap flag is stored.
+- A span on a closed section MUST be shorter than the full loop. Use two spans if a full loop is required.
+- Spans on the same side MUST NOT overlap. Wrapped intervals are compared on the circle.
+
+Kerb geometry is clipped around junction asphalt and other kerb spans during the bake, so a span may approach a junction without crossing the road surface.
+
+Each contiguous kerb run is divided into equal-length red/white elements. Every element starts flat at `flatHeight` and rises along the direction of travel to a single raised corner at `cornerHeight`, then drops at a forward-facing riser before the next element. A span may override `flatHeight` and/or `cornerHeight`; otherwise the global profile applies. The effective `cornerHeight` MUST be greater than the effective `flatHeight`.
 
 Junctions connect section control points:
 
@@ -83,6 +119,9 @@ Junctions connect section control points:
 - Removing a junction drops each non-anchor endpoint control point, leaving a gap; the anchor section is unchanged.
 - Splitting a closed loop prefers inserting two control points on the longer adjacent segment and retaining the selected point. If that cannot produce valid geometry, it falls back to simplified sampled control points while retaining the spline. The gap is one road width minimum and expands automatically where curvature would otherwise create invalid geometry.
 - Dragging one loose end of an open section onto its other loose end closes it into a loop.
+- Kerb spans are split, remapped, and side-flipped by section split/merge operations.
+- Kerb width and nominal red/white element length are kernel constants in v1. Flat and corner heights are authorable globally and per span.
+- Each contiguous kerb run is divided into equal-length red/white elements, so junction clipping cannot leave differently sized blocks in one run.
 
 ## Migration
 

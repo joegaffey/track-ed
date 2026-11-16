@@ -4,6 +4,8 @@ const SURFACE_COLORS: Record<string, [number, number, number]> = {
   asphalt: [0.28, 0.31, 0.35],
   dirt: [0.55, 0.37, 0.23],
   grass: [0.18, 0.4, 0.22],
+  kerb_red: [0.7, 0.14, 0.14],
+  kerb_white: [0.93, 0.93, 0.93],
 };
 
 const POSITION_COMPONENT_TYPE = 5126;
@@ -74,7 +76,19 @@ function surfaceColor(surface: Surface): [number, number, number] {
 
 export function buildTrackGlb(track: BakedTrack): Uint8Array {
   const surfaces = [...track.surfaces].sort((a, b) => a.id - b.id);
-  const graph = track.surfaceGraph;
+  const sourceGraphs = [track.surfaceGraph, ...(track.kerbGraph ? [track.kerbGraph] : [])];
+  const positions: Vec3[] = [];
+  const indices: number[] = [];
+  const triangleSurfaces: number[] = [];
+  for (const graph of sourceGraphs) {
+    const base = positions.length;
+    positions.push(...graph.positions);
+    for (const index of graph.indices) {
+      indices.push(index + base);
+    }
+    triangleSurfaces.push(...graph.triangleSurfaces);
+  }
+  const graph = { positions, indices, triangleSurfaces };
   const triangleCount = Math.floor(graph.indices.length / 3);
 
   const trianglesBySurface = new Map<number, number[]>();

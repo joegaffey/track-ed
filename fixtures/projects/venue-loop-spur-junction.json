@@ -20,33 +20,123 @@
     {
       "id": "junction-1",
       "members": [
-        { "section": "loop", "point": "a1" },
-        { "section": "spur", "point": "s0" }
+        {
+          "section": "loop",
+          "point": "a1"
+        },
+        {
+          "section": "spur",
+          "point": "s0"
+        }
       ],
-      "anchor": { "section": "loop", "point": "a1" }
+      "anchor": {
+        "section": "loop",
+        "point": "a1"
+      }
     }
   ],
   "sections": [
     {
       "id": "loop",
       "closed": true,
-      "spline": { "type": "catmull-rom", "samplesPerSegment": 12 },
+      "spline": {
+        "type": "catmull-rom",
+        "samplesPerSegment": 12
+      },
       "points": [
-        { "id": "a0", "position": [0, 0] },
-        { "id": "a1", "position": [80, 0] },
-        { "id": "a2", "position": [110, 40] },
-        { "id": "a3", "position": [80, 80] },
-        { "id": "a4", "position": [0, 80] },
-        { "id": "a5", "position": [-30, 40] }
+        {
+          "id": "a0",
+          "position": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": "a1",
+          "position": [
+            80,
+            0
+          ]
+        },
+        {
+          "id": "a2",
+          "position": [
+            110,
+            40
+          ]
+        },
+        {
+          "id": "a3",
+          "position": [
+            80,
+            80
+          ]
+        },
+        {
+          "id": "a4",
+          "position": [
+            0,
+            80
+          ]
+        },
+        {
+          "id": "a5",
+          "position": [
+            -30,
+            40
+          ]
+        }
+      ],
+      "kerbs": [
+        {
+          "side": "left",
+          "start": 0.05,
+          "length": 0.3
+        },
+        {
+          "side": "right",
+          "start": 0.5,
+          "length": 0.3
+        }
       ]
     },
     {
       "id": "spur",
       "closed": false,
       "points": [
-        { "id": "s0", "position": [80, 20] },
-        { "id": "s1", "position": [60, 40] },
-        { "id": "s2", "position": [40, 20] }
+        {
+          "id": "s0",
+          "position": [
+            80,
+            20
+          ]
+        },
+        {
+          "id": "s1",
+          "position": [
+            60,
+            40
+          ]
+        },
+        {
+          "id": "s2",
+          "position": [
+            40,
+            20
+          ]
+        }
+      ],
+      "kerbs": [
+        {
+          "side": "left",
+          "start": 0.05,
+          "length": 0.3
+        },
+        {
+          "side": "right",
+          "start": 0.0,
+          "length": 1.0
+        }
       ]
     }
   ]

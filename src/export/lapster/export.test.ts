@@ -26,7 +26,7 @@ function readJsonChunk(bytes: Uint8Array): Record<string, unknown> {
   return JSON.parse(text.trimEnd()) as Record<string, unknown>;
 }
 
-describe("lapster-glb-track@1", () => {
+describe("lapster-glb-track@2", () => {
   it("emits a deterministic GLB and manifest", () => {
     const track = validTrack();
     const first = exportLapsterGlbTrack(track);
@@ -91,6 +91,12 @@ describe("lapster-glb-track@1", () => {
       expect(parsed.issues).toEqual([]);
       const track = bakeProject(parsed.project!);
       const bundle = exportLapsterGlbTrack(track);
+      const repeat = exportLapsterGlbTrack(track);
+      for (let index = 0; index < bundle.files.length; index += 1) {
+        expect(Array.from(bundle.files[index]!.bytes)).toEqual(
+          Array.from(repeat.files[index]!.bytes),
+        );
+      }
 
       expect(bundle.manifest.length).toBeCloseTo(track.length, 9);
       expect(bundle.manifest.length).toBeGreaterThan(0);
@@ -101,7 +107,20 @@ describe("lapster-glb-track@1", () => {
         "surface_asphalt",
         "surface_dirt",
         "surface_grass",
+        "surface_kerb_red",
+        "surface_kerb_white",
       ]);
+      expect(bundle.manifest.surfaces.map((surface) => surface.name)).toEqual([
+        "asphalt",
+        "dirt",
+        "grass",
+        "kerb_red",
+        "kerb_white",
+      ]);
+      expect(
+        bundle.manifest.surfaces.filter((surface) => surface.name.startsWith("kerb_")),
+      ).toHaveLength(2);
+      expect(bundle.manifest.surfaces.every((surface) => !surface.mountable)).toBe(true);
     }
   });
 

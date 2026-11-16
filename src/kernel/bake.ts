@@ -1,3 +1,4 @@
+import { BakeError } from "./bake-error";
 import type {
   BakedTrack,
   Camera,
@@ -45,17 +46,10 @@ import {
   sub2,
 } from "./math2";
 import type { Project, ProjectCenterline } from "./project";
-import { DEFAULT_SURFACES } from "./surfaces";
+import { DEFAULT_SURFACES, KERB_SURFACES } from "./surfaces";
+import { buildKerbGraph } from "./kerbs";
 
-export class BakeError extends Error {
-  readonly issues: string[];
-
-  constructor(message: string, issues: string[] = []) {
-    super(message);
-    this.name = "BakeError";
-    this.issues = issues.length > 0 ? issues : [message];
-  }
-}
+export { BakeError };
 
 interface MainBands {
   points: Vec2[];
@@ -252,7 +246,16 @@ function finishTrack(
   surfaceGraph: SurfaceGraph,
   lengthOverride?: number,
 ): BakedTrack {
+  const kerbGraph = buildKerbGraph(project, surfaceGraph, bounds);
   const surfaces: Surface[] = DEFAULT_SURFACES.map((surface) => ({ ...surface }));
+  if (kerbGraph) {
+    const kerbSurfaceIds = new Set(kerbGraph.triangleSurfaces);
+    surfaces.push(
+      ...KERB_SURFACES.filter((surface) => kerbSurfaceIds.has(surface.id)).map(
+        (surface) => ({ ...surface }),
+      ),
+    );
+  }
   const spawn = spawnFor(project, main);
   if (
     project.terrain.mode === "follow" &&
@@ -273,6 +276,10 @@ function finishTrack(
     minY = Math.min(minY, position[1]);
     maxY = Math.max(maxY, position[1]);
   }
+  for (const position of kerbGraph?.positions ?? []) {
+    minY = Math.min(minY, position[1]);
+    maxY = Math.max(maxY, position[1]);
+  }
   if (!Number.isFinite(minY) || !Number.isFinite(maxY)) {
     minY = 0;
     maxY = 0;
@@ -289,6 +296,7 @@ function finishTrack(
       max: [bounds.max[0], maxY, bounds.max[2]],
     },
     surfaceGraph,
+    ...(kerbGraph ? { kerbGraph } : {}),
     surfaces,
     spawns: [spawn],
     cameras: project.cameras.map(cameraFor),

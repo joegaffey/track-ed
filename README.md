@@ -4,9 +4,9 @@ Standalone, browser-first track geometry editor.
 
 Live demo: https://joegaffey.com/track-ed/
 
-Status: M4 conformance passed. v1-G1 rounded spline centrelines and v1-G2 terrain are implemented. Terrain is authored by point-based TIN, with both `conform` and `follow` road modes. `track-ed/project@3` venue sections are implemented: multiple closed loops, dead-ended open sections, general and multi-way junction members, a section list, independent section and junction authoring, loose-end joins/merges, loop closing, junction detach, and open/closed section splitting all work without a main loop. Existing `project@2` projects are converted to `project@3` on load; `project@1` remains import-only. All 17 fixtures pass bake/validate/export and Lapster conformance. track-ed remains a spike and is **not promoted to production** yet; road elevation, banking/crown, kerbs, and props remain v1 gates. See `docs/v1-roadmap.md`.
+Status: M4 conformance passed. v1-G1 rounded spline centrelines, v1-G2 terrain, and v1-G3 kerbs are implemented. Terrain is authored by point-based TIN, with both `conform` and `follow` road modes. `track-ed/project@3` venue sections are implemented: multiple closed loops, dead-ended open sections, general and multi-way junction members, a section list, independent section and junction authoring, loose-end joins/merges, loop closing, junction detach, and open/closed section splitting all work without a main loop. Kerbs are authored in a Kerbs mode with dashed edge rails: drag a rail to paint a span, select it, and drag endpoint handles to resize, including spans that cross a closed-section seam. Global or per-span flat/corner heights remain numeric fields. Kerbs bake into a separate graph with equal-length jagged elements, clipped around junction asphalt, and exported with solid collision. Existing `project@2` projects are converted to `project@3` on load; `project@1` remains import-only. All 17 fixtures pass bake/validate/export and Lapster conformance. track-ed remains a spike and is **not promoted to production** yet; road elevation, banking/crown, and props remain v1 gates. See `docs/v1-roadmap.md`.
 
-Lapster is the first consumer, not the definition of the tool. The core is consumer-agnostic. v0 ships one export profile, `lapster-glb-track@1`, which emits `track.glb` + `track.json` for Lapster's asset compiler. The `.sima` pack is produced downstream by Lapster, not by track-ed.
+Lapster is the first consumer, not the definition of the tool. The core is consumer-agnostic. v0 ships one export profile, `lapster-glb-track@2`, which emits `track.glb` + `track.json` for Lapster's asset compiler. The `.sima` pack is produced downstream by Lapster, not by track-ed.
 
 `track.glb` is standard glTF 2.0. The Lapster-specific parts are the `track.json` manifest, the `surface_*` node/material naming convention, surface metadata, spawn/collision rules, and the two-file bundle contract.
 
@@ -26,7 +26,7 @@ Lapster is the first consumer, not the definition of the tool. The core is consu
 4. `docs/contracts/project-v2.md` — legacy junction-graph contract.
 5. `docs/contracts/project.md` — legacy `project@1` authoring contract.
 6. `docs/contracts/baked-track.md` — consumer-neutral baked model.
-7. `docs/contracts/lapster-glb-track.md` — v0 export profile.
+7. `docs/contracts/lapster-glb-track.md` — current export profile.
 8. `docs/research-brief.md` — brief for the independent research agent.
 9. `docs/research-report.md` — prior-art and technique survey for the kernel and inspector.
 10. `docs/conformance-report.md` — latest Lapster conformance results.
@@ -55,7 +55,7 @@ The app starts with a rounded spline loop. There is no fixture selector: use Ope
 ```text
 src/kernel/                consumer-neutral geometry kernel
 src/model/                 BakedTrack contract
-src/export/lapster/        lapster-glb-track@1 profile
+src/export/lapster/        lapster-glb-track@2 profile
 src/app/                   three.js editor and inspector
 fixtures/projects/         authoring fixtures
 schemas/                   JSON Schemas
@@ -69,7 +69,7 @@ docs/                      decisions, contracts, toolchain, research brief
 - **M2** — main-loop point editing, branch authoring, undo/redo, and project save/open. (implemented)
 - **M3** — spawn authoring, validation gate, and export UX. (implemented)
 - **M4** — conformance run, comparison report, continue/discard decision. Conformance passed; the outcome is **continue the spike**, not production promotion.
-- **v1** — G1 splines, G2 terrain, the `project@2` multi-junction graph, and the `project@3` venue section graph are implemented; kerbs, props, re-conformance, and production decision remain. See `docs/v1-roadmap.md`.
+- **v1** — G1 splines, G2 terrain, the `project@2` multi-junction graph, the `project@3` venue section graph, and G3 kerbs are implemented; props, re-conformance, and production decision remain. See `docs/v1-roadmap.md`.
 
 ## Conformance
 
