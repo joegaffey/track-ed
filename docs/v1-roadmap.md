@@ -51,7 +51,7 @@ Contract decision (D12): terrain has one source of truth per project.
 
 - `project@5` adds fixed left/right kerb-edge splines plus free section-local roadside splines with kerb, wall, tree, tyre, and block runs.
 - Walls use the shared roadside-run path with forward `start + length` spans, fixed `0.3 m` thickness, default `1.0 m` height, and default `0 m` offset so the inner face sits on the tarmac edge.
-- Walls bake into a separate `wallGraph` with the `wall` surface; exposed ends are capped and junction overlaps are intentional. Kerbs on the same side are suppressed under wall spans.
+- Walls bake into a separate `wallGraph` with the `wall` surface; exposed ends are capped and junction overlaps are intentional. Kerbs on the same side are suppressed under wall spans; walls may directly replace kerbs on the fixed kerb splines.
 - Prop runs carry kind, side, forward `start + length`, offset, spacing, and collision. The kernel expands them into deterministic instances along the section spline with terrain-sampled base heights. Tree collision is trunk-only.
 - The app keeps two fixed kerb-edge splines hidden, shows free splines minimally with id/slider/numeric offset, paints mixed run types, and edits run spacing/height in 3D. Exported props use Lapster-derived concrete barrier, blue/white tyre-stack, and conifer-tree geometry rather than track-ed placeholders.
 - `lapster-glb-track@3` emits `surface_wall`, `prop_*` visuals, and a merged `col_prop` collision mesh using the `wall` material.

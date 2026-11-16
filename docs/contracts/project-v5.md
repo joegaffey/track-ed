@@ -108,7 +108,7 @@ Instances:
 
 - A section may have any number of roadside splines at different offsets.
 - A spline may have runs of different kinds.
-- Runs within one spline MUST NOT overlap. Wrapped intervals are compared on the circle.
+- Runs within one spline MUST NOT overlap, except a wall run MAY overlap a kerb run on a fixed kerb spline. The wall replaces the kerb for that arc. Wrapped intervals are compared on the circle.
 - Different splines MAY overlap in `start/length`; offsets keep them separate.
 - On an open section, `start + length` MUST be at most 1.
 - On a closed section, a run wraps through the seam when `start + length > 1`; a single run MUST be shorter than the full loop.

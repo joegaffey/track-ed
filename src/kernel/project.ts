@@ -1203,10 +1203,15 @@ function parseRoadsideSpline(
             aInterval[1] > bInterval[0] + 1e-9,
         ),
       );
-      if (overlap) {
+      const wallCoversKerb =
+        role !== undefined &&
+        ((a.kind === "wall" && b.kind === "kerb") ||
+          (a.kind === "kerb" && b.kind === "wall"));
+      if (overlap && !wallCoversKerb) {
         issues.push({
           path: `${path}.runs`,
-          message: "runs on one roadside spline must not overlap",
+          message:
+            "runs on one roadside spline must not overlap, except a wall may replace a kerb on a fixed kerb spline",
         });
         return null;
       }

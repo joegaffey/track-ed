@@ -82,7 +82,7 @@
             },
             {
               "kind": "wall",
-              "start": 0.25,
+              "start": 0.15,
               "length": 0.2
             }
           ]

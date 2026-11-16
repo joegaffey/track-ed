@@ -266,6 +266,55 @@ describe("walls and prop runs", () => {
     expect(track.props![0]!.position[1]).toBeGreaterThan(3);
   });
 
+  it("lets a wall replace a kerb on a fixed kerb spline", () => {
+    const project = parse({
+      schema: "track-ed/project@5",
+      name: "Wall over fixed kerb",
+      generator: "track-ed test",
+      road: { halfWidth: 5, shoulderHalfWidth: 8 },
+      terrain: { margin: 20, mode: "conform" },
+      spawn: { centerline: "road", fraction: 0.2, lateral: 0 },
+      cameras: [],
+      sections: [
+        {
+          id: "road",
+          closed: false,
+          points: [
+            { id: "p0", position: [0, 0] },
+            { id: "p1", position: [100, 0] },
+          ],
+          roadside: [
+            {
+              id: "road:kerb-left",
+              role: "kerb-left",
+              side: "left",
+              offset: 5,
+              runs: [
+                { kind: "kerb", start: 0.1, length: 0.4 },
+                { kind: "wall", start: 0.2, length: 0.2 },
+              ],
+            },
+            {
+              id: "road:kerb-right",
+              role: "kerb-right",
+              side: "right",
+              offset: 5,
+              runs: [],
+            },
+          ],
+        },
+      ],
+    });
+    const track = bakeProject(project);
+    expect(track.wallGraph).toBeDefined();
+    expect(track.kerbGraph).toBeDefined();
+    expect(
+      track.kerbGraph!.positions.every(
+        (position) => position[0] < 20.1 || position[0] > 39.9,
+      ),
+    ).toBe(true);
+  });
+
   it("rejects overlapping runs on one roadside spline", () => {
     const result = parseProject({
       schema: "track-ed/project@5",

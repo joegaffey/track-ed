@@ -158,7 +158,7 @@ Kerbs, walls, trees, tyres, and blocks are all runs on section-local roadside sp
 - Wall spans use the same forward `start + length` semantics as kerbs, including closed-section seam wrapping.
 - Wall height defaults to `1.0 m`; wall thickness is fixed at `0.3 m`. On a fixed kerb-edge spline the wall starts exactly at the tarmac edge.
 - Walls run continuously and may overlap at junctions. They are not clipped or joined.
-- Where a wall span overlaps a kerb span on the same section side, the kerb is suppressed for the overlapped arc; the wall replaces it.
+- On a fixed kerb spline, a wall run MAY overlap a kerb run; the wall replaces the kerb for that arc. Wall-over-kerb suppression also applies across splines on the same section side.
 - Instance runs carry `kind`, forward `start + length`, outward offset, spacing, and collision policy. The kernel expands them into deterministic instances with lateral/longitudinal/yaw jitter, tree size variation, terrain height, and tangent-facing quaternions. Blocks stay equal-sized and evenly spaced with a gap.
 - The Lapster profile maps wall geometry to `surface_wall` and props to `prop_*` visuals plus a merged `col_prop` collision mesh using the `wall` material.
 - Prop visual geometry follows Lapster's procedural prop conventions: concrete barrier blocks, alternating blue/white tyre stacks, and tiered conifer trees.

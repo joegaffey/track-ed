@@ -2589,13 +2589,18 @@ function findRoadsideRunAt(
   fraction: number,
   closed: boolean,
 ): number | null {
+  let fallback: number | null = null;
   for (let index = 0; index < spline.runs.length; index += 1) {
     const run = spline.runs[index]!;
-    if (kerbSpanContains(run.start, run.length, fraction, closed)) {
+    if (!kerbSpanContains(run.start, run.length, fraction, closed)) {
+      continue;
+    }
+    if (run.kind === "wall") {
       return index;
     }
+    fallback ??= index;
   }
-  return null;
+  return fallback;
 }
 
 function roadsideRunOverlaps(
@@ -2603,13 +2608,22 @@ function roadsideRunOverlaps(
   start: number,
   length: number,
   closed: boolean,
+  kind: ProjectRoadsideKind,
   ignoreIndex = -1,
 ): boolean {
-  return spline.runs.some(
-    (run, index) =>
-      index !== ignoreIndex &&
-      kerbSpansOverlap(start, length, run.start, run.length, closed),
-  );
+  return spline.runs.some((run, index) => {
+    if (
+      index === ignoreIndex ||
+      !kerbSpansOverlap(start, length, run.start, run.length, closed)
+    ) {
+      return false;
+    }
+    const wallCoversKerb =
+      spline.role !== undefined &&
+      ((kind === "wall" && run.kind === "kerb") ||
+        (kind === "kerb" && run.kind === "wall"));
+    return !wallCoversKerb;
+  });
 }
 
 function roadsideOverlayKind(
@@ -4465,6 +4479,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
             start,
             length,
             section.closed,
+            run.kind,
             activeDrag.runIndex,
           )
         ) {
@@ -5089,6 +5104,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
           painted.start,
           painted.length,
           located.section.closed,
+          currentDrag.runKind,
         )
       ) {
         setRoadsideStatus(
