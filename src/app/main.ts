@@ -5341,6 +5341,9 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
     const point = pointerNdc(event, canvas);
     const hit = trackView.pickCenterlineSegment(point.x, point.y);
     if (!hit) {
+      if (trackView.focusAt(point.x, point.y)) {
+        event.preventDefault();
+      }
       return;
     }
     event.preventDefault();

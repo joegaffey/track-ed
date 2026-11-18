@@ -10,6 +10,13 @@ import type {
 } from "../model/baked-track";
 import type { EdgeInfo, TopologyReport } from "../kernel/topology";
 import {
+  CONIFER_SIZE,
+  buildConiferFoliage,
+  coniferTone,
+  coniferTrunk,
+  type ConiferTone,
+} from "../kernel/conifer";
+import {
   distancePointToSegmentSq,
   pointOnSegmentParameter,
   type Vec2,
@@ -26,6 +33,13 @@ export const SURFACE_COLORS: Record<string, number> = {
 
 const MAIN_CENTERLINE_COLOR = 0xffd166;
 const BRANCH_CENTERLINE_COLOR = 0x38bdf8;
+
+const CONIFER_PREVIEW_COLORS: Record<ConiferTone, number> = {
+  deep: 0x0c2a0e,
+  mid: 0x143d15,
+  light: 0x20531d,
+  gold: 0x8a6410,
+};
 
 export interface PickResult {
   triangle: number;
@@ -160,6 +174,7 @@ export interface TrackView {
   pickTerrainPoint(x: number, y: number): number | null;
   pickSpawn(x: number, y: number): boolean;
   pickGround(x: number, y: number): Vec2 | null;
+  focusAt(x: number, y: number): boolean;
   screenUnitsPerPixel(): number;
   requestRender(): void;
   resize(): void;
@@ -270,6 +285,11 @@ export function createTrackView(
   controls.enableDamping = true;
   controls.dampingFactor = 0.075;
   controls.maxPolarAngle = Math.PI / 2 - 0.01;
+  controls.zoomToCursor = true;
+  controls.zoomSpeed = 0.9;
+  controls.panSpeed = 1.1;
+  controls.minDistance = 0.5;
+  controls.screenSpacePanning = true;
 
   const hemisphere = new THREE.HemisphereLight(0xcfe0ff, 0x1a2418, 1.4);
   scene.add(hemisphere);
@@ -745,6 +765,7 @@ export function createTrackView(
           color,
           roughness: 0.8,
           metalness: 0,
+          flatShading: true,
           emissive: prop.selected ? 0x2b6cff : 0x000000,
           emissiveIntensity: prop.selected ? 0.5 : 0,
         });
@@ -761,27 +782,32 @@ export function createTrackView(
       };
       if (prop.kind === "tree") {
         const variant = propHash(prop.id, 0x4);
-        const tiers: Array<readonly [number, number, number]> =
-          variant < 0.4
-            ? [[1, 2, 2.2], [2.1, 1.65, 2], [3.2, 1.3, 1.9], [4.3, 1, 1.8], [5.4, 0.7, 1.7], [6.5, 0.4, 1.5]]
-            : variant < 0.75
-              ? [[1.1, 2.4, 2.4], [2.3, 1.9, 2.2], [3.5, 1.45, 2], [4.7, 1.05, 1.8], [5.9, 0.65, 1.6]]
-              : [[0.5, 1.25, 1.5], [1.4, 0.95, 1.4], [2.3, 0.65, 1.3], [3.2, 0.4, 1.2]];
-        const treeScale = 0.6;
-        const trunkHeight = (variant < 0.4 ? 1.6 : variant < 0.75 ? 1.8 : 1) * treeScale;
-        const trunkRadius = (variant < 0.4 ? 0.18 : variant < 0.75 ? 0.24 : 0.13) * treeScale;
+        const treeScale = CONIFER_SIZE;
+        const trunkSize = coniferTrunk(variant);
+        const trunkHeight = trunkSize.height * treeScale;
+        const trunkRadius = trunkSize.radius * treeScale;
         addMesh(
-          new THREE.CylinderGeometry(trunkRadius * 0.5, trunkRadius, trunkHeight, 5),
+          new THREE.CylinderGeometry(trunkRadius * 0.6, trunkRadius, trunkHeight, 6),
           trunkHeight / 2,
-          0x523b26,
+          0x5f321a,
         );
-        for (const [offset, radius, height] of tiers) {
-          addMesh(
-            new THREE.ConeGeometry(radius * treeScale, height * treeScale, 6),
-            (offset + height / 2) * treeScale,
-            0x336b2e,
-          );
+        const tree = buildConiferFoliage(prop.id, variant, treeScale);
+        const data = new Float32Array(tree.positions.length * 3);
+        for (let index = 0; index < tree.positions.length; index += 1) {
+          const position = tree.positions[index]!;
+          data[index * 3] = position[0];
+          data[index * 3 + 1] = position[1];
+          data[index * 3 + 2] = position[2];
         }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.BufferAttribute(data, 3));
+        geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(tree.indices), 1));
+        geometry.computeVertexNormals();
+        addMesh(
+          geometry,
+          0,
+          CONIFER_PREVIEW_COLORS[coniferTone(prop.id, variant)],
+        );
       } else if (prop.kind === "tyre") {
         for (let index = 0; index < 3; index += 1) {
           addMesh(
@@ -1532,6 +1558,28 @@ export function createTrackView(
       };
     },
     pickGround,
+    focusAt(x: number, y: number): boolean {
+      const focusMeshes = [surfaceMesh, kerbMesh, wallMesh].filter(
+        (mesh): mesh is THREE.Mesh => mesh !== null,
+      );
+      pointer.set(x, y);
+      raycaster.setFromCamera(pointer, camera);
+      const hit = raycaster.intersectObjects(focusMeshes, false)[0];
+      let focus = hit?.point.clone();
+      if (!focus) {
+        const ground = pickGround(x, y);
+        if (!ground) {
+          return false;
+        }
+        focus = new THREE.Vector3(ground[0], 0, ground[1]);
+      }
+      const delta = focus.clone().sub(controls.target);
+      controls.target.add(delta);
+      camera.position.add(delta);
+      controls.update();
+      requestRender();
+      return true;
+    },
     screenUnitsPerPixel(): number {
       const distance = camera.position.distanceTo(controls.target);
       const height = Math.max(renderer.domElement.clientHeight, 1);

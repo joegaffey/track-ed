@@ -80,6 +80,7 @@ Post-promotion follow-ups:
 - Banking and crown.
 - A7 current-builder iteration-time trial with a defined workflow.
 - Wider curve-shape fixture coverage.
+- GPU-instanced tree props: export one mesh per tree variant/tone plus per-instance transforms, and add static-instance support to Lapster's GLB track importer/renderer. Goal is lower `.sima` size and vertex memory for large tree counts without adding per-frame CPU work; GPU triangle work stays the same, so prototype only when tree density justifies it.
 
 ## Contract impact
 

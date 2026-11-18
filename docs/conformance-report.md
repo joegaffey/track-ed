@@ -89,9 +89,9 @@ The loop-spur fixture has 1167 kerb triangles with continuous junction overlaps;
 
 | Fixture | `track.sima` | Vertices | Triangles | Surfaces | Inspect | Validate |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
-| `venue-walls-props` | 2439704 B | 28656 | 18897 | 11 | `venue-walls-props (Track)` | ok |
+| `venue-walls-props` | 4762560 B | 71325 | 34113 | 6 | `venue-walls-props (Track)` | ok |
 
-The bundle has 11 materials, 11 textures, 11 draw calls, and 4,773 collision triangles. Asphalt, dirt, and grass use deterministic procedural textures with `TEXCOORD_0`; kerbs, walls, concrete, tyres, and trees carry outline extras. `surface_wall` is exported as a separate wall graph; kerbs on the same side are suppressed under wall spans; props export as `prop_*` visual meshes using Lapster-derived block, tyre, and conifer geometry, plus a merged `col_prop` collision mesh using the `wall` material. Props default to solid collision and can opt out with `collision: "none"`; tree collision is trunk-only. The manifest uses `visual.include = ["surface_*", "prop_*"]` and `collision.include = ["surface_*", "col_*"]`. The track viewer and drive viewer loaded the bundle with no console errors; trees, tyres, blocks, and walls render, the car spawns on the track, and the asphalt/grass textures and kerb/wall/prop outlines match the OG track editor style. Lapster also adds distant mountain terrain and dithered material fringes at runtime, bringing the scene to 25,617 triangles, 33,033 vertices, 13 textures, and 14 draw calls.
+The bundle has 15 materials, 15 textures, 15 draw calls, and 4,773 collision triangles. Asphalt, dirt, and grass use deterministic procedural textures with `TEXCOORD_0`; kerbs, walls, concrete, and tyres carry outline extras, while tree trunks and all foliage tones explicitly disable outlines for the softer layered conifers. `surface_wall` is exported as a separate wall graph; kerbs on the same side are suppressed under wall spans; props export as `prop_*` visual meshes using Lapster-derived block, tyre, and layered conifer geometry, plus a merged `col_prop` collision mesh using the `wall` material. Props default to solid collision and can opt out with `collision: "none"`; tree collision is trunk-only. The manifest uses `visual.include = ["surface_*", "prop_*", "racing_line"]` and `collision.include = ["surface_*", "col_*"]`. The track viewer and drive viewer loaded the bundle with no console errors; trees, tyres, blocks, walls, and the racing line render, the car spawns on the track, and the asphalt/grass textures and kerb/wall/prop outlines match the OG track editor style. Lapster also adds distant mountain terrain and dithered material fringes at runtime, bringing the scene to 40,833 triangles, 75,702 vertices, 17 textures, and 18 draw calls.
 
 ## G5 full-fixture re-conformance
 
@@ -116,7 +116,7 @@ All 19 checked-in project fixtures were parsed, baked, validated in-process, exp
 | `loop-with-branch-90-spline-terrain-follow` | 1315176 B | 3814 | 4048 | 3 | 371.36 m | ok |
 | `venue-loop-spur-junction` | 1516492 B | 7245 | 4431 | 5 | 444.37 m | ok |
 | `venue-two-loops-spur` | 1844488 B | 12337 | 7876 | 5 | 813.65 m | ok |
-| `venue-walls-props` | 2786456 B | 29965 | 21129 | 6 | 371.36 m | ok |
+| `venue-walls-props` | 4762560 B | 71325 | 34113 | 6 | 371.36 m | ok |
 | `venue-wrapped-kerb` | 1417096 B | 5611 | 3485 | 5 | 313.85 m | ok |
 
 The `.sima` sizes include the procedural textures, outline extras, and the racing-line ribbon. Every bundle now contains one extra material, texture, and draw call for `racing_line`; collision totals are unchanged from `@3`. The venue length is the sum of all section lengths. Kerb fixtures add two surfaces and a separate kerb graph; wall/prop fixtures add the `wall` surface, prop visual nodes, and optional `col_prop` collision. Ground node names and spawn/collision rules are unchanged from `@1`. The two-loop venue has two disjoint spline loops plus a dead-ended open spur; the junction venue has a closed loop with an open spur attached at an interior control point.

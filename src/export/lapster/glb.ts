@@ -1,4 +1,10 @@
 import type { BakedTrack, Prop, Quat, Surface, Vec3 } from "../../model/baked-track";
+import {
+  CONIFER_SIZE,
+  buildConiferFoliage,
+  coniferTone,
+  coniferTrunk,
+} from "../../kernel/conifer";
 
 const SURFACE_COLORS: Record<string, [number, number, number]> = {
   asphalt: [0.045, 0.045, 0.05],
@@ -33,15 +39,24 @@ const OUTLINE_MATERIALS = new Set([
   "concrete",
   "tire_blue",
   "tire_white",
+]);
+
+const NO_OUTLINE_MATERIALS = new Set([
   "tree_trunk",
   "tree_foliage",
+  "tree_foliage_deep",
+  "tree_foliage_light",
+  "tree_foliage_gold",
 ]);
 
 // Ported from Lapster's procedural prop materials and dimensions
 // (crates/sim-render/src/track_editor.rs, MIT OR Apache-2.0).
 const PROP_COLORS: Record<string, [number, number, number]> = {
-  prop_tree_trunk: [0.32, 0.23, 0.15],
-  prop_tree_foliage: [0.2, 0.42, 0.18],
+  prop_tree_trunk: [0.11, 0.03, 0.009],
+  prop_tree_foliage_deep: [0.022, 0.07, 0.025],
+  prop_tree_foliage: [0.04, 0.12, 0.038],
+  prop_tree_foliage_light: [0.075, 0.19, 0.06],
+  prop_tree_foliage_gold: [0.38, 0.23, 0.04],
   prop_tire_blue: [0.133, 0.333, 0.667],
   prop_tire_white: [0.867, 0.867, 0.867],
   prop_block: [0.667, 0.667, 0.667],
@@ -49,7 +64,10 @@ const PROP_COLORS: Record<string, [number, number, number]> = {
 
 const PROP_MATERIAL_NAME: Record<string, string> = {
   prop_tree_trunk: "tree_trunk",
+  prop_tree_foliage_deep: "tree_foliage_deep",
   prop_tree_foliage: "tree_foliage",
+  prop_tree_foliage_light: "tree_foliage_light",
+  prop_tree_foliage_gold: "tree_foliage_gold",
   prop_tire_blue: "tire_blue",
   prop_tire_white: "tire_white",
   prop_block: "concrete",
@@ -59,29 +77,6 @@ const LAPSTER_BLOCK_HALF: Vec3 = [0.3, 0.4, 0.9];
 const LAPSTER_TYRE_RADIUS = 0.4;
 const LAPSTER_TYRE_LAYER_HEIGHT = 0.3;
 const LAPSTER_TYRE_LAYERS = 3;
-const LAPSTER_TREE_SIZE = 0.6;
-const LAPSTER_TREE_TALL: ReadonlyArray<readonly [number, number, number]> = [
-  [1, 2, 2.2],
-  [2.1, 1.65, 2],
-  [3.2, 1.3, 1.9],
-  [4.3, 1, 1.8],
-  [5.4, 0.7, 1.7],
-  [6.5, 0.4, 1.5],
-];
-const LAPSTER_TREE_BROAD: ReadonlyArray<readonly [number, number, number]> = [
-  [1.1, 2.4, 2.4],
-  [2.3, 1.9, 2.2],
-  [3.5, 1.45, 2],
-  [4.7, 1.05, 1.8],
-  [5.9, 0.65, 1.6],
-];
-const LAPSTER_TREE_YOUNG: ReadonlyArray<readonly [number, number, number]> = [
-  [0.5, 1.25, 1.5],
-  [1.4, 0.95, 1.4],
-  [2.3, 0.65, 1.3],
-  [3.2, 0.4, 1.2],
-];
-
 function propHash(id: string, salt: number): number {
   let hash = 0x811c9dc5 ^ salt;
   for (let index = 0; index < id.length; index += 1) {
@@ -259,160 +254,6 @@ function addCylinder(
   }
 }
 
-function addCone(
-  positions: Vec3[],
-  indices: number[],
-  center: Vec3,
-  radius: number,
-  height: number,
-  sides: number,
-  quaternion: Quat,
-): void {
-  const base = positions.length;
-  for (let index = 0; index < sides; index += 1) {
-    const angle = (index / sides) * Math.PI * 2;
-    const rotated = rotateByQuat(
-      [Math.cos(angle) * radius, -height / 2, Math.sin(angle) * radius],
-      quaternion,
-    );
-    positions.push([
-      rotated[0] + center[0],
-      rotated[1] + center[1],
-      rotated[2] + center[2],
-    ]);
-  }
-  const apex = positions.length;
-  const rotatedApex = rotateByQuat([0, height / 2, 0], quaternion);
-  positions.push([
-    rotatedApex[0] + center[0],
-    rotatedApex[1] + center[1],
-    rotatedApex[2] + center[2],
-  ]);
-  const centerIndex = positions.length;
-  const rotatedBase = rotateByQuat([0, -height / 2, 0], quaternion);
-  positions.push([
-    rotatedBase[0] + center[0],
-    rotatedBase[1] + center[1],
-    rotatedBase[2] + center[2],
-  ]);
-  for (let index = 0; index < sides; index += 1) {
-    const next = (index + 1) % sides;
-    indices.push(base + index, base + next, apex);
-    indices.push(centerIndex, base + next, base + index);
-  }
-}
-
-function addOrientedTriangle(
-  positions: Vec3[],
-  indices: number[],
-  a: Vec3,
-  b: Vec3,
-  c: Vec3,
-  hint: Vec3,
-): void {
-  const ab: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-  const ac: Vec3 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-  const normal: Vec3 = [
-    ab[1] * ac[2] - ab[2] * ac[1],
-    ab[2] * ac[0] - ab[0] * ac[2],
-    ab[0] * ac[1] - ab[1] * ac[0],
-  ];
-  const dot =
-    normal[0] * hint[0] + normal[1] * hint[1] + normal[2] * hint[2];
-  const base = positions.length;
-  positions.push(a, b, c);
-  if (dot >= 0) {
-    indices.push(base, base + 1, base + 2);
-  } else {
-    indices.push(base, base + 2, base + 1);
-  }
-}
-
-function addOrientedQuad(
-  positions: Vec3[],
-  indices: number[],
-  a: Vec3,
-  b: Vec3,
-  c: Vec3,
-  d: Vec3,
-  hint: Vec3,
-): void {
-  addOrientedTriangle(positions, indices, a, b, c, hint);
-  addOrientedTriangle(positions, indices, a, c, d, hint);
-}
-
-function addConiferTier(
-  positions: Vec3[],
-  indices: number[],
-  base: Vec3,
-  offset: number,
-  radius: number,
-  height: number,
-  tierIndex: number,
-  quaternion: Quat,
-  id: string,
-  treeScale: number,
-): void {
-  const center: Vec3 = [
-    base[0],
-    base[1] + offset * treeScale,
-    base[2],
-  ];
-  const topCenter: Vec3 = [
-    base[0],
-    base[1] + (offset + height) * treeScale,
-    base[2],
-  ];
-  const topRadius = radius * treeScale * 0.1;
-  const phase =
-    tierIndex * 0.37 + propHash(id, 0x20 + tierIndex) * 0.18;
-  for (let side = 0; side < 6; side += 1) {
-    const next = (side + 1) % 6;
-    const jitter0 =
-      0.88 + 0.24 * (propHash(id, 0x40 + tierIndex * 8 + side) * 0.5 + 0.5);
-    const jitter1 =
-      0.88 + 0.24 * (propHash(id, 0x40 + tierIndex * 8 + next) * 0.5 + 0.5);
-    const droop0 =
-      height * treeScale *
-      (0.06 + 0.12 * (propHash(id, 0x80 + tierIndex * 8 + side) * 0.5 + 0.5));
-    const droop1 =
-      height * treeScale *
-      (0.06 + 0.12 * (propHash(id, 0x80 + tierIndex * 8 + next) * 0.5 + 0.5));
-    const angle0 = phase + (side / 6) * Math.PI * 2;
-    const angle1 = phase + (next / 6) * Math.PI * 2;
-    const direction0: Vec3 = [Math.cos(angle0), 0, Math.sin(angle0)];
-    const direction1: Vec3 = [Math.cos(angle1), 0, Math.sin(angle1)];
-    const bottom0: Vec3 = [
-      center[0] + direction0[0] * radius * treeScale * jitter0,
-      center[1] - droop0,
-      center[2] + direction0[2] * radius * treeScale * jitter0,
-    ];
-    const bottom1: Vec3 = [
-      center[0] + direction1[0] * radius * treeScale * jitter1,
-      center[1] - droop1,
-      center[2] + direction1[2] * radius * treeScale * jitter1,
-    ];
-    const top0: Vec3 = [
-      topCenter[0] + direction0[0] * topRadius,
-      topCenter[1],
-      topCenter[2] + direction0[2] * topRadius,
-    ];
-    const top1: Vec3 = [
-      topCenter[0] + direction1[0] * topRadius,
-      topCenter[1],
-      topCenter[2] + direction1[2] * topRadius,
-    ];
-    // Quaternion is a yaw rotation around world +Y; tiers are already radial,
-    // so only the per-tier lean would need it. Track-ed props use identity lean.
-    void quaternion;
-    addOrientedQuad(positions, indices, bottom0, top0, top1, bottom1, [
-      direction0[0] + direction1[0],
-      0,
-      direction0[2] + direction1[2],
-    ]);
-  }
-}
-
 interface PropBuffers {
   positions: Vec3[];
   indices: number[];
@@ -443,15 +284,10 @@ function appendPropGeometry(
 
   if (prop.kind === "tree") {
     const variant = propHash(prop.id, 0x4);
-    const tierSet =
-      variant < 0.4
-        ? LAPSTER_TREE_TALL
-        : variant < 0.75
-          ? LAPSTER_TREE_BROAD
-          : LAPSTER_TREE_YOUNG;
-    const treeScale = LAPSTER_TREE_SIZE * scale;
-    const trunkHeight = (variant < 0.4 ? 1.6 : variant < 0.75 ? 1.8 : 1) * treeScale;
-    const trunkRadius = (variant < 0.4 ? 0.18 : variant < 0.75 ? 0.24 : 0.13) * treeScale;
+    const treeScale = CONIFER_SIZE * scale;
+    const trunkSize = coniferTrunk(variant);
+    const trunkHeight = trunkSize.height * treeScale;
+    const trunkRadius = trunkSize.radius * treeScale;
     const trunk = material("prop_tree_trunk");
     addCylinder(
       trunk.positions,
@@ -462,32 +298,29 @@ function appendPropGeometry(
       5,
       quaternion,
     );
-    const foliage = material("prop_tree_foliage");
-    for (let tier = 0; tier < tierSet.length; tier += 1) {
-      const [offset, radius, height] = tierSet[tier]!;
-      addConiferTier(
-        foliage.positions,
-        foliage.indices,
-        position,
-        offset,
-        radius,
-        height,
-        tier,
-        quaternion,
-        prop.id,
-        treeScale,
-      );
-    }
-    const lastTier = tierSet[tierSet.length - 1]!;
-    addCone(
-      foliage.positions,
-      foliage.indices,
-      at((lastTier[0] + lastTier[2]) * treeScale),
-      lastTier[1] * 0.1 * treeScale,
-      lastTier[2] * 0.5 * treeScale,
-      6,
-      quaternion,
+    const tone = coniferTone(prop.id, variant);
+    const foliage = material(
+      tone === "deep"
+        ? "prop_tree_foliage_deep"
+        : tone === "light"
+          ? "prop_tree_foliage_light"
+          : tone === "gold"
+            ? "prop_tree_foliage_gold"
+            : "prop_tree_foliage",
     );
+    const tree = buildConiferFoliage(prop.id, variant, treeScale);
+    const base = foliage.positions.length;
+    for (const local of tree.positions) {
+      const rotated = rotateByQuat(local, quaternion);
+      foliage.positions.push([
+        rotated[0] + position[0],
+        rotated[1] + position[1],
+        rotated[2] + position[2],
+      ]);
+    }
+    for (const index of tree.indices) {
+      foliage.indices.push(base + index);
+    }
   } else if (prop.kind === "tyre") {
     for (let layer = 0; layer < LAPSTER_TYRE_LAYERS; layer += 1) {
       const tyre = material(layer % 2 === 0 ? "prop_tire_blue" : "prop_tire_white");
@@ -526,11 +359,10 @@ function appendPropGeometry(
   if (prop.collision) {
     if (prop.kind === "tree") {
       const variant = propHash(prop.id, 0x4);
-      const treeScale = LAPSTER_TREE_SIZE * scale;
-      const trunkHeight =
-        (variant < 0.4 ? 1.6 : variant < 0.75 ? 1.8 : 1) * treeScale;
-      const trunkRadius =
-        (variant < 0.4 ? 0.18 : variant < 0.75 ? 0.24 : 0.13) * treeScale;
+      const treeScale = CONIFER_SIZE * scale;
+      const trunkSize = coniferTrunk(variant);
+      const trunkHeight = trunkSize.height * treeScale;
+      const trunkRadius = trunkSize.radius * treeScale;
       addCylinder(
         collision.positions,
         collision.indices,
@@ -1109,7 +941,11 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
     materials.push({
       name,
       doubleSided: false,
-      ...(OUTLINE_MATERIALS.has(name) ? { extras: { outline: true } } : {}),
+      ...(NO_OUTLINE_MATERIALS.has(name)
+        ? { extras: { outline: false } }
+        : OUTLINE_MATERIALS.has(name)
+          ? { extras: { outline: true } }
+          : {}),
       pbrMetallicRoughness: {
         baseColorFactor: [1, 1, 1, 1],
         metallicFactor: 0,

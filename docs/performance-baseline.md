@@ -1,7 +1,7 @@
 # Performance baseline — pre-v1
 
-Status: baseline captured before spline/terrain work; kerb and v1-G5 results appended. The current `@4` bundles add a visual-only racing-line mesh; the v1-G5 timing rows below predate that overlay.
-Date: 2026-11-18 (v1-G5 refresh; racing-line note added).
+Status: baseline captured before spline/terrain work; kerb and v1-G5 results appended. The current `@4` bundles add a visual-only racing-line mesh and layered conifers; the v1-G5 timing rows below predate both refreshes.
+Date: 2026-11-18 (v1-G5 refresh; racing-line and layered-conifer notes added).
 
 ## Environment
 
@@ -113,7 +113,7 @@ Camera orbit and damping still animate correctly, and an idle app drops to near-
 
 ## Kerbs (v1-G3)
 
-Kerbs and walls are baked as separate graphs, so ground validation and topology work are unchanged. Each contiguous kerb run is divided into equal-length red/white elements with a flat approach and one raised corner per element. The junction fixtures use continuous kerb overlaps rather than clipping; the two-loop fixture exports to a `track.sima` bundle of 610 KB. The walls/props fixture adds a 0.3 m thick wall graph and four instance runs expanded into 210 props, exporting to a 2.4 MB `.sima` with 18,897 source visual triangles, 4,773 collision triangles, 11 textures, and 11 source draw calls. At runtime Lapster adds the distant mountain ring and two dithered boundary meshes, bringing the scene to 25,617 triangles, 33,033 vertices, 13 textures, and 14 draw calls. Lapster's asset compiler baked, inspected, and validated all bundles without warnings beyond the existing Cargo workspace warning.
+Kerbs and walls are baked as separate graphs, so ground validation and topology work are unchanged. Each contiguous kerb run is divided into equal-length red/white elements with a flat approach and one raised corner per element. The junction fixtures use continuous kerb overlaps rather than clipping; the two-loop fixture exports to a `track.sima` bundle of 610 KB. The walls/props fixture adds a 0.3 m thick wall graph and four instance runs expanded into 210 props, exporting to a 4.8 MB `.sima` with 34,113 source visual triangles, 4,773 collision triangles, 15 textures, and 15 source draw calls. At runtime Lapster adds the distant mountain ring and two dithered boundary meshes, bringing the scene to 40,833 triangles, 75,702 vertices, 17 textures, and 18 draw calls. Lapster's asset compiler baked, inspected, and validated all bundles without warnings beyond the existing Cargo workspace warning.
 
 ## v1-G5 re-conformance refresh
 

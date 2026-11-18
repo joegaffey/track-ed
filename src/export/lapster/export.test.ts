@@ -181,12 +181,15 @@ describe("lapster-glb-track@4", () => {
       "concrete",
       "tire_blue",
       "tire_white",
-      "tree_trunk",
-      "tree_foliage",
     ]) {
       expect(
         materialList.find((material) => material.name === name)?.extras?.outline,
       ).toBe(true);
+    }
+    for (const material of materialList) {
+      if (material.name.startsWith("tree_")) {
+        expect(material.extras?.outline).toBe(false);
+      }
     }
     expect(
       materialList.find((material) => material.name === "asphalt")?.extras?.outline,

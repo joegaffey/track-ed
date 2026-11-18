@@ -177,7 +177,7 @@ The Lapster profile now generates deterministic procedural tarmac and grass text
 - Asphalt and dirt share the tarmac noise algorithm but bake their own tint and gain into separate textures.
 - Grass uses the OG editor's grass noise; Lapster routes it through its grass texture channel by material name.
 - Surface and prop primitives carry repeat-wrapped planar XZ `TEXCOORD_0` UVs.
-- Kerb, wall, concrete, tyre, and tree materials set `extras.outline = true`; Lapster's GLB track importer reads that extra and builds ink outlines.
+- Kerb, wall, concrete, and tyre materials set `extras.outline = true`; Lapster's GLB track importer reads that extra and builds ink outlines. Tree trunk and every foliage tone set `extras.outline = false` so the layered conifers keep their softer silhouette.
 - Lapster adds a distant mountain backdrop around imported tracks and generates screen-door dither fringes at asphalt/dirt and dirt/grass boundaries. Tracks that already contain an OG `dither` material or `mountains` mesh keep their authored versions.
 - Toon shading needs no export flag: Lapster's track shader applies its toon ramp to every mesh.
 
@@ -209,6 +209,19 @@ The racing line is generated in the kernel as an optional `racingLine: LineGraph
 Rationale: the OG editor's racing line is visual-only and curvature-driven. Restoring it without opening route authoring keeps the familiar guide while preserving the welded-surface invariants.
 
 Trade-off: per-section lines can stop or overlap at junctions until routes are authored.
+
+## D22 — Layered conifers with soft silhouettes
+
+Tree prop geometry now lives in the consumer-neutral `src/kernel/conifer.ts` module and is shared by the track-ed preview and the Lapster GLB profile.
+
+- Each tree is built from layered jagged skirts and a narrow upper cone rather than smooth stacked cones.
+- Tall, broad, and young variants keep deterministic per-tree jitter; trunks are taller, darker, and slimmer.
+- Foliage is assigned deterministically from a deep/mid/light green palette with a rare golden variant.
+- `tree_trunk` and all `tree_foliage*` materials set `extras.outline = false`, while kerbs, walls, concrete, and tyres keep their ink outlines.
+
+Rationale: the previous preview used smooth cones and the exported trees read as sparse cone stacks. Sharing the layered geometry keeps the editor and Lapster consistent and gives the conifers the fuller, darker, mixed-colour silhouette of the reference art without changing collision, placement, or prop-run semantics.
+
+Trade-off: trees are denser, so the walls/props fixture grows from about 19k to 34k source visual triangles; tree collision remains trunk-only.
 
 ## Alternatives considered
 

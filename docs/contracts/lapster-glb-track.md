@@ -79,12 +79,12 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 - Ground GLB scene nodes MUST be named `surface_asphalt`, `surface_dirt`, `surface_grass`.
 - Asphalt and dirt materials MUST embed deterministic 256x256 procedural tarmac `image/png` textures tinted to the surface colour. Grass MUST embed a deterministic 256x256 procedural grass texture. The racing line MUST embed a deterministic 256x256 tarmac texture with a dark core that feathers to the asphalt tint across the ribbon. Kerbs, walls, and props MUST embed deterministic solid-colour `image/png` textures. All material `baseColorFactor` values are white because tint is baked into the texture; Lapster's GLB track importer supplies white vertex colours to GLB track meshes.
 - Every visual mesh primitive MUST include `TEXCOORD_0` using repeat-wrapped planar XZ UVs; texture samplers use repeat wrapping. The racing-line UV `V` axis spans the ribbon width from `0` to `1` so the feather is baked into the texture.
-- Kerb, wall, concrete, tyre, and tree materials MUST set `extras.outline = true` so Lapster restores the OG editor's ink outlines. Asphalt, dirt, grass, and racing-line materials omit the flag.
+- Kerb, wall, concrete, and tyre materials MUST set `extras.outline = true` so Lapster restores the OG editor's ink outlines. `tree_trunk` and all `tree_foliage*` materials MUST set `extras.outline = false` so imported trees keep the softer layered look instead of the name-based outline fallback. Asphalt, dirt, grass, and racing-line materials omit the flag.
 - Kerb GLB scene nodes MUST be named `surface_kerb_red` and `surface_kerb_white`.
 - Wall GLB scene nodes MUST be named `surface_wall`.
 - The optional racing-line GLB scene node MUST be named `racing_line` and MUST use the `racing_line` material. It is visual-only and MUST NOT be included in `collision.include`.
-- Prop visual GLB scene nodes MUST be named `prop_*` (`prop_tree_trunk`, `prop_tree_foliage`, `prop_tire_blue`, `prop_tire_white`, `prop_block`).
-- Prop materials MUST use Lapster's conventional names: `tree_trunk`, `tree_foliage`, `tire_blue`, `tire_white`, and `concrete`.
+- Prop visual GLB scene nodes MUST be named `prop_*` (`prop_tree_trunk`, `prop_tree_foliage`, `prop_tree_foliage_deep`, `prop_tree_foliage_light`, `prop_tree_foliage_gold`, `prop_tire_blue`, `prop_tire_white`, `prop_block`).
+- Prop materials MUST use Lapster's conventional names: `tree_trunk`, `tree_foliage`, `tree_foliage_deep`, `tree_foliage_light`, `tree_foliage_gold`, `tire_blue`, `tire_white`, and `concrete`.
 - Prop collision GLB scene nodes MUST be named `col_*` (`col_prop`) and MUST use the `wall` material.
 - Each surface node MUST use a material with the matching surface name.
 - `visual.include` MUST contain `surface_*`, MUST contain `prop_*` when the track has props, and MUST contain `racing_line` when the track has a racing line.
