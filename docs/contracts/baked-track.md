@@ -1,6 +1,6 @@
 # Contract — `BakedTrack` v1
 
-Status: normative for v1. `kerbGraph`, `wallGraph`, and `props` are additive optional fields.
+Status: normative for v1. `kerbGraph`, `wallGraph`, `racingLine`, and `props` are additive optional fields.
 
 ## Purpose
 
@@ -29,6 +29,7 @@ interface BakedTrack {
   surfaceGraph: SurfaceGraph;
   kerbGraph?: SurfaceGraph;
   wallGraph?: SurfaceGraph;
+  racingLine?: LineGraph;
   props?: Prop[];
   surfaces: Surface[];
   spawns: Spawn[];
@@ -39,6 +40,12 @@ interface SurfaceGraph {
   positions: Vec3[];
   indices: number[];
   triangleSurfaces: number[];
+}
+
+interface LineGraph {
+  positions: Vec3[];
+  uvs: [number, number][];
+  indices: number[];
 }
 
 interface Surface {
@@ -87,10 +94,12 @@ interface Prop {
 - **BM9a** `kerbGraph` is separate from `surfaceGraph` and does not change the welded ground graph. It contains raised kerb tops, sides, and end caps. Kerb triangles MAY have non-vertical or vertical normals.
 - **BM9b** `wallGraph` is separate from `surfaceGraph` and `kerbGraph`. It contains continuous wall faces with the declared `wall` surface. Wall triangles MAY be vertical. Exposed wall ends MUST be capped.
 - **BM9c** `props` is optional. The kernel expands authored instance runs into deterministic props with terrain-sampled base heights; each instance MUST have a unique id, a supported kind, a finite world position, a normalized rotation, a positive scale, and a boolean collision policy. Tree collision is limited to the trunk; canopies are visual-only. Props MUST NOT be added to `surfaceGraph` or either roadside graph.
+- **BM9d** `racingLine` is optional and visual-only. It is a separate `LineGraph` generated from section centrelines, with one ribbon per section. It MUST NOT be added to `surfaceGraph`, `kerbGraph`, `wallGraph`, or collision. The kernel samples a supported ribbon height and stores UVs for the profile.
 - **BM10** The model MUST be deterministic: the same project yields the same positions, indices, surface ids, and ordering.
 - **BM11** No timestamps, generated-by strings, or environment-dependent values may appear in the model.
 - **BM12** The model is not persisted.
 - **BM13** Quaternions are `xyzw`. Vectors and positions are `[x, y, z]` in metres.
+- **BM14** `racingLine.positions` MUST be finite. `racingLine.uvs` MUST have the same length as positions and contain finite `[u, v]` pairs. `racingLine.indices` MUST reference valid positions and contain whole triangles. `bounds` MUST enclose the racing line.
 
 ## Geometry invariants
 
@@ -144,7 +153,7 @@ Kerb rules:
 
 ## Validation
 
-1. Validate the structural rules BM1–BM8, BM12, and BM13.
+1. Validate the structural rules BM1–BM8 and BM12–BM14.
 2. Validate the geometry invariants above.
 3. Pass only a valid model to the profile.
 4. The inspector and exporter share the same validation implementation.

@@ -145,6 +145,7 @@ export interface TrackView {
   setTJunctionsVisible(visible: boolean): void;
   setCollisionVisible(visible: boolean): void;
   setCenterlinesVisible(visible: boolean): void;
+  setRacingLineVisible(visible: boolean): void;
   setControlsEnabled(enabled: boolean): void;
   setSelectedPoint(point: ControlPointPick | null): void;
   setSelectedTerrainPoint(index: number | null): void;
@@ -349,6 +350,7 @@ export function createTrackView(
   let surfaceMesh: THREE.Mesh | null = null;
   let kerbMesh: THREE.Mesh | null = null;
   let wallMesh: THREE.Mesh | null = null;
+  let racingLineMesh: THREE.Mesh | null = null;
   let selectedPoint: ControlPointPick | null = null;
   let selectedTerrainPoint: number | null = null;
   let joinTarget: ControlPointPick | null = null;
@@ -875,6 +877,44 @@ export function createTrackView(
       wallMesh = buildGraphMesh(track.wallGraph, "track-walls");
     }
 
+    racingLineMesh = null;
+    if (track.racingLine) {
+      const line = track.racingLine;
+      const geometry = new THREE.BufferGeometry();
+      const positionData = new Float32Array(line.positions.length * 3);
+      const uvData = new Float32Array(line.uvs.length * 2);
+      for (let index = 0; index < line.positions.length; index += 1) {
+        const position = line.positions[index]!;
+        positionData[index * 3] = position[0];
+        positionData[index * 3 + 1] = position[1];
+        positionData[index * 3 + 2] = position[2];
+        const uv = line.uvs[index]!;
+        uvData[index * 2] = uv[0];
+        uvData[index * 2 + 1] = uv[1];
+      }
+      geometry.setAttribute("position", new THREE.BufferAttribute(positionData, 3));
+      geometry.setAttribute("uv", new THREE.BufferAttribute(uvData, 2));
+      geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(line.indices), 1));
+      geometry.computeVertexNormals();
+      geometry.computeBoundingSphere();
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshStandardMaterial({
+          color: 0x121218,
+          roughness: 0.92,
+          metalness: 0,
+          side: THREE.FrontSide,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+        }),
+      );
+      mesh.name = "racing-line";
+      mesh.visible = racingLineVisible;
+      content.add(mesh);
+      racingLineMesh = mesh;
+    }
+
     const wireframe = new THREE.Group();
     wireframe.name = "wireframe";
     wireframe.visible = wireframeVisible;
@@ -1018,6 +1058,7 @@ export function createTrackView(
   let tJunctionsVisible = true;
   let collisionVisible = false;
   let centerlineVisible = true;
+  let racingLineVisible = true;
 
   const setCenterlineVisibility = (visible: boolean): void => {
     centerlineVisible = visible;
@@ -1127,6 +1168,13 @@ export function createTrackView(
     },
     setCenterlinesVisible(visible: boolean): void {
       setCenterlineVisibility(visible);
+      requestRender();
+    },
+    setRacingLineVisible(visible: boolean): void {
+      racingLineVisible = visible;
+      if (racingLineMesh) {
+        racingLineMesh.visible = visible;
+      }
       requestRender();
     },
     setControlsEnabled(enabled: boolean): void {

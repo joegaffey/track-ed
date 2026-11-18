@@ -12,6 +12,12 @@ export interface SurfaceGraph {
   triangleSurfaces: number[];
 }
 
+export interface LineGraph {
+  positions: Vec3[];
+  uvs: [number, number][];
+  indices: number[];
+}
+
 export interface Surface {
   id: number;
   name: string;
@@ -51,6 +57,7 @@ export interface BakedTrack {
   surfaceGraph: SurfaceGraph;
   kerbGraph?: SurfaceGraph;
   wallGraph?: SurfaceGraph;
+  racingLine?: LineGraph;
   props?: Prop[];
   surfaces: Surface[];
   spawns: Spawn[];

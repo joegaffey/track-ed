@@ -27,7 +27,7 @@ function readJsonChunk(bytes: Uint8Array): Record<string, unknown> {
   return JSON.parse(text.trimEnd()) as Record<string, unknown>;
 }
 
-describe("lapster-glb-track@3", () => {
+describe("lapster-glb-track@4", () => {
   it("emits a deterministic GLB and manifest", () => {
     const track = validTrack();
     const first = exportLapsterGlbTrack(track);
@@ -52,7 +52,7 @@ describe("lapster-glb-track@3", () => {
     expect(manifest.name).toBe("Loop Fixture");
     expect(manifest.length).toBeCloseTo(360, 9);
     expect(manifest.visual.glb).toBe("track.glb");
-    expect(manifest.visual.include).toEqual(["surface_*"]);
+    expect(manifest.visual.include).toEqual(["surface_*", "racing_line"]);
     expect(manifest.visual.exclude).toEqual([]);
     expect(manifest.visual.scale).toBe(1);
     expect(manifest.visual.yaw_degrees).toBe(0);
@@ -76,6 +76,7 @@ describe("lapster-glb-track@3", () => {
       "surface_asphalt",
       "surface_dirt",
       "surface_grass",
+      "racing_line",
     ]);
 
     const materials = gltf.materials as Array<{
@@ -86,13 +87,15 @@ describe("lapster-glb-track@3", () => {
       "asphalt",
       "dirt",
       "grass",
+      "racing_line",
     ]);
     expect(materials[0]!.pbrMetallicRoughness.baseColorTexture.index).toBe(0);
     expect(materials[1]!.pbrMetallicRoughness.baseColorTexture.index).toBe(1);
     expect(materials[2]!.pbrMetallicRoughness.baseColorTexture.index).toBe(2);
+    expect(materials[3]!.pbrMetallicRoughness.baseColorTexture.index).toBe(3);
 
     const images = gltf.images as Array<{ mimeType: string }>;
-    expect(images).toHaveLength(3);
+    expect(images).toHaveLength(4);
     expect(images.every((image) => image.mimeType === "image/png")).toBe(true);
     const samplers = gltf.samplers as Array<{ wrapS: number; wrapT: number }>;
     expect(samplers[0]).toMatchObject({ wrapS: 10497, wrapT: 10497 });
@@ -133,6 +136,7 @@ describe("lapster-glb-track@3", () => {
         "surface_grass",
         "surface_kerb_red",
         "surface_kerb_white",
+        "racing_line",
       ]);
       expect(bundle.manifest.surfaces.map((surface) => surface.name)).toEqual([
         "asphalt",
@@ -187,7 +191,11 @@ describe("lapster-glb-track@3", () => {
     expect(
       materialList.find((material) => material.name === "asphalt")?.extras?.outline,
     ).toBeUndefined();
-    expect(bundle.manifest.visual.include).toEqual(["surface_*", "prop_*"]);
+    expect(bundle.manifest.visual.include).toEqual([
+      "surface_*",
+      "prop_*",
+      "racing_line",
+    ]);
     expect(bundle.manifest.collision.include).toEqual(["surface_*", "col_*"]);
     expect(bundle.manifest.surfaces.map((surface) => surface.name)).toContain("wall");
     expect(bundle.manifest.surfaces.find((surface) => surface.name === "wall")?.materials)

@@ -2,6 +2,7 @@ import { BakeError } from "./bake-error";
 import type {
   BakedTrack,
   Camera,
+  LineGraph,
   Prop,
   Quat,
   Spawn,
@@ -39,8 +40,10 @@ import {
 } from "./terrain";
 import {
   add2,
+  cross2,
   distancePointToSegmentSq,
   leftNormal,
+  length2,
   normalize2,
   scale2,
   segmentsIntersect,
@@ -56,6 +59,15 @@ import {
 import { buildKerbGraph, buildWallGraph } from "./kerbs";
 
 export { BakeError };
+
+const RACING_LINE_HALF_WIDTH = 1.6;
+const RACING_LINE_EDGE_MARGIN = 0.3;
+const RACING_LINE_REFERENCE_CURVATURE = 1 / 42;
+const RACING_LINE_SMOOTHING_PASSES = 16;
+const RACING_LINE_LIFT = 0.02;
+const RACING_LINE_STATION_SPACING = 2;
+const RACING_LINE_TILE_METERS = 7;
+const RACING_LINE_PROFILE: readonly number[] = [-1, -0.8, -0.5, 0, 0.5, 0.8, 1];
 
 interface MainBands {
   points: Vec2[];
@@ -268,6 +280,220 @@ function groundSampler(
   };
 }
 
+function resampleLinePolyline(
+  points: readonly Vec2[],
+  closed: boolean,
+  spacing: number,
+): Vec2[] {
+  const total = centerlineLength(points, closed);
+  if (total <= 1e-9) {
+    return [];
+  }
+  if (closed) {
+    const count = Math.max(3, Math.round(total / spacing));
+    const step = total / count;
+    const result: Vec2[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const sample = sampleAtDistance(points, true, index * step);
+      if (sample) {
+        result.push(sample.position);
+      }
+    }
+    return result;
+  }
+  const segments = Math.max(1, Math.ceil(total / spacing));
+  const result: Vec2[] = [];
+  for (let index = 0; index <= segments; index += 1) {
+    const sample = sampleAtDistance(points, false, (index / segments) * total);
+    if (sample) {
+      result.push(sample.position);
+    }
+  }
+  return result;
+}
+
+function racingLineOffsets(
+  points: readonly Vec2[],
+  closed: boolean,
+  maxOffset: number,
+): number[] {
+  const count = points.length;
+  if (count < 3 || maxOffset <= 0) {
+    return new Array<number>(count).fill(0);
+  }
+
+  const target = new Array<number>(count).fill(0);
+  for (let index = 0; index < count; index += 1) {
+    if (!closed && (index === 0 || index === count - 1)) {
+      continue;
+    }
+    const previous = points[closed ? (index - 1 + count) % count : index - 1]!;
+    const current = points[index]!;
+    const next = points[closed ? (index + 1) % count : index + 1]!;
+    const incoming = sub2(current, previous);
+    const outgoing = sub2(next, current);
+    const incomingLength = length2(incoming);
+    const outgoingLength = length2(outgoing);
+    if (incomingLength < 1e-4 || outgoingLength < 1e-4) {
+      continue;
+    }
+    const sinTurn =
+      cross2(incoming, outgoing) / (incomingLength * outgoingLength);
+    const turn = Math.asin(Math.max(-1, Math.min(1, sinTurn)));
+    const spacing = (incomingLength + outgoingLength) * 0.5;
+    const curvature = turn / Math.max(spacing, 1e-3);
+    const strength = Math.min(
+      1,
+      Math.abs(curvature) / RACING_LINE_REFERENCE_CURVATURE,
+    );
+    target[index] = maxOffset * strength * Math.sign(curvature);
+  }
+
+  let offsets = target;
+  for (let pass = 0; pass < RACING_LINE_SMOOTHING_PASSES; pass += 1) {
+    const previous = offsets;
+    const next = new Array<number>(count).fill(0);
+    for (let index = 0; index < count; index += 1) {
+      if (!closed && (index === 0 || index === count - 1)) {
+        continue;
+      }
+      const previousIndex = closed
+        ? (index - 1 + count) % count
+        : Math.max(0, index - 1);
+      const nextIndex = closed
+        ? (index + 1) % count
+        : Math.min(count - 1, index + 1);
+      next[index] =
+        (previous[previousIndex]! +
+          2 * previous[index]! +
+          previous[nextIndex]!) *
+        0.25;
+    }
+    offsets = next;
+  }
+
+  return offsets.map((offset) =>
+    Math.max(-maxOffset, Math.min(maxOffset, offset)),
+  );
+}
+
+function buildRacingLineGraph(
+  project: Project,
+  bounds: { min: Vec3; max: Vec3 },
+): LineGraph | undefined {
+  const terrainPoints =
+    project.terrain.mode === "follow" && project.terrain.points?.length
+      ? project.terrain.points
+      : undefined;
+  const terrainSampler = terrainPoints
+    ? buildPointTerrainSampler(terrainPoints, bounds)
+    : null;
+  const heightAt = (x: number, z: number): number => {
+    if (project.terrain.mode !== "follow") {
+      return 0;
+    }
+    if (terrainSampler) {
+      return terrainSampler([x, z]);
+    }
+    if (project.terrain.elevation) {
+      return rawTerrainHeight(project.terrain.elevation, [x, z]);
+    }
+    return 0;
+  };
+  const lineHalfWidth = Math.min(
+    RACING_LINE_HALF_WIDTH,
+    Math.max(0, project.road.halfWidth - RACING_LINE_EDGE_MARGIN),
+  );
+  if (lineHalfWidth < 0.05) {
+    return undefined;
+  }
+  const maxOffset = Math.max(
+    0,
+    project.road.halfWidth - lineHalfWidth - RACING_LINE_EDGE_MARGIN,
+  );
+  const profileCount = RACING_LINE_PROFILE.length;
+  const positions: Vec3[] = [];
+  const uvs: [number, number][] = [];
+  const indices: number[] = [];
+
+  for (const section of project.centerlines) {
+    const sampled = sampleCenterline(
+      section.points as Vec2[],
+      section.closed,
+      section.spline,
+    );
+    const stations = resampleLinePolyline(
+      sampled,
+      section.closed,
+      RACING_LINE_STATION_SPACING,
+    );
+    if (stations.length < 2 || (section.closed && stations.length < 3)) {
+      continue;
+    }
+    const total = centerlineLength(stations, section.closed);
+    if (total <= 1e-9) {
+      continue;
+    }
+    const offsets = racingLineOffsets(stations, section.closed, maxOffset);
+    const base = positions.length;
+    const stationCount = section.closed ? stations.length + 1 : stations.length;
+    let distance = 0;
+
+    for (let station = 0; station < stationCount; station += 1) {
+      const index = station % stations.length;
+      const point = stations[index]!;
+      const previous = section.closed
+        ? stations[(index - 1 + stations.length) % stations.length]!
+        : stations[Math.max(0, index - 1)]!;
+      const next = section.closed
+        ? stations[(index + 1) % stations.length]!
+        : stations[Math.min(stations.length - 1, index + 1)]!;
+      let tangent = normalize2(sub2(next, previous));
+      if (length2(tangent) <= 1e-9) {
+        tangent = normalize2(
+          sub2(stations[(index + 1) % stations.length]!, point),
+        );
+      }
+      const binormal = leftNormal(tangent);
+      const offset = offsets[index] ?? 0;
+
+      for (let profile = 0; profile < profileCount; profile += 1) {
+        const lateral =
+          offset + RACING_LINE_PROFILE[profile]! * lineHalfWidth;
+        const x = point[0] + binormal[0] * lateral;
+        const z = point[1] + binormal[1] * lateral;
+        positions.push([x, heightAt(x, z) + RACING_LINE_LIFT, z]);
+        uvs.push([
+          distance / RACING_LINE_TILE_METERS,
+          profile / (profileCount - 1),
+        ]);
+      }
+
+      if (station < stationCount - 1) {
+        for (let band = 0; band < profileCount - 1; band += 1) {
+          const a = base + station * profileCount + band;
+          const b = a + 1;
+          const c = base + (station + 1) * profileCount + band;
+          const d = c + 1;
+          indices.push(a, d, c, a, b, d);
+        }
+        const nextIndex = section.closed
+          ? (index + 1) % stations.length
+          : Math.min(stations.length - 1, index + 1);
+        const nextPoint = stations[nextIndex]!;
+        distance += Math.hypot(
+          nextPoint[0] - point[0],
+          nextPoint[1] - point[1],
+        );
+      }
+    }
+  }
+
+  return positions.length > 0 && indices.length > 0
+    ? { positions, uvs, indices }
+    : undefined;
+}
+
 function propNoise(id: string, salt: number): number {
   let hash = (0x811c9dc5 ^ salt) >>> 0;
   for (let index = 0; index < id.length; index += 1) {
@@ -405,6 +631,7 @@ function finishTrack(
 ): BakedTrack {
   const kerbGraph = buildKerbGraph(project, bounds);
   const wallGraph = buildWallGraph(project, bounds);
+  const racingLine = buildRacingLineGraph(project, bounds);
   const props = bakeProps(project, bounds, surfaceGraph);
   const surfaces: Surface[] = DEFAULT_SURFACES.map((surface) => ({ ...surface }));
   if (kerbGraph) {
@@ -451,6 +678,10 @@ function finishTrack(
     minY = Math.min(minY, position[1]);
     maxY = Math.max(maxY, position[1]);
   }
+  for (const position of racingLine?.positions ?? []) {
+    minY = Math.min(minY, position[1]);
+    maxY = Math.max(maxY, position[1]);
+  }
   for (const prop of props ?? []) {
     minY = Math.min(minY, prop.position[1]);
     maxY = Math.max(maxY, prop.position[1]);
@@ -473,6 +704,7 @@ function finishTrack(
     surfaceGraph,
     ...(kerbGraph ? { kerbGraph } : {}),
     ...(wallGraph ? { wallGraph } : {}),
+    ...(racingLine ? { racingLine } : {}),
     ...(props ? { props } : {}),
     surfaces,
     spawns: [spawn],
@@ -732,6 +964,7 @@ function snapBranch(
   }
 
   const host = samplePolyline(sampledMain, true, fraction);
+  branch.points[0] = [host.position[0], host.position[1]];
   const snapped: Vec2[] = [host.position];
 
   for (let i = 1; i < branch.points.length; i += 1) {

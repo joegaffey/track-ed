@@ -1,18 +1,19 @@
 # v1 roadmap — production promotion gates
 
-Status: G1, G2a, G2b, G2c1, G2c4, the `project@2` multi-junction graph, the `project@3` venue section graph, G3 kerbs, and G4 walls/props are implemented; banking/crown and re-conformance remain. v0 remains a spike until these gates pass.
-Date: 2026-11-16.
+Status: G1, G2a, G2b, G2c1, G2c4, the `project@2` multi-junction graph, the `project@3` venue section graph, G3 kerbs, G4 walls/props, the visual racing line, and G5 re-conformance are implemented and passing. track-ed is **promoted to production**. Banking/crown and a direct builder iteration-time trial are post-promotion follow-ups.
+Date: 2026-11-18 (v1-G5 decision).
 
 ## Decision
 
-track-ed has passed the v0 Lapster conformance run, but it is **not promoted to production**. The current Lapster builder remains the production path until track-ed can handle:
+track-ed passed the v0 Lapster conformance run and the v1 gates:
 
 1. spline centrelines with rounded corners;
 2. terrain elevation and road-to-terrain integration;
 3. kerbs;
-4. props.
+4. walls and props;
+5. full re-conformance, performance refresh, and comparison.
 
-The M4 outcome is **continue the spike**, not replace the production editor.
+The M4 outcome was **continue the spike**. The v1-G5 outcome is **promote track-ed to production**. Banking/crown was deliberately deferred until after the promotion decision and is tracked as a post-promotion follow-up.
 
 ## Gates
 
@@ -44,7 +45,7 @@ Contract decision (D12): terrain has one source of truth per project.
 - Flat and corner heights are authorable globally and per span.
 - A separate consumer-neutral `kerbGraph` preserves the welded ground invariants. Spans run continuously to their authored ends and may overlap at junctions; exposed ends are capped.
 - Kerbs sample the same ground/terrain height source as the road and shoulder.
-- `lapster-glb-track@3` emits `surface_kerb_red` and `surface_kerb_white` with solid collision on all faces.
+- `lapster-glb-track@4` emits `surface_kerb_red` and `surface_kerb_white` with solid collision on all faces.
 - Verified with the Lapster asset compiler: the two kerb fixtures bake, inspect as `Track`, and validate `ok`.
 
 ### G4 — Props and walls (implemented)
@@ -54,17 +55,31 @@ Contract decision (D12): terrain has one source of truth per project.
 - Walls bake into a separate `wallGraph` with the `wall` surface; exposed ends are capped and junction overlaps are intentional. Kerbs on the same side are suppressed under wall spans; walls may directly replace kerbs on the fixed kerb splines.
 - Prop runs carry kind, side, forward `start + length`, offset, spacing, and collision. The kernel expands them into deterministic instances along the section spline with terrain-sampled base heights. Tree collision is trunk-only.
 - The app keeps two fixed kerb-edge splines hidden, shows free splines minimally with id/slider/numeric offset, paints mixed run types, and edits run spacing/height in 3D. Exported props use Lapster-derived concrete barrier, blue/white tyre-stack, and conifer-tree geometry rather than track-ed placeholders.
-- `lapster-glb-track@3` emits `surface_wall`, `prop_*` visuals, and a merged `col_prop` collision mesh using the `wall` material.
+- `lapster-glb-track@4` emits `surface_wall`, `prop_*` visuals, and a merged `col_prop` collision mesh using the `wall` material.
 - Props and walls do not alter the welded ground graph.
 - Verified with the Lapster asset compiler: walls/props bake, inspect as `Track`, validate `ok`, and render in the viewer and drive viewer.
 
-### G5 — Re-conformance, performance, and comparison
+### Racing line (implemented)
 
-- Rerun Lapster `asset-compiler` bake/inspect/validate for all fixtures.
-- Load in track and drive viewers; confirm spawn, driving, and collision.
-- Measure preview FPS and export time.
-- Update the comparison report against the current Lapster builder.
-- Record a production-promotion or kill decision.
+- Generates one deterministic, curvature-biased visual ribbon per section.
+- Clamps the ribbon inside the authored asphalt width, samples the road/terrain height source, and lifts it above the asphalt.
+- Does not change the welded ground, kerb, wall, or prop graphs and is excluded from collision.
+- Preview has a racing-line overlay toggle.
+- `lapster-glb-track@4` emits a visual-only `racing_line` node and material; routes remain deferred, so lines do not join across junctions.
+
+### G5 — Re-conformance, performance, and comparison (implemented)
+
+- Reran Lapster `asset-compiler` bake/inspect/validate for all 19 fixtures at Lapster `0b78c05`; every bundle inspected as `Track` and validated `ok`.
+- Loaded all 19 in the track and drive viewers; every fixture spawned with four contact points on asphalt and accelerated under throttle.
+- Measured ~60 FPS preview and export compute between 1.3 ms and 191 ms across the fixture set.
+- Refreshed the comparison against the current Lapster builder; track-ed matches its feature set and adds multi-section venues, free roadside splines, textures, a per-section racing line, and deterministic export.
+- Recorded the production-promotion decision.
+
+Post-promotion follow-ups:
+
+- Banking and crown.
+- A7 current-builder iteration-time trial with a defined workflow.
+- Wider curve-shape fixture coverage.
 
 ## Contract impact
 
@@ -97,6 +112,7 @@ Terrain and kerbs depend on the final centreline representation, so splines come
 
 ## Remaining deferred beyond v1
 
+- Banking and crown (post-promotion follow-up).
 - Routes, route-based length, sectors, multiple layouts.
 - Pit lanes and pit boxes.
 - Persisted per-section locks. Design only; see `docs/venue-model-plan.md`.

@@ -15,7 +15,7 @@ track-ed bundles the following runtime dependencies. Their licenses are compatib
 - Source: https://github.com/joegaffey/lapster
 - Reference commit: `20547ab`
 - License: MIT OR Apache-2.0
-- Used in: `src/export/lapster/glb.ts` and `src/app/scene.ts`
-- Ported: concrete barrier block dimensions and material, blue/white tyre stack dimensions and materials, conifer tree tier layout/colors, the deterministic tarmac/grass texture generators, and the distant mountain height/noise profile from `crates/sim-render/src/track_editor.rs`.
+- Used in: `src/kernel/bake.ts`, `src/export/lapster/glb.ts`, and `src/app/scene.ts`
+- Ported: concrete barrier block dimensions and material, blue/white tyre stack dimensions and materials, conifer tree tier layout/colors, the deterministic tarmac/grass texture generators, the curvature-biased racing-line offset/ribbon algorithm and its dark-core/asphalt-feather tint, and the distant mountain height/noise profile from `crates/sim-render/src/track_editor.rs`.
 
 Development-only tooling (`vite`, `vitest`, `typescript`, `@types/three`) is not part of the shipped application bundle. Full license texts are available in each package under `node_modules/` after `npm install`.

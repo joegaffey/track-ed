@@ -1,10 +1,10 @@
-# Contract — `lapster-glb-track@3`
+# Contract — `lapster-glb-track@4`
 
-Status: normative for v1. `@3` adds wall nodes, prop nodes, and prop collision nodes to `@2`; the manifest schema remains `sim-track-glb-v1`.
+Status: normative for v1. `@4` adds an optional visual-only racing-line node to `@3`; the manifest schema remains `sim-track-glb-v1`.
 
 ## Purpose
 
-`lapster-glb-track@3` is the current export profile. It maps a valid `BakedTrack` to two files consumed by Lapster's asset compiler:
+`lapster-glb-track@4` is the current export profile. It maps a valid `BakedTrack` to two files consumed by Lapster's asset compiler:
 
 - `track.glb`;
 - `track.json`, satisfying Lapster's `sim-track-glb-v1` manifest.
@@ -39,7 +39,7 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
   },
   "visual": {
     "glb": "track.glb",
-    "include": ["surface_*", "prop_*"],
+    "include": ["surface_*", "prop_*", "racing_line"],
     "exclude": [],
     "scale": 1.0,
     "yaw_degrees": 0.0,
@@ -71,21 +71,23 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 - surface graph -> GLB visual and collision meshes without geometry changes.
 - `kerbGraph` -> additional `surface_kerb_*` GLB visual and collision meshes without geometry changes. When `kerbGraph` is absent, no kerb nodes or surfaces are emitted.
 - `wallGraph` -> additional `surface_wall` GLB visual and collision mesh without geometry changes. When `wallGraph` is absent, no wall node is emitted.
+- `racingLine` -> an optional visual-only `racing_line` node with its own `racing_line` material and texture. It is included in `visual.include` but never in `collision.include`. When `racingLine` is absent, no racing-line node is emitted.
 - `BakedTrack.props` instances -> world-space `prop_*` visual meshes grouped by prop material. Prop geometry follows Lapster's procedural prop conventions: concrete barrier blocks, alternating blue/white tyre stacks, and conifer tree tiers. Props with `collision: true` also emit a merged `col_prop` collision mesh using the `wall` material. Tree collision uses the trunk cylinder only; canopies are visual-only. Props never alter the surface or roadside graphs.
 
 ## Lapster GLB conventions
 
 - Ground GLB scene nodes MUST be named `surface_asphalt`, `surface_dirt`, `surface_grass`.
-- Asphalt and dirt materials MUST embed deterministic 256x256 procedural tarmac `image/png` textures tinted to the surface colour. Grass MUST embed a deterministic 256x256 procedural grass texture. Kerbs, walls, and props MUST embed deterministic solid-colour `image/png` textures. All material `baseColorFactor` values are white because tint is baked into the texture; Lapster's GLB track importer supplies white vertex colours to GLB track meshes.
-- Every visual mesh primitive MUST include `TEXCOORD_0` using repeat-wrapped planar XZ UVs; texture samplers use repeat wrapping.
-- Kerb, wall, concrete, tyre, and tree materials MUST set `extras.outline = true` so Lapster restores the OG editor's ink outlines. Asphalt, dirt, and grass materials omit the flag.
+- Asphalt and dirt materials MUST embed deterministic 256x256 procedural tarmac `image/png` textures tinted to the surface colour. Grass MUST embed a deterministic 256x256 procedural grass texture. The racing line MUST embed a deterministic 256x256 tarmac texture with a dark core that feathers to the asphalt tint across the ribbon. Kerbs, walls, and props MUST embed deterministic solid-colour `image/png` textures. All material `baseColorFactor` values are white because tint is baked into the texture; Lapster's GLB track importer supplies white vertex colours to GLB track meshes.
+- Every visual mesh primitive MUST include `TEXCOORD_0` using repeat-wrapped planar XZ UVs; texture samplers use repeat wrapping. The racing-line UV `V` axis spans the ribbon width from `0` to `1` so the feather is baked into the texture.
+- Kerb, wall, concrete, tyre, and tree materials MUST set `extras.outline = true` so Lapster restores the OG editor's ink outlines. Asphalt, dirt, grass, and racing-line materials omit the flag.
 - Kerb GLB scene nodes MUST be named `surface_kerb_red` and `surface_kerb_white`.
 - Wall GLB scene nodes MUST be named `surface_wall`.
+- The optional racing-line GLB scene node MUST be named `racing_line` and MUST use the `racing_line` material. It is visual-only and MUST NOT be included in `collision.include`.
 - Prop visual GLB scene nodes MUST be named `prop_*` (`prop_tree_trunk`, `prop_tree_foliage`, `prop_tire_blue`, `prop_tire_white`, `prop_block`).
 - Prop materials MUST use Lapster's conventional names: `tree_trunk`, `tree_foliage`, `tire_blue`, `tire_white`, and `concrete`.
 - Prop collision GLB scene nodes MUST be named `col_*` (`col_prop`) and MUST use the `wall` material.
 - Each surface node MUST use a material with the matching surface name.
-- `visual.include` MUST be `["surface_*"]` when the track has no props, or `["surface_*", "prop_*"]` when it has props.
+- `visual.include` MUST contain `surface_*`, MUST contain `prop_*` when the track has props, and MUST contain `racing_line` when the track has a racing line.
 - `visual.exclude` MUST be `[]`.
 - `collision.include` MUST be `["surface_*"]` when no prop has solid collision, or `["surface_*", "col_*"]` when at least one prop does.
 - `collision.exclude` MUST be `[]`.
@@ -108,6 +110,7 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
   - wall: id `5`, friction `0.45`, roughness `0.65`.
 - Kerb surfaces are emitted only when a kerb graph is present.
 - The wall surface is emitted when a wall graph is present or when any prop has solid collision.
+- The racing line is visual-only and MUST NOT be declared in `surfaces` or included in collision.
 - `mountable` is omitted in `@3`; Lapster treats omitted as `false`, so all kerb and wall faces participate in collision. This matches the v1 all-kerb-faces-solid decision.
 
 ## Spawn
@@ -170,8 +173,9 @@ Acceptance: the pack validates, `inspect` reports `Track`, the track viewer show
 
 ## Versioning
 
-- The profile version is `lapster-glb-track@3`.
-- Changes to node names, material names, manifest fields, or surface defaults require a version bump. Texture content, UV accessors, and outline extras may evolve within `lapster-glb-track@3`.
+- The profile version is `lapster-glb-track@4`.
+- Changes to node names, material names, manifest fields, or surface defaults require a version bump. Texture content, UV accessors, and outline extras may evolve within `lapster-glb-track@4`.
 - `@2` extends `@1` with optional kerb nodes and surfaces; ground nodes and manifest fields are unchanged.
 - `@3` extends `@2` with optional wall, prop visual, and prop collision nodes. The manifest `visual.include` and `collision.include` patterns become conditional on the presence of walls/props.
+- `@4` extends `@3` with an optional visual-only `racing_line` node and material. The manifest `visual.include` pattern becomes conditional on the presence of a racing line; collision selectors are unchanged.
 - Lapster owns `sim-track-glb-v1`; track-ed pins a copy of the schema.

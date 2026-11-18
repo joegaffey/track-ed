@@ -9,7 +9,11 @@ const SURFACE_COLORS: Record<string, [number, number, number]> = {
   wall: [0.46, 0.48, 0.5],
 };
 
-type TextureKind = "solid" | "tarmac" | "grass";
+const RACING_LINE_ASPHALT_COLOR: [number, number, number] = [0.045, 0.045, 0.05];
+const RACING_LINE_DARK_COLOR: [number, number, number] = [0.016, 0.016, 0.021];
+const RACING_LINE_TEXTURE_GAIN = 2.2;
+
+type TextureKind = "solid" | "tarmac" | "grass" | "racingline";
 
 const SURFACE_TEXTURES: Record<string, TextureKind> = {
   asphalt: "tarmac",
@@ -801,6 +805,62 @@ function grassTexturePng(): Uint8Array {
   return png;
 }
 
+function racingLineTexturePng(): Uint8Array {
+  const cached = texturePngs.get("racingline");
+  if (cached) {
+    return cached;
+  }
+  const rgba = new Uint8Array(TEXTURE_SIZE * TEXTURE_SIZE * 4);
+  for (let y = 0; y < TEXTURE_SIZE; y += 1) {
+    const across = Math.abs((y / (TEXTURE_SIZE - 1)) * 2 - 1);
+    const blend = smoothstep(0.6, 1, across);
+    const color: [number, number, number] = [
+      RACING_LINE_DARK_COLOR[0] +
+        (RACING_LINE_ASPHALT_COLOR[0] - RACING_LINE_DARK_COLOR[0]) * blend,
+      RACING_LINE_DARK_COLOR[1] +
+        (RACING_LINE_ASPHALT_COLOR[1] - RACING_LINE_DARK_COLOR[1]) * blend,
+      RACING_LINE_DARK_COLOR[2] +
+        (RACING_LINE_ASPHALT_COLOR[2] - RACING_LINE_DARK_COLOR[2]) * blend,
+    ];
+    for (let x = 0; x < TEXTURE_SIZE; x += 1) {
+      const u = x / TEXTURE_SIZE;
+      const v = y / TEXTURE_SIZE;
+      const coarse = valueNoise(u, v, 6, 0x1a2b3c4d);
+      const medium = valueNoise(u, v, 18, 0x5e6f7a8b);
+      const fine = valueNoise(u, v, 54, 0x9c0d1e2f);
+      const grain = textureHash(x, y, 0x31415926);
+      const patches = smoothstep(0.52, 0.82, coarse);
+      const shade =
+        (medium - 0.5) * 0.09 +
+        (fine - 0.5) * 0.045 +
+        (grain - 0.5) * 0.025 -
+        patches * 0.03;
+      const value = Math.max(0.62, Math.min(0.79, 0.71 + shade));
+      const cool = (medium - 0.5) * 0.02;
+      const offset = (y * TEXTURE_SIZE + x) * 4;
+      rgba[offset] = Math.round(
+        linearToSrgb(
+          clamp01(color[0] * RACING_LINE_TEXTURE_GAIN * srgbToLinear(value - cool)),
+        ) * 255,
+      );
+      rgba[offset + 1] = Math.round(
+        linearToSrgb(
+          clamp01(color[1] * RACING_LINE_TEXTURE_GAIN * srgbToLinear(value)),
+        ) * 255,
+      );
+      rgba[offset + 2] = Math.round(
+        linearToSrgb(
+          clamp01(color[2] * RACING_LINE_TEXTURE_GAIN * srgbToLinear(value + cool)),
+        ) * 255,
+      );
+      rgba[offset + 3] = 255;
+    }
+  }
+  const png = pngFromRgba(TEXTURE_SIZE, TEXTURE_SIZE, rgba);
+  texturePngs.set("racingline", png);
+  return png;
+}
+
 const POSITION_COMPONENT_TYPE = 5126;
 const INDEX_COMPONENT_TYPE = 5125;
 const ARRAY_BUFFER = 34962;
@@ -1036,7 +1096,9 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
           ? tarmacTexturePng(color, TARMAC_TEXTURE_GAIN[name] ?? 1)
           : textureKind === "grass"
             ? grassTexturePng()
-            : solidColorPng(color);
+            : textureKind === "racingline"
+              ? racingLineTexturePng()
+              : solidColorPng(color);
       const imageView = addBufferView(png);
       const imageIndex = images.length;
       images.push({ bufferView: imageView, mimeType: "image/png" });
@@ -1090,6 +1152,118 @@ export function buildTrackGlb(track: BakedTrack): Uint8Array {
       name: `surface_${surface.name}`,
       mesh: meshIndex,
     });
+  }
+
+  const racingLine = track.racingLine;
+  if (
+    racingLine &&
+    racingLine.positions.length > 0 &&
+    racingLine.indices.length > 0
+  ) {
+    const linePositions = new Float32Array(racingLine.positions.length * 3);
+    const min: [number, number, number] = [Infinity, Infinity, Infinity];
+    const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    for (let index = 0; index < racingLine.positions.length; index += 1) {
+      const position = racingLine.positions[index]!;
+      linePositions[index * 3] = position[0];
+      linePositions[index * 3 + 1] = position[1];
+      linePositions[index * 3 + 2] = position[2];
+      min[0] = Math.min(min[0], position[0]);
+      min[1] = Math.min(min[1], position[1]);
+      min[2] = Math.min(min[2], position[2]);
+      max[0] = Math.max(max[0], position[0]);
+      max[1] = Math.max(max[1], position[1]);
+      max[2] = Math.max(max[2], position[2]);
+    }
+    const linePositionView = addBufferView(
+      new Uint8Array(
+        linePositions.buffer,
+        linePositions.byteOffset,
+        linePositions.byteLength,
+      ),
+      ARRAY_BUFFER,
+    );
+    const lineNormals = computeNormals(racingLine.positions, racingLine.indices);
+    const lineNormalView = addBufferView(
+      new Uint8Array(
+        lineNormals.buffer,
+        lineNormals.byteOffset,
+        lineNormals.byteLength,
+      ),
+      ARRAY_BUFFER,
+    );
+    const lineUvs = new Float32Array(racingLine.uvs.length * 2);
+    for (let index = 0; index < racingLine.uvs.length; index += 1) {
+      const uv = racingLine.uvs[index]!;
+      lineUvs[index * 2] = uv[0];
+      lineUvs[index * 2 + 1] = uv[1];
+    }
+    const lineUvView = addBufferView(
+      new Uint8Array(lineUvs.buffer, lineUvs.byteOffset, lineUvs.byteLength),
+      ARRAY_BUFFER,
+    );
+    const linePositionAccessor = accessors.length;
+    accessors.push({
+      bufferView: linePositionView,
+      componentType: POSITION_COMPONENT_TYPE,
+      count: racingLine.positions.length,
+      type: "VEC3",
+      min,
+      max,
+    });
+    const lineNormalAccessor = accessors.length;
+    accessors.push({
+      bufferView: lineNormalView,
+      componentType: POSITION_COMPONENT_TYPE,
+      count: racingLine.positions.length,
+      type: "VEC3",
+    });
+    const lineUvAccessor = accessors.length;
+    accessors.push({
+      bufferView: lineUvView,
+      componentType: POSITION_COMPONENT_TYPE,
+      count: racingLine.positions.length,
+      type: "VEC2",
+    });
+    const lineIndexData = new Uint32Array(racingLine.indices);
+    const lineIndexView = addBufferView(
+      new Uint8Array(
+        lineIndexData.buffer,
+        lineIndexData.byteOffset,
+        lineIndexData.byteLength,
+      ),
+      ELEMENT_ARRAY_BUFFER,
+    );
+    const lineIndexAccessor = accessors.length;
+    accessors.push({
+      bufferView: lineIndexView,
+      componentType: INDEX_COMPONENT_TYPE,
+      count: lineIndexData.length,
+      type: "SCALAR",
+    });
+    const lineMaterial = addMaterial(
+      "racing_line",
+      RACING_LINE_ASPHALT_COLOR,
+      0.9,
+      "racingline",
+    );
+    const lineMeshIndex = meshes.length;
+    meshes.push({
+      name: "racing_line",
+      primitives: [
+        {
+          attributes: {
+            POSITION: linePositionAccessor,
+            NORMAL: lineNormalAccessor,
+            TEXCOORD_0: lineUvAccessor,
+          },
+          indices: lineIndexAccessor,
+          material: lineMaterial,
+          mode: 4,
+        },
+      ],
+    });
+    nodes.push({ name: "racing_line", mesh: lineMeshIndex });
   }
 
   const props = track.props ?? [];

@@ -154,6 +154,52 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
     }
   }
 
+  const racingLine = track.racingLine;
+  if (racingLine) {
+    if (racingLine.uvs.length !== racingLine.positions.length) {
+      addError(
+        violations,
+        "BM14",
+        "racing line uvs length must equal the number of positions",
+      );
+    }
+    for (let i = 0; i < racingLine.positions.length; i += 1) {
+      if (!isFiniteVec3(racingLine.positions[i])) {
+        addError(violations, "BM14", `racing line position ${i} must be a finite vec3`);
+        break;
+      }
+      const uv = racingLine.uvs[i];
+      if (
+        !uv ||
+        uv.length !== 2 ||
+        !Number.isFinite(uv[0]) ||
+        !Number.isFinite(uv[1])
+      ) {
+        addError(violations, "BM14", `racing line uv ${i} must be a finite vec2`);
+        break;
+      }
+    }
+    if (racingLine.indices.length % 3 !== 0) {
+      addError(violations, "BM14", "racing line indices must contain whole triangles");
+    }
+    for (let i = 0; i < racingLine.indices.length; i += 1) {
+      const index = racingLine.indices[i];
+      if (
+        !Number.isInteger(index) ||
+        index === undefined ||
+        index < 0 ||
+        index >= racingLine.positions.length
+      ) {
+        addError(
+          violations,
+          "BM14",
+          `racing line index ${i} is outside the position range`,
+        );
+        break;
+      }
+    }
+  }
+
   if (
     !isFiniteVec3(track.bounds.min) ||
     !isFiniteVec3(track.bounds.max) ||
@@ -182,6 +228,25 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
             "BM5",
             `bounds do not enclose ${entry.name} position ${i}`,
           );
+          break;
+        }
+      }
+    }
+    if (racingLine) {
+      for (let i = 0; i < racingLine.positions.length; i += 1) {
+        const position = racingLine.positions[i];
+        if (!isFiniteVec3(position)) {
+          continue;
+        }
+        if (
+          position[0] < track.bounds.min[0] - WELD_EPSILON ||
+          position[0] > track.bounds.max[0] + WELD_EPSILON ||
+          position[1] < track.bounds.min[1] - WELD_EPSILON ||
+          position[1] > track.bounds.max[1] + WELD_EPSILON ||
+          position[2] < track.bounds.min[2] - WELD_EPSILON ||
+          position[2] > track.bounds.max[2] + WELD_EPSILON
+        ) {
+          addError(violations, "BM5", `bounds do not enclose racing line position ${i}`);
           break;
         }
       }

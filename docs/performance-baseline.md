@@ -1,13 +1,13 @@
 # Performance baseline — pre-v1
 
-Status: baseline captured before spline/terrain work; kerb results appended.
-Date: 2026-11-15.
+Status: baseline captured before spline/terrain work; kerb and v1-G5 results appended. The current `@4` bundles add a visual-only racing-line mesh; the v1-G5 timing rows below predate that overlay.
+Date: 2026-11-18 (v1-G5 refresh; racing-line note added).
 
 ## Environment
 
-- track-ed M3 working tree, Node 26.13.1, Vite 8.3.8, Vitest 5.1.0.
+- track-ed v1 working tree, Node 26.13.1, Vite 8.3.8, Vitest 5.1.0.
 - Browser: Playwright Chromium, headless. FPS is requestAnimationFrame-capped and may differ from a GPU-accelerated desktop session.
-- Lapster: local checkout at commit `20547ab` (set `$LAPSTER_DIR` or use your clone path).
+- Lapster: local checkout at commit `0b78c05` for the v1-G5 refresh; earlier rows used `20547ab` (set `$LAPSTER_DIR` or use your clone path).
 
 ## Track-ed kernel timings
 
@@ -115,9 +115,32 @@ Camera orbit and damping still animate correctly, and an idle app drops to near-
 
 Kerbs and walls are baked as separate graphs, so ground validation and topology work are unchanged. Each contiguous kerb run is divided into equal-length red/white elements with a flat approach and one raised corner per element. The junction fixtures use continuous kerb overlaps rather than clipping; the two-loop fixture exports to a `track.sima` bundle of 610 KB. The walls/props fixture adds a 0.3 m thick wall graph and four instance runs expanded into 210 props, exporting to a 2.4 MB `.sima` with 18,897 source visual triangles, 4,773 collision triangles, 11 textures, and 11 source draw calls. At runtime Lapster adds the distant mountain ring and two dithered boundary meshes, bringing the scene to 25,617 triangles, 33,033 vertices, 13 textures, and 14 draw calls. Lapster's asset compiler baked, inspected, and validated all bundles without warnings beyond the existing Cargo workspace warning.
 
+## v1-G5 re-conformance refresh
+
+Measured on Node 26.13.1 with `performance.now()`, median of five runs; export bundle includes validation:
+
+| Fixture | Bake | Validate | Export bundle | Ground triangles |
+| --- | ---: | ---: | ---: | ---: |
+| `loop` | 0.10 ms | 0.84 ms | 1.27 ms | 50 |
+| `loop-spline` | 0.76 ms | 17.6 ms | 18.0 ms | 578 |
+| `loop-with-branch-90-spline` | 164.8 ms | 23.8 ms | 24.2 ms | 740 |
+| `loop-spline-terrain` | 2.28 ms | 42.2 ms | 41.9 ms | 1090 |
+| `venue-two-loops-spur` | 354.5 ms | 190.8 ms | 190.8 ms | 1146 |
+| `venue-walls-props` | 94.6 ms | 49.2 ms | 69.0 ms | 578 |
+| `venue-wrapped-kerb` | 524.0 ms | 66.5 ms | 66.8 ms | 1154 |
+
+Browser checks:
+
+| Case | Preview FPS | Export compute |
+| --- | ---: | ---: |
+| track-ed default spline-terrain-junction project | 60.8 | 19.1 ms median (15.8–35.0 ms) |
+| Lapster track viewer, `venue-walls-props` (25,617 runtime triangles) | 60.0 | n/a |
+
+The export figure excludes headless browser download handling; with real downloads the observer completes several seconds later because Playwright serialises the file writes. All in-app compute stays far below the 2 s A6 budget.
+
 ## Comparison against the current Lapster builder
 
-The current Lapster builder (Rust + wgpu) already provides:
+The current Lapster builder (Rust + wgpu) provides:
 
 - Catmull-Rom sampling with 120 samples and iterative curvature relaxation;
 - one continuous ribbon with shared boundary vertices;
@@ -126,12 +149,13 @@ The current Lapster builder (Rust + wgpu) already provides:
 - editable prop lines for barriers, tyres, and trees;
 - visual and collision export for test drive.
 
-track-ed currently provides the welded road surface graph, point-based TIN terrain, and a multi-junction graph, but not the remaining builder features listed above. This is why production promotion is deferred to the v1 gates.
+track-ed now matches that feature set and extends it with multi-section venue graphs, general junctions, point-based TIN terrain in `conform` and `follow` modes, free roadside splines, mixed kerb/wall/tree/tyre/block runs, procedural textures and outlines, and deterministic GLB + manifest export. All 19 fixtures re-conform and drive.
 
-Current builder iteration time was not measured in this run. A fair A7 comparison needs a defined workflow, for example: open the builder, move one control point, rebuild, export, and load the result. Until that is measured, use the feature comparison and the track-ed numbers above as the baseline.
+Current builder iteration time was still not measured in the v1-G5 run. A fair A7 comparison needs a defined workflow, for example: open the builder, move one control point, rebuild, export, and load the result. That trial remains a post-promotion follow-up; the feature comparison and track-ed numbers above are the current baseline.
 
 ## Baseline conclusion
 
 - track-ed's current bake/validate/export path is comfortably within A6.
-- The gap to production is feature completeness, not raw bake performance.
-- Re-run this baseline after each v1 gate so regressions are visible.
+- The feature gap to the current builder is closed for the promoted scope.
+- Banking/crown and the A7 iteration-time trial remain post-promotion follow-ups.
+- Re-run this baseline after each post-promotion gate so regressions are visible.

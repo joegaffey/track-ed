@@ -4,9 +4,9 @@ Standalone, browser-first track geometry editor.
 
 Live demo: https://joegaffey.com/track-ed/
 
-Status: M4 conformance passed. v1-G1 rounded spline centrelines, v1-G2 terrain, v1-G3 kerbs, and v1-G4 walls/props are implemented. Terrain is authored by point-based TIN, with both `conform` and `follow` road modes. `track-ed/project@5` venue sections support multiple closed loops, dead-ended open sections, general and multi-way junction members, a section list, independent section and junction authoring, loose-end joins/merges, loop closing, junction detach, and open/closed section splitting without a main loop. The editor has Terrain, Track, and Roadside modes; geometry validation is collapsed to its overall status by default. Roadside features are authored in a Roadside mode. Each section has fixed left/right kerb-edge splines; free splines are shown with an id, offset slider, and numeric spinner. Choose a feature type, drag a spline rail to paint a run, and select runs in 3D to edit spacing or height. Splines can contain mixed runs of kerbs, walls, trees, tyres, or blocks; exported prop geometry follows Lapster's procedural barrier, tyre-stack, and conifer-tree conventions. The Lapster GLB carries procedural tarmac and grass textures, UVs, and outline extras so Lapster uses the same textured toon style as the OG track editor. Existing `project@2`–`project@4` projects are converted to `project@5` on load; `project@1` remains import-only. All 19 fixtures pass bake/validate/export and Lapster conformance. track-ed remains a spike and is **not promoted to production** yet; banking/crown and the final performance comparison remain. See `docs/v1-roadmap.md`.
+Status: M4 conformance passed. v1-G1 rounded spline centrelines, v1-G2 terrain, v1-G3 kerbs, and v1-G4 walls/props are implemented, along with a visual-only racing line. Terrain is authored by point-based TIN, with both `conform` and `follow` road modes. `track-ed/project@5` venue sections support multiple closed loops, dead-ended open sections, general and multi-way junction members, a section list, independent section and junction authoring, loose-end joins/merges, loop closing, junction detach, and open/closed section splitting without a main loop. The editor has Terrain, Track, and Roadside modes; geometry validation is collapsed to its overall status by default. Roadside features are authored in a Roadside mode. Each section has fixed left/right kerb-edge splines; free splines are shown with an id, offset slider, and numeric spinner. Choose a feature type, drag a spline rail to paint a run, and select runs in 3D to edit spacing or height. Splines can contain mixed runs of kerbs, walls, trees, tyres, or blocks; exported prop geometry follows Lapster's procedural barrier, tyre-stack, and conifer-tree conventions. The Lapster GLB carries procedural tarmac and grass textures, UVs, and outline extras so Lapster uses the same textured toon style as the OG track editor. A curvature-biased racing line is generated per section, rendered in the preview with an overlay toggle, and exported as a visual-only `racing_line` node. Existing `project@2`–`project@4` projects are converted to `project@5` on load; `project@1` remains import-only. All 19 fixtures pass bake/validate/export and v1-G5 Lapster conformance, including track and drive viewer checks. track-ed is **promoted to production**; banking/crown and a live builder iteration-time trial remain post-promotion follow-ups. See `docs/v1-roadmap.md`.
 
-Lapster is the first consumer, not the definition of the tool. The core is consumer-agnostic. v0 ships one export profile, `lapster-glb-track@3`, which emits `track.glb` + `track.json` for Lapster's asset compiler. The `.sima` pack is produced downstream by Lapster, not by track-ed.
+Lapster is the first consumer, not the definition of the tool. The core is consumer-agnostic. v0 ships one export profile, `lapster-glb-track@4`, which emits `track.glb` + `track.json` for Lapster's asset compiler. The `.sima` pack is produced downstream by Lapster, not by track-ed.
 
 `track.glb` is standard glTF 2.0. The Lapster-specific parts are the `track.json` manifest, the `surface_*`/`prop_*` node/material naming convention, surface metadata, spawn/collision rules, and the two-file bundle contract.
 
@@ -57,7 +57,7 @@ The app starts with a rounded spline loop. There is no fixture selector: use Ope
 ```text
 src/kernel/                consumer-neutral geometry kernel
 src/model/                 BakedTrack contract
-src/export/lapster/        lapster-glb-track@3 profile
+src/export/lapster/        lapster-glb-track@4 profile
 src/app/                   three.js editor and inspector
 fixtures/projects/         authoring fixtures
 schemas/                   JSON Schemas
@@ -71,7 +71,7 @@ docs/                      decisions, contracts, toolchain, research brief
 - **M2** — main-loop point editing, branch authoring, undo/redo, and project save/open. (implemented)
 - **M3** — spawn authoring, validation gate, and export UX. (implemented)
 - **M4** — conformance run, comparison report, continue/discard decision. Conformance passed; the outcome is **continue the spike**, not production promotion.
-- **v1** — G1 splines, G2 terrain, the `project@2` multi-junction graph, the venue section graph, G3 kerbs, and G4 walls/props are implemented via unified `project@5` roadside splines; banking/crown, re-conformance, and production decision remain. See `docs/v1-roadmap.md`.
+- **v1** — G1 splines, G2 terrain, the `project@2` multi-junction graph, the venue section graph, G3 kerbs, G4 walls/props, and G5 re-conformance are implemented via unified `project@5` roadside splines. track-ed is promoted to production; banking/crown and the A7 builder iteration-time trial are post-promotion follow-ups. See `docs/v1-roadmap.md`.
 
 ## Conformance
 

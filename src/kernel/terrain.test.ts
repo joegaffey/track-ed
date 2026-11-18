@@ -45,7 +45,7 @@ describe("terrain elevation (G2a)", () => {
     delete flat.terrain.elevation;
     const track = bakeProject(flat);
     expect(track.bounds.min[1]).toBe(0);
-    expect(track.bounds.max[1]).toBe(0);
+    expect(track.bounds.max[1]).toBeCloseTo(0.02, 9);
   });
 });
 

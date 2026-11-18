@@ -1,6 +1,6 @@
 # Toolchain
 
-Status: v1-G2c1/G2c4 + project@2 shared junctions + project@3 venue sections implemented.
+Status: v1-G1 through v1-G5 implemented; track-ed promoted to production.
 
 ## Pinned versions
 

@@ -1,6 +1,6 @@
 # Decision record
 
-Status: accepted for the v0 spike. Revisit at M4.
+Status: accepted through v1-G5. track-ed is promoted to production; see D20.
 
 ## D1 — Standalone repository
 
@@ -12,7 +12,7 @@ Trade-off: another repository, CI, deploy, and contract to maintain. The v0 spik
 
 ## D2 — Lapster is the first consumer, not the definition
 
-The kernel and `BakedTrack` model are consumer-neutral. track-ed ships one export profile, currently `lapster-glb-track@3` (`@1` was the v0 profile).
+The kernel and `BakedTrack` model are consumer-neutral. track-ed ships one export profile, currently `lapster-glb-track@4` (`@1` was the v0 profile).
 
 Future consumers such as Assetto Corsa or rFactor 2 would be additional export profiles. v0 does not add a plugin system, exporter registry, or generic exporter interface.
 
@@ -66,7 +66,7 @@ Node 22 or newer; TypeScript, Vite, Vitest, and three.js are pinned. three.js is
 
 The Lapster profile emits a standard glTF 2.0 GLB with a small deterministic writer rather than `three`'s `GLTFExporter`.
 
-Rationale: the exporter is DOM-coupled and its output is harder to pin byte-for-byte. The profile needs only positions, normals, indices, and flat materials, so a small writer is simpler to test and keeps three.js out of the export path. The GLB container is standard; the profile owns the `surface_*` node/material convention and manifest. The writer emits one `surface_*` node and matching material per declared surface.
+Rationale: the exporter is DOM-coupled and its output is harder to pin byte-for-byte. The profile needs only positions, normals, indices, and flat materials, so a small writer is simpler to test and keeps three.js out of the export path. The GLB container is standard; the profile owns the `surface_*`/`racing_line` node/material convention and manifest. The writer emits one `surface_*` node and matching material per declared surface, plus an optional visual-only `racing_line` node.
 
 ## D10 — M1 starts from a planar arrangement
 
@@ -81,6 +81,8 @@ track-ed passed the v0 Lapster conformance run but is not promoted to production
 Production promotion requires rounded spline centrelines, terrain, kerbs, and props, followed by re-conformance, performance measurement, and comparison against the current builder.
 
 Rationale: the current Lapster builder owns production until track-ed can match the product-critical geometry the builder already provides. Conformance alone proves the export path, not production readiness. The v1 gates are scoped in `docs/v1-roadmap.md`.
+
+Superseded by D20 after the v1-G5 re-conformance passed.
 
 ## D12 — Terrain has one declared source of truth
 
@@ -183,6 +185,31 @@ Rationale: the renderer already supported textures, toon shading, and outlines, 
 
 Trade-off: the walls/props bundle grows from 1.7 MB to 2.4 MB because the two 256x256 procedural noise textures plus the tinted dirt variant are stored as uncompressed PNG data.
 
+## D20 — Promote after v1-G5; banking/crown deferred
+
+track-ed is promoted to production after the v1-G5 re-conformance run.
+
+- All 19 fixtures bake, validate, export, and compile through Lapster `0b78c05`; every bundle inspects as `Track` and validates `ok`.
+- All 19 load in the track and drive viewers, spawn with four contact points, and accelerate under throttle.
+- Preview holds ~60 FPS, including the 25,617-triangle walls/props runtime scene, and export compute stays between 1.3 ms and 191 ms across the fixture set.
+- track-ed matches the current builder's feature set and adds multi-section venue graphs, free roadside splines, procedural textures/outlines, and deterministic export.
+
+Banking/crown was deliberately deferred until after this decision. Rationale: it is not required by the promoted Lapster workflow, and delaying the decision on an unscoped feature would keep the spike open without reducing production risk. Banking/crown and a direct current-builder iteration-time trial are now post-promotion follow-ups.
+
+## D21 — Racing line is a separate visual-only graph
+
+The racing line is generated in the kernel as an optional `racingLine: LineGraph` and exported as `racing_line` under `lapster-glb-track@4`.
+
+- One ribbon is generated per section. Offsets are curvature-biased toward the inside, clamped to the authored asphalt width, smoothed, and lifted `0.02 m` above the road.
+- In `follow` mode the ribbon samples the same terrain source as the road; in `conform` mode it sits on the flat road.
+- The racing line is not part of the welded ground graph, the kerb/wall graphs, collision, or manifest `surfaces`.
+- The preview has a racing-line overlay toggle; export includes the line whenever it is present.
+- Routes remain deferred, so lines are per-section and do not join across junctions.
+
+Rationale: the OG editor's racing line is visual-only and curvature-driven. Restoring it without opening route authoring keeps the familiar guide while preserving the welded-surface invariants.
+
+Trade-off: per-section lines can stop or overlap at junctions until routes are authored.
+
 ## Alternatives considered
 
 - **Build inside the Lapster repository** (`web/track-builder/`): cheaper integration and shared CI, but keeps the tool tied to Lapster and does not establish a consumer-neutral boundary. Reconsider if the multi-consumer goal fades.
@@ -198,4 +225,4 @@ Promote when M1 proves watertight loop and 30/45/90° junctions in the inspector
 
 Kill when junction quality is not better, iteration is not faster, the inspector cannot demonstrate a hole-free surface, or v0 scope cannot be held.
 
-After promotion, decide explicitly which editor owns track authoring.
+After promotion, decide explicitly which editor owns track authoring. The v1-G5 promotion decision is recorded in D20; track-ed is the promoted track-authoring path, with banking/crown and the A7 builder iteration-time trial as follow-ups.

@@ -384,6 +384,7 @@ app.innerHTML = `
         <h2>Overlays</h2>
         <div class="toggle-list">
           <label class="toggle"><input type="checkbox" id="toggle-centerline" checked /> Centreline</label>
+          <label class="toggle"><input type="checkbox" id="toggle-racing-line" checked /> Racing line</label>
           <label class="toggle"><input type="checkbox" id="toggle-wireframe" checked /> Wireframe</label>
           <label class="toggle"><input type="checkbox" id="toggle-boundary" checked /> Boundary edges</label>
           <label class="toggle"><input type="checkbox" id="toggle-tjunctions" checked /> T-junctions</label>
@@ -520,6 +521,8 @@ const propSpacing = document.querySelector<HTMLInputElement>("#prop-spacing")!;
 const propStatus = document.querySelector<HTMLDivElement>("#prop-status")!;
 
 const centerlineToggle = document.querySelector<HTMLInputElement>("#toggle-centerline")!;
+const racingLineToggle =
+  document.querySelector<HTMLInputElement>("#toggle-racing-line")!;
 const wireframeToggle = document.querySelector<HTMLInputElement>("#toggle-wireframe")!;
 const boundaryToggle = document.querySelector<HTMLInputElement>("#toggle-boundary")!;
 const tJunctionToggle = document.querySelector<HTMLInputElement>("#toggle-tjunctions")!;
@@ -1709,6 +1712,7 @@ function renderProject(
   }
   view.setSelectedPoint(selectedPoint);
   view.setSelectedTerrainPoint(selectedTerrainPoint);
+  view.setRacingLineVisible(racingLineToggle.checked);
   if (options.frame) {
     view.frame();
   }
@@ -5737,6 +5741,9 @@ centerlineToggle.addEventListener("change", () => {
   view?.setCenterlinesVisible(
     editorMode === "track" && centerlineToggle.checked,
   );
+});
+racingLineToggle.addEventListener("change", () => {
+  view?.setRacingLineVisible(racingLineToggle.checked);
 });
 wireframeToggle.addEventListener("change", () => {
   view?.setWireframeVisible(wireframeToggle.checked);

@@ -1,17 +1,19 @@
-# Conformance report — `lapster-glb-track@3`
+# Conformance report — `lapster-glb-track@4`
 
-Status: conformance passed, including v1-G3 kerbs and v1-G4 walls/props. Outcome: continue the spike; do not promote to production yet.
-Date: 2026-11-16 (Slice 4 full-fixture rerun plus walls/props conformance).
+Status: v1-G5 re-conformance passed for all 19 fixtures. Outcome: promote to production. The visual racing line is exported as a separate visual-only node. Banking/crown is deferred as a post-promotion follow-up.
+Date: 2026-11-18 (v1-G5 full-fixture rerun, track/drive viewer checks, and performance refresh).
 
 ## Environment
 
-- track-ed: working tree, v1 implementation.
-- Lapster: local checkout at branch `feat/junction-road-geometry`, commit `20547ab` (set `$LAPSTER_DIR` or use your clone path).
+- track-ed: working tree, v1 implementation including procedural textures, outlines, and the visual racing line.
+- Lapster: local checkout at branch `feat/junction-road-geometry`, commit `0b78c05` (set `$LAPSTER_DIR` or use your clone path).
 - Export path: browser download from the track-ed app.
 - Compiler: `cargo run -p asset-compiler -- bake-glb-track`, then `inspect` and `validate`.
 - Viewer: `python3 -m http.server 8123 --bind 127.0.0.1` from the Lapster root.
 
 The compiler emits a benign Cargo warning about `workspace.package.rust-version`; it is unrelated to track-ed.
+
+The per-feature sections below record the earlier `@3` runs that established each feature. The G5 full-fixture table and the racing-line section have been refreshed for `@4`, which adds the visual-only `racing_line` node; collision and surface counts are unchanged.
 
 ## Fixtures
 
@@ -91,54 +93,79 @@ The loop-spur fixture has 1167 kerb triangles with continuous junction overlaps;
 
 The bundle has 11 materials, 11 textures, 11 draw calls, and 4,773 collision triangles. Asphalt, dirt, and grass use deterministic procedural textures with `TEXCOORD_0`; kerbs, walls, concrete, tyres, and trees carry outline extras. `surface_wall` is exported as a separate wall graph; kerbs on the same side are suppressed under wall spans; props export as `prop_*` visual meshes using Lapster-derived block, tyre, and conifer geometry, plus a merged `col_prop` collision mesh using the `wall` material. Props default to solid collision and can opt out with `collision: "none"`; tree collision is trunk-only. The manifest uses `visual.include = ["surface_*", "prop_*"]` and `collision.include = ["surface_*", "col_*"]`. The track viewer and drive viewer loaded the bundle with no console errors; trees, tyres, blocks, and walls render, the car spawns on the track, and the asphalt/grass textures and kerb/wall/prop outlines match the OG track editor style. Lapster also adds distant mountain terrain and dithered material fringes at runtime, bringing the scene to 25,617 triangles, 33,033 vertices, 13 textures, and 14 draw calls.
 
-## Slice 4 full-fixture rerun
+## G5 full-fixture re-conformance
 
-All 19 checked-in project fixtures were parsed, baked, validated in-process, exported to `track.glb` + `track.json`, and compiled with the Lapster debug binary. Every fixture produced `inspect` output ending in `(Track)` and `validate` output `ok`.
+All 19 checked-in project fixtures were parsed, baked, validated in-process, exported to `track.glb` + `track.json` with `@4`, and compiled with the Lapster debug binary at `0b78c05`. Every fixture produced `inspect` output ending in `(Track)` and `validate` output `ok`.
 
-| Fixture | `.sima` | Vertices | Triangles | Length | Result |
-| --- | ---: | ---: | ---: | ---: | --- |
-| `loop` | 8260 B | 84 | 50 | 360 m | ok |
-| `loop-spline` | 66380 B | 876 | 578 | 371.36 m | ok |
-| `loop-spline-terrain` | 129100 B | 1758 | 1090 | 371.36 m | ok |
-| `loop-spline-terrain-follow` | 129108 B | 1758 | 1090 | 371.36 m | ok |
-| `loop-spline-terrain-junctions` | 67668 B | 894 | 590 | 371.36 m | ok |
-| `loop-spline-terrain-points` | 67668 B | 894 | 590 | 371.36 m | ok |
-| `loop-two-loose-branches` | 100044 B | 1335 | 884 | 371.36 m | ok |
-| `loop-with-branch-30` | 10068 B | 108 | 66 | 360 m | ok |
-| `loop-with-branch-30-spline` | 82716 B | 1098 | 726 | 371.36 m | ok |
-| `loop-with-branch-45` | 10068 B | 108 | 66 | 360 m | ok |
-| `loop-with-branch-45-spline` | 83356 B | 1107 | 732 | 371.36 m | ok |
-| `loop-with-branch-90` | 10068 B | 108 | 66 | 360 m | ok |
-| `loop-with-branch-90-spline` | 84188 B | 1119 | 740 | 371.36 m | ok |
-| `loop-with-branch-90-spline-terrain` | 166948 B | 2274 | 1432 | 371.36 m | ok |
-| `loop-with-branch-90-spline-terrain-follow` | 166952 B | 2274 | 1432 | 371.36 m | ok |
-| `venue-loop-spur-junction` | 366220 B | 5670 | 1755 | 444.37 m | ok |
-| `venue-two-loops-spur` | 609928 B | 9460 | 2980 | 813.65 m | ok |
-| `venue-wrapped-kerb` | 296584 B | 4505 | 1601 | 313.85 m | ok |
-| `venue-walls-props` | 2439704 B | 28656 | 18897 | 371.36 m | ok |
+| Fixture | `.sima` | Vertices | Triangles | Surfaces | Length | Result |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `loop` | 1139012 B | 1351 | 2210 | 3 | 360.00 m | ok |
+| `loop-spline` | 1199820 B | 2185 | 2810 | 3 | 371.36 m | ok |
+| `loop-spline-terrain` | 1262540 B | 3067 | 3322 | 3 | 371.36 m | ok |
+| `loop-spline-terrain-follow` | 1262548 B | 3067 | 3322 | 3 | 371.36 m | ok |
+| `loop-spline-terrain-junctions` | 1201172 B | 2203 | 2822 | 3 | 371.36 m | ok |
+| `loop-spline-terrain-points` | 1201172 B | 2203 | 2822 | 3 | 371.36 m | ok |
+| `loop-two-loose-branches` | 1259916 B | 3057 | 3800 | 3 | 371.36 m | ok |
+| `loop-with-branch-30` | 1150612 B | 1529 | 2478 | 3 | 360.00 m | ok |
+| `loop-with-branch-30-spline` | 1228252 B | 2596 | 3270 | 3 | 371.36 m | ok |
+| `loop-with-branch-45` | 1154644 B | 1592 | 2586 | 3 | 360.00 m | ok |
+| `loop-with-branch-45-spline` | 1229340 B | 2612 | 3288 | 3 | 371.36 m | ok |
+| `loop-with-branch-90` | 1154644 B | 1592 | 2586 | 3 | 360.00 m | ok |
+| `loop-with-branch-90-spline` | 1232412 B | 2659 | 3356 | 3 | 371.36 m | ok |
+| `loop-with-branch-90-spline-terrain` | 1315172 B | 3814 | 4048 | 3 | 371.36 m | ok |
+| `loop-with-branch-90-spline-terrain-follow` | 1315176 B | 3814 | 4048 | 3 | 371.36 m | ok |
+| `venue-loop-spur-junction` | 1516492 B | 7245 | 4431 | 5 | 444.37 m | ok |
+| `venue-two-loops-spur` | 1844488 B | 12337 | 7876 | 5 | 813.65 m | ok |
+| `venue-walls-props` | 2786456 B | 29965 | 21129 | 6 | 371.36 m | ok |
+| `venue-wrapped-kerb` | 1417096 B | 5611 | 3485 | 5 | 313.85 m | ok |
 
-The venue length is the sum of all section lengths. Kerb fixtures add two surfaces and a separate kerb graph; wall/prop fixtures add the `wall` surface, prop visual nodes, and optional `col_prop` collision. Ground node names and spawn/collision rules are unchanged from `@1`. The two-loop venue has two disjoint spline loops plus a dead-ended open spur; the junction venue has a closed loop with an open spur attached at an interior control point.
+The `.sima` sizes include the procedural textures, outline extras, and the racing-line ribbon. Every bundle now contains one extra material, texture, and draw call for `racing_line`; collision totals are unchanged from `@3`. The venue length is the sum of all section lengths. Kerb fixtures add two surfaces and a separate kerb graph; wall/prop fixtures add the `wall` surface, prop visual nodes, and optional `col_prop` collision. Ground node names and spawn/collision rules are unchanged from `@1`. The two-loop venue has two disjoint spline loops plus a dead-ended open spur; the junction venue has a closed loop with an open spur attached at an interior control point.
 
 The fixture matrix is enforced by `src/kernel/fixture-matrix.test.ts`; venue export determinism and manifest length are covered in `src/export/lapster/export.test.ts`.
 
-## Viewer checks
+## Racing line conformance (`@4`)
 
-- `web/track-viewer/?track=<bundle>.sima` loaded the loop and 90° branch bundles with no console errors.
-- The loop viewer reported `loop (Track)`, 84 vertices, 50 triangles, 3 materials, 50 collision triangles, 3 draw calls.
-- The loop viewer exposed `surface_asphalt`, `surface_dirt`, and `surface_grass` meshes with the expected surface ids and friction values.
-- `web/drive/?track=../track-viewer/<bundle>.sima` loaded the loop bundle with no console errors.
-- The car spawned on the track and moved under throttle in the drive viewer.
-- A full lap was not timed or recorded in this run.
+The visual racing line is generated per section, clamped inside the authored asphalt width, lifted `0.02 m`, and exported as a separate `racing_line` node. It is included in `visual.include` and excluded from `collision.include`; manifest `surfaces` and collision totals are unchanged.
+
+| Fixture | Visual meshes | Vertices | Triangles | Materials | Textures | Draw calls | Collision |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `loop` | 4 | 1351 | 2210 | 4 | 4 | 4 | 84 verts / 50 tris |
+| `venue-two-loops-spur` | 6 | 12337 | 7876 | 6 | 6 | 6 | 9460 verts / 2980 tris |
+
+Both bundles compile, inspect as `Track`, and validate `ok`. The loop bundle reports `bounds.max.y = 0.02` for the line lift. The follow-mode fixtures keep the line on the sampled terrain height source.
+
+## G5 viewer checks
+
+- All 19 bundles loaded in `web/track-viewer/?track=<bundle>.sima`, reached `ready`, and reported the expected `(Track)` asset, surfaces, spawn, and collision-triangle count with zero page errors. The only console output was the existing `sim_render` deprecation warning and the headless `No available adapters` warning.
+- All 19 bundles loaded in `web/drive/?track=<bundle>.sima` with the `mazda-rx7` car. Every fixture spawned with `contacts 4/4` on `asphalt`, and holding throttle for 1.5 s produced roughly 20–24 km/h from rest. The two `follow` fixtures started at about 9 km/h on their initial slope.
+- `venue-walls-props` rendered all 12 meshes and textures in the track viewer at 60.0 FPS. Walls, tyres, blocks, trees, and the racing line are visible.
+- track-ed preview held 60.8 FPS on the default spline-terrain-junction project. In-page export compute (excluding browser download handling) had a 19.1 ms median over five runs, range 15.8–35.0 ms.
+
+## G5 performance summary
+
+Median of five in-process runs on Node 26.13.1 with `performance.now()`; export includes its validation pass. These timings predate the racing-line overlay; the current `@4` bundles add one visual mesh and its line generation.
+
+| Fixture | Bake | Validate | Export bundle |
+| --- | ---: | ---: | ---: |
+| `loop` | 0.10 ms | 0.84 ms | 1.27 ms |
+| `loop-spline` | 0.76 ms | 17.6 ms | 18.0 ms |
+| `loop-with-branch-90-spline` | 164.8 ms | 23.8 ms | 24.2 ms |
+| `loop-spline-terrain` | 2.28 ms | 42.2 ms | 41.9 ms |
+| `venue-two-loops-spur` | 354.5 ms | 190.8 ms | 190.8 ms |
+| `venue-walls-props` | 94.6 ms | 49.2 ms | 69.0 ms |
+| `venue-wrapped-kerb` | 524.0 ms | 66.5 ms | 66.8 ms |
+
+All fixtures stay below the 2 s export budget. The heaviest bake is the wrapped-kerb fixture at 524 ms; the heaviest export is the two-loop venue at 191 ms.
 
 ## Decision
 
-- v0 conformance passes.
-- v1-G1 splines, v1-G2 terrain, v1-G3 kerbs, and v1-G4 walls/props pass conformance.
-- Outcome: **continue the spike**.
-- Production promotion is deferred until the remaining v1 gates in `docs/v1-roadmap.md` pass: banking/crown, final re-conformance, performance, and comparison.
+- v0 conformance passes; v1-G1 splines, v1-G2 terrain, v1-G3 kerbs, v1-G4 walls/props, the visual racing line, and v1-G5 re-conformance pass.
+- Outcome: **promote track-ed to production**.
+- Banking/crown is deferred as a post-promotion follow-up; it is not part of the promotion gate.
+- A direct live iteration-time trial against the current Lapster builder remains a follow-up user check. Track-ed's measured bake/validate/export and preview numbers are comfortably within budget.
 
-## Remaining baseline work
+## Post-promotion follow-ups
 
-- A6 is measured in `docs/performance-baseline.md`; preview holds ~60 fps and export work is <5 ms on the fixtures.
-- A7 still needs a defined current-builder iteration-time workflow; the feature comparison is recorded in `docs/performance-baseline.md`.
-- Optionally repeat the drive check for 30°/45°/90° branch bundles.
+- Banking and crown.
+- A7 current-builder iteration-time trial using a defined open → move one point → rebuild → export → load workflow.
+- Extend curve-shape fixture coverage as new spline shapes are authored.

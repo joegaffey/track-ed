@@ -58,6 +58,7 @@ export function buildLapsterManifest(track: BakedTrack): LapsterManifest {
   }
 
   const asphalt = track.surfaces.find((surface) => surface.name === "asphalt");
+  const hasRacingLine = (track.racingLine?.indices.length ?? 0) > 0;
   const hasProps = (track.props?.length ?? 0) > 0;
   const hasPropCollision = (track.props ?? []).some((prop) => prop.collision);
   const surfaces = track.surfaces.map((surface) => ({ ...surface }));
@@ -85,7 +86,11 @@ export function buildLapsterManifest(track: BakedTrack): LapsterManifest {
     },
     visual: {
       glb: "track.glb",
-      include: hasProps ? ["surface_*", "prop_*"] : ["surface_*"],
+      include: [
+        "surface_*",
+        ...(hasProps ? ["prop_*"] : []),
+        ...(hasRacingLine ? ["racing_line"] : []),
+      ],
       exclude: [],
       scale: 1,
       yaw_degrees: 0,
