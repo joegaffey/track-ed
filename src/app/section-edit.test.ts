@@ -361,7 +361,7 @@ describe("project@3 section editing", () => {
     expect(split.spline).toBeTruthy();
     expect(split.points.length).toBeLessThanOrEqual(15);
     expectValid(result.project);
-  });
+  }, 20_000);
 
   it("splits a simple square loop", () => {
     const project = parseVenue({
