@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import loopFixture from "../../fixtures/projects/loop.json";
 import followFixture from "../../fixtures/projects/loop-spline-terrain-follow.json";
 import venueFixture from "../../fixtures/projects/venue-two-loops-spur.json";
-import { bakeProject } from "./bake";
+import { bakeProject, sampleSurfaceHeight } from "./bake";
 import { parseProject } from "./project";
 import { rawTerrainHeight } from "./terrain";
 import { validateBakedTrack } from "./validate-baked";
@@ -44,18 +44,31 @@ describe("racing line", () => {
     expect(line!.indices.length / 3).toBeGreaterThan(500);
   });
 
-  it("follows the terrain height in follow mode", () => {
+  it("follows the baked road surface in follow mode", () => {
     const { project, track } = bake(followFixture);
     const elevation = project.terrain.elevation!;
     const line = track.racingLine;
 
     expect(line).toBeDefined();
+    let maxTerrainDelta = 0;
     for (const position of line!.positions) {
-      expect(position[1]).toBeCloseTo(
-        rawTerrainHeight(elevation, [position[0], position[2]]) + 0.02,
-        6,
+      const surfaceY = sampleSurfaceHeight(
+        track.surfaceGraph,
+        position[0],
+        position[2],
+        0,
+      );
+      expect(surfaceY).not.toBeNull();
+      expect(position[1]).toBeCloseTo(surfaceY! + 0.02, 6);
+      maxTerrainDelta = Math.max(
+        maxTerrainDelta,
+        Math.abs(
+          position[1] -
+            (rawTerrainHeight(elevation, [position[0], position[2]]) + 0.02),
+        ),
       );
     }
+    expect(maxTerrainDelta).toBeGreaterThan(0.02);
   });
 
   it("validates racing line indices and uvs", () => {
