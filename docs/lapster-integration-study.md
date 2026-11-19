@@ -1,8 +1,16 @@
 # Study: Making track-ed tracks driveable in Lapster prod
 
-Status: draft for review. Date: 2026-11-19.
+Status: implemented on coordinated feature branches. Date: 2026-11-19.
 
 Input: the discussion about replacing the Lapster editor with track-ed, embedding track-ed as a second editor option, browser-side `.sima` compilation, and test-drive/export/import paths.
+
+Implementation status:
+
+- Phase 0: byte-based GLB track compiler extracted to `track-pack`, with a lazy `track-pack-wasm` browser build.
+- Phase 1: Lapster `web/track-import/` accepts `track.json` + `track.glb`, compiles in the browser, stores the local pack, and opens Test drive.
+- Phase 2: track-ed is embedded as a pinned submodule at `web/track-ed-src` and copied to `/web/track-ed/` during the Pages build.
+- Phase 3: hosted track-ed shows **Test drive in Lapster**; standalone builds remain export-only.
+- Phase 4: legacy editor retained as **Legacy Track Editor** while track-ed is made the primary editor entry point.
 
 ## 1. Purpose
 
