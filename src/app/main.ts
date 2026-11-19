@@ -38,6 +38,12 @@ import {
 import { validateBakedTrack, type ValidationReport } from "../kernel/validate-baked";
 import { exportLapsterGlbTrack } from "../export/lapster";
 import {
+  compileAndStoreTrack,
+  lapsterDriveUrl,
+  lapsterHostEnabled,
+  trackPackInput,
+} from "./lapster-host";
+import {
   createTrackView,
   SURFACE_COLORS,
   type CenterlineSegmentPick,
@@ -408,6 +414,9 @@ app.innerHTML = `
         <button class="export-button" id="export-button" type="button">
           Download track.glb + track.json
         </button>
+        <button class="export-button" id="test-drive-button" type="button" hidden>
+          Test drive in Lapster
+        </button>
         <div class="export-status" id="export-status"></div>
       </section>
     </aside>
@@ -423,7 +432,12 @@ const surfaceLegend = document.querySelector<HTMLDivElement>("#surface-legend")!
 const pickInfo = document.querySelector<HTMLDivElement>("#pick-info")!;
 const violationsContainer = document.querySelector<HTMLDivElement>("#violations")!;
 const exportButton = document.querySelector<HTMLButtonElement>("#export-button")!;
+const testDriveButton =
+  document.querySelector<HTMLButtonElement>("#test-drive-button")!;
 const exportStatus = document.querySelector<HTMLDivElement>("#export-status")!;
+if (lapsterHostEnabled) {
+  testDriveButton.hidden = false;
+}
 const viewport = document.querySelector<HTMLDivElement>("#viewport")!;
 const undoButton = document.querySelector<HTMLButtonElement>("#undo-button")!;
 const redoButton = document.querySelector<HTMLButtonElement>("#redo-button")!;
@@ -802,6 +816,7 @@ function updateAuthoringUI(): void {
       : "Section splitting requires track-ed/project@3.";
   exportButton.disabled =
     renderTimer !== null || !bakeValid || currentReport === null || !currentReport.ok;
+  testDriveButton.disabled = exportButton.disabled;
   if (project) {
     updateSpawnUI(project);
     updateTerrainPointsUI(project);
@@ -5781,6 +5796,30 @@ exportButton.addEventListener("click", () => {
   } catch (error) {
     exportStatus.textContent = `Export failed: ${String(error)}`;
   }
+});
+
+testDriveButton.addEventListener("click", () => {
+  if (!bakeValid || !currentTrack || !currentReport?.ok) {
+    return;
+  }
+  testDriveButton.disabled = true;
+  void (async () => {
+    try {
+      exportStatus.textContent = "Compiling Lapster track...";
+      const bundle = exportLapsterGlbTrack(currentTrack);
+      const pack = await compileAndStoreTrack(trackPackInput(bundle));
+      exportStatus.textContent = `Compiled ${formatNumber(
+        pack.byteLength,
+      )} B. Opening Test drive...`;
+      window.location.href = lapsterDriveUrl(
+        window.location.href,
+        window.location.search,
+      ).toString();
+    } catch (error) {
+      testDriveButton.disabled = false;
+      exportStatus.textContent = `Test drive failed: ${String(error)}`;
+    }
+  })();
 });
 
 window.addEventListener("keydown", (event) => {

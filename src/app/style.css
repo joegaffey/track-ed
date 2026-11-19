@@ -546,6 +546,17 @@ input {
   cursor: pointer;
 }
 
+#test-drive-button {
+  margin-top: 0.45rem;
+  border-color: #26617a;
+  background: linear-gradient(180deg, #67d8ff, #2498c4);
+  color: #04161d;
+}
+
+.export-button[hidden] {
+  display: none;
+}
+
 .export-button:hover:not(:disabled) {
   filter: brightness(1.08);
 }
