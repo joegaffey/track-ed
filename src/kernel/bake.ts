@@ -69,6 +69,7 @@ const RACING_LINE_LIFT = 0.02;
 const RACING_LINE_STATION_SPACING = 2;
 const RACING_LINE_TILE_METERS = 7;
 const RACING_LINE_PROFILE: readonly number[] = [-1, -0.8, -0.5, 0, 0.5, 0.8, 1];
+const ASPHALT_SURFACE_ID = DEFAULT_SURFACES[0]!.id;
 
 interface MainBands {
   points: Vec2[];
@@ -251,34 +252,47 @@ function applyTerrainMode(
   return surfaceGraph;
 }
 
+export function sampleSurfaceHeight(
+  graph: SurfaceGraph,
+  x: number,
+  z: number,
+  surfaceId?: number,
+): number | null {
+  for (let triangle = 0; triangle < graph.indices.length / 3; triangle += 1) {
+    if (
+      surfaceId !== undefined &&
+      graph.triangleSurfaces[triangle] !== surfaceId
+    ) {
+      continue;
+    }
+    const a = graph.positions[graph.indices[triangle * 3]!]!;
+    const b = graph.positions[graph.indices[triangle * 3 + 1]!]!;
+    const c = graph.positions[graph.indices[triangle * 3 + 2]!]!;
+    const denominator =
+      (b[2] - c[2]) * (a[0] - c[0]) +
+      (c[0] - b[0]) * (a[2] - c[2]);
+    if (Math.abs(denominator) < 1e-12) {
+      continue;
+    }
+    const wa =
+      ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) /
+      denominator;
+    const wb =
+      ((c[2] - a[2]) * (x - c[0]) + (a[0] - c[0]) * (z - c[2])) /
+      denominator;
+    const wc = 1 - wa - wb;
+    if (wa < -1e-7 || wb < -1e-7 || wc < -1e-7) {
+      continue;
+    }
+    return wa * a[1] + wb * b[1] + wc * c[1];
+  }
+  return null;
+}
+
 function groundSampler(
   graph: SurfaceGraph,
 ): (x: number, z: number) => number | null {
-  return (x, z) => {
-    for (let triangle = 0; triangle < graph.indices.length / 3; triangle += 1) {
-      const a = graph.positions[graph.indices[triangle * 3]!]!;
-      const b = graph.positions[graph.indices[triangle * 3 + 1]!]!;
-      const c = graph.positions[graph.indices[triangle * 3 + 2]!]!;
-      const denominator =
-        (b[2] - c[2]) * (a[0] - c[0]) +
-        (c[0] - b[0]) * (a[2] - c[2]);
-      if (Math.abs(denominator) < 1e-12) {
-        continue;
-      }
-      const wa =
-        ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) /
-        denominator;
-      const wb =
-        ((c[2] - a[2]) * (x - c[0]) + (a[0] - c[0]) * (z - c[2])) /
-        denominator;
-      const wc = 1 - wa - wb;
-      if (wa < -1e-7 || wb < -1e-7 || wc < -1e-7) {
-        continue;
-      }
-      return wa * a[1] + wb * b[1] + wc * c[1];
-    }
-    return null;
-  };
+  return (x, z) => sampleSurfaceHeight(graph, x, z);
 }
 
 function resampleLinePolyline(
@@ -403,6 +417,7 @@ function racingLineOffsets(
 function buildRacingLineGraph(
   project: Project,
   bounds: { min: Vec3; max: Vec3 },
+  surfaceGraph: SurfaceGraph,
 ): LineGraph | undefined {
   const terrainPoints =
     project.terrain.mode === "follow" && project.terrain.points?.length
@@ -423,6 +438,9 @@ function buildRacingLineGraph(
     }
     return 0;
   };
+  const roadHeightAt = (x: number, z: number): number | null =>
+    sampleSurfaceHeight(surfaceGraph, x, z, ASPHALT_SURFACE_ID) ??
+    sampleSurfaceHeight(surfaceGraph, x, z);
   const lineHalfWidth = Math.min(
     RACING_LINE_HALF_WIDTH,
     Math.max(0, project.road.halfWidth - RACING_LINE_EDGE_MARGIN),
@@ -485,7 +503,8 @@ function buildRacingLineGraph(
           offset + RACING_LINE_PROFILE[profile]! * lineHalfWidth;
         const x = point[0] + binormal[0] * lateral;
         const z = point[1] + binormal[1] * lateral;
-        positions.push([x, heightAt(x, z) + RACING_LINE_LIFT, z]);
+        const surfaceY = roadHeightAt(x, z);
+        positions.push([x, (surfaceY ?? heightAt(x, z)) + RACING_LINE_LIFT, z]);
         uvs.push([
           distance / RACING_LINE_TILE_METERS,
           profile / (profileCount - 1),
@@ -654,7 +673,7 @@ function finishTrack(
 ): BakedTrack {
   const kerbGraph = buildKerbGraph(project, bounds);
   const wallGraph = buildWallGraph(project, bounds);
-  const racingLine = buildRacingLineGraph(project, bounds);
+  const racingLine = buildRacingLineGraph(project, bounds, surfaceGraph);
   const props = bakeProps(project, bounds, surfaceGraph);
   const surfaces: Surface[] = DEFAULT_SURFACES.map((surface) => ({ ...surface }));
   if (kerbGraph) {
