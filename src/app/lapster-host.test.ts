@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LapsterExportBundle } from "../export/lapster";
-import { lapsterDriveUrl, trackPackInput } from "./lapster-host";
+import { lapsterDriveUrl, trackPackBaseUrl, trackPackInput } from "./lapster-host";
 
 function bundle(files: LapsterExportBundle["files"]): LapsterExportBundle {
   return {
@@ -45,6 +45,31 @@ describe("trackPackInput", () => {
         bundle([{ name: "track.glb", mimeType: "model/gltf-binary", bytes: new Uint8Array() }]),
       ),
     ).toThrow(/track\.glb or track\.json/);
+  });
+});
+
+describe("trackPackBaseUrl", () => {
+  it("uses the deployed versioned package when version metadata is available", async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ version: "dev-abc123" }), {
+        status: 200,
+      })) as typeof fetch;
+    const url = await trackPackBaseUrl(
+      "https://example.test/lapster-dev/web/track-ed/",
+      fetchImpl,
+    );
+    expect(url.href).toBe(
+      "https://example.test/lapster-dev/web/pkg/dev-abc123/track-pack/",
+    );
+  });
+
+  it("falls back to the unversioned package", async () => {
+    const fetchImpl = (async () => new Response("missing", { status: 404 })) as typeof fetch;
+    const url = await trackPackBaseUrl(
+      "https://example.test/lapster/web/track-ed/",
+      fetchImpl,
+    );
+    expect(url.href).toBe("https://example.test/lapster/web/pkg/track-pack/");
   });
 });
 

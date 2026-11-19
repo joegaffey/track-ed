@@ -44,10 +44,33 @@ export function lapsterDriveUrl(
   return target;
 }
 
+export async function trackPackBaseUrl(
+  baseHref: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<URL> {
+  try {
+    const versionUrl = new URL("../version.json", baseHref);
+    versionUrl.searchParams.set("t", String(Date.now()));
+    const response = await fetchImpl(versionUrl, { cache: "no-store" });
+    if (response.ok) {
+      const info = (await response.json()) as { version?: unknown };
+      if (typeof info.version === "string" && info.version.length > 0) {
+        return new URL(
+          `../pkg/${encodeURIComponent(info.version)}/track-pack/`,
+          baseHref,
+        );
+      }
+    }
+  } catch {
+    // Fall back to the unversioned package for standalone or offline use.
+  }
+  return new URL("../pkg/track-pack/", baseHref);
+}
+
 export async function compileAndStoreTrack(input: TrackPackInput): Promise<Uint8Array> {
-  const base = window.location.href;
-  const moduleUrl = new URL("../pkg/track-pack/track_pack_wasm.js", base);
-  const wasmUrl = new URL("../pkg/track-pack/track_pack_wasm_bg.wasm", base);
+  const base = await trackPackBaseUrl(window.location.href);
+  const moduleUrl = new URL("track_pack_wasm.js", base);
+  const wasmUrl = new URL("track_pack_wasm_bg.wasm", base);
   const module = (await import(
     /* @vite-ignore */ moduleUrl.href
   )) as TrackPackModule;
