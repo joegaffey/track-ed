@@ -61,9 +61,10 @@ import { buildKerbGraph, buildWallGraph } from "./kerbs";
 export { BakeError };
 
 const RACING_LINE_HALF_WIDTH = 1.6;
-const RACING_LINE_EDGE_MARGIN = 0.3;
-const RACING_LINE_REFERENCE_CURVATURE = 1 / 42;
-const RACING_LINE_SMOOTHING_PASSES = 16;
+const RACING_LINE_EDGE_MARGIN = 0.12;
+const RACING_LINE_REFERENCE_TURN = 0.5;
+const RACING_LINE_CURVATURE_WINDOW_METERS = 10;
+const RACING_LINE_SMOOTHING_PASSES = 4;
 const RACING_LINE_LIFT = 0.02;
 const RACING_LINE_STATION_SPACING = 2;
 const RACING_LINE_TILE_METERS = 7;
@@ -322,7 +323,8 @@ function racingLineOffsets(
     return new Array<number>(count).fill(0);
   }
 
-  const target = new Array<number>(count).fill(0);
+  const wrapIndex = (value: number) => ((value % count) + count) % count;
+  const curvature = new Array<number>(count).fill(0);
   for (let index = 0; index < count; index += 1) {
     if (!closed && (index === 0 || index === count - 1)) {
       continue;
@@ -341,12 +343,33 @@ function racingLineOffsets(
       cross2(incoming, outgoing) / (incomingLength * outgoingLength);
     const turn = Math.asin(Math.max(-1, Math.min(1, sinTurn)));
     const spacing = (incomingLength + outgoingLength) * 0.5;
-    const curvature = turn / Math.max(spacing, 1e-3);
+    curvature[index] = turn / Math.max(spacing, 1e-3);
+  }
+
+  const totalLength = centerlineLength(points, closed);
+  const segmentCount = closed ? count : count - 1;
+  const spacing = totalLength / Math.max(segmentCount, 1);
+  const window = Math.max(
+    1,
+    Math.round(RACING_LINE_CURVATURE_WINDOW_METERS / Math.max(spacing, 0.5)),
+  );
+  const target = new Array<number>(count).fill(0);
+  for (let index = 0; index < count; index += 1) {
+    if (!closed && (index === 0 || index === count - 1)) {
+      continue;
+    }
+    let turn = 0;
+    for (let offset = -window; offset <= window; offset += 1) {
+      const sample = closed
+        ? wrapIndex(index + offset)
+        : Math.max(0, Math.min(count - 1, index + offset));
+      turn += curvature[sample]! * spacing;
+    }
     const strength = Math.min(
       1,
-      Math.abs(curvature) / RACING_LINE_REFERENCE_CURVATURE,
+      Math.abs(turn) / RACING_LINE_REFERENCE_TURN,
     );
-    target[index] = maxOffset * strength * Math.sign(curvature);
+    target[index] = maxOffset * strength * Math.sign(turn);
   }
 
   let offsets = target;
