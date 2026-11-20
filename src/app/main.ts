@@ -44,6 +44,12 @@ import {
 import type { BakedTrack, Spawn, Vec3 } from "../model/baked-track";
 import { mergeLooseBranchEnds } from "./branch-merge";
 import { convertProjectToLatest } from "./convert-project";
+import {
+  clearAutosave,
+  readAutosave,
+  writeAutosave,
+  type AutosaveStorage,
+} from "./autosave";
 import { spanContains, spansOverlap } from "./roadside-authoring";
 import {
   addJunctionMember,
@@ -356,6 +362,13 @@ let roadsideEditStart: Project | null = null;
 let bakeValid = false;
 let statusExpanded = false;
 
+const AUTOSAVE_DEBOUNCE_MS = 600;
+let autosaveStorage: AutosaveStorage | null = getBrowserAutosaveStorage();
+let autosaveTimer: number | null = null;
+let autosaveSuspended = true;
+let autosaveWarningShown = false;
+let autosaveDirty = false;
+
 const RENDER_DELAY_MS = 150;
 const RENDER_MAX_WAIT_MS = 300;
 let renderTimer: number | null = null;
@@ -402,6 +415,70 @@ function flushPendingRender(): boolean {
   }
   cancelPendingRender();
   return project ? renderProject(project, { frame: false }) : false;
+}
+
+function getBrowserAutosaveStorage(): AutosaveStorage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function cancelAutosave(): void {
+  if (autosaveTimer !== null) {
+    window.clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+  }
+}
+
+function warnAutosaveUnavailable(): void {
+  if (autosaveWarningShown) {
+    return;
+  }
+  autosaveWarningShown = true;
+  setEditStatus(
+    "Autosave storage is unavailable; edits won't be restored.",
+    "error",
+  );
+}
+
+function flushAutosave(): void {
+  cancelAutosave();
+  if (renderTimer !== null) {
+    flushPendingRender();
+  }
+  cancelAutosave();
+  if (
+    !autosaveDirty ||
+    !project ||
+    !bakeValid ||
+    autosaveStorage === null
+  ) {
+    return;
+  }
+  const result = writeAutosave(autosaveStorage, serializeProject(project));
+  if (result.status === "saved") {
+    autosaveDirty = false;
+  } else {
+    warnAutosaveUnavailable();
+  }
+}
+
+function scheduleAutosave(): void {
+  if (!project || !bakeValid || autosaveSuspended) {
+    return;
+  }
+  autosaveDirty = true;
+  if (autosaveStorage === null) {
+    warnAutosaveUnavailable();
+    return;
+  }
+  cancelAutosave();
+  autosaveTimer = window.setTimeout(() => {
+    autosaveTimer = null;
+    flushAutosave();
+  }, AUTOSAVE_DEBOUNCE_MS);
 }
 
 let overlayFrame: number | null = null;
@@ -1225,13 +1302,16 @@ function renderProject(
     : "Export is blocked while MUST-level validation fails.";
   setEditStatus("");
   updateAuthoringUI();
+  scheduleAutosave();
   return true;
 }
 
 function loadProject(input: unknown, frame: boolean): void {
   cancelPendingRender();
   cancelOverlayUpdate();
-  const parsed = parseProject(input);
+  const parsed = parseProject(
+    isInternalProject(input) ? serializeProject(input) : input,
+  );
   if (!parsed.project) {
     showFatal(
       "Project validation failed",
@@ -2900,7 +2980,17 @@ const editingContext: EditingContext = {
   loadProject: (input, frame) => loadProject(input, frame),
   loadDefaultProject: () => {
     updateStatusCollapsed();
+    autosaveSuspended = true;
+    cancelAutosave();
+    if (autosaveStorage !== null) {
+      const result = clearAutosave(autosaveStorage);
+      if (result.status === "unavailable") {
+        warnAutosaveUnavailable();
+      }
+    }
     loadProject(loopSplineTerrainJunctionsFixture, true);
+    autosaveSuspended = false;
+    autosaveDirty = false;
   },
   undo: () => undo(),
   redo: () => redo(),
@@ -2984,8 +3074,59 @@ const editingContext: EditingContext = {
   },
 };
 
+function boot(): void {
+  autosaveSuspended = true;
+  let status: { message: string; tone: "ok" | "error" } | null = null;
+  let restored = false;
+
+  if (autosaveStorage === null) {
+    autosaveWarningShown = true;
+    status = {
+      message: "Autosave storage is unavailable; edits won't be restored.",
+      tone: "error",
+    };
+  } else {
+    const stored = readAutosave(autosaveStorage);
+    if (stored.status === "restored") {
+      loadProject(stored.project, true);
+      if (bakeValid) {
+        restored = true;
+        status = { message: "Restored autosaved project.", tone: "ok" };
+      }
+    } else if (stored.status === "invalid") {
+      clearAutosave(autosaveStorage);
+      status = {
+        message: "Ignored invalid autosaved project; loaded the default.",
+        tone: "error",
+      };
+    } else if (stored.status === "unavailable") {
+      autosaveStorage = null;
+      autosaveWarningShown = true;
+      status = {
+        message: "Autosave storage is unavailable; edits won't be restored.",
+        tone: "error",
+      };
+    }
+  }
+
+  if (!restored) {
+    loadProject(loopSplineTerrainJunctionsFixture, true);
+  }
+  autosaveDirty = false;
+  autosaveSuspended = false;
+  if (status) {
+    setEditStatus(status.message, status.tone);
+  }
+}
+
 updateStatusCollapsed();
-loadProject(loopSplineTerrainJunctionsFixture, true);
+boot();
+window.addEventListener("pagehide", () => flushAutosave());
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    flushAutosave();
+  }
+});
 if (
   lapsterHostEnabled &&
   new URLSearchParams(window.location.search).get("e2e") === "1"
