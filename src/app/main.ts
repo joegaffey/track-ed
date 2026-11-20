@@ -2,13 +2,9 @@ import "./style.css";
 import loopSplineTerrainJunctionsFixture from "../../fixtures/projects/loop-spline-terrain-junctions.json";
 import { bakeProject, BakeError, spawnFor } from "../kernel/bake";
 import {
-  DEFAULT_KERB_FLAT_HEIGHT,
-  DEFAULT_KERB_CORNER_HEIGHT,
   KERB_WIDTH,
   WALL_THICKNESS,
   DEFAULT_WALL_HEIGHT,
-  DEFAULT_WALL_OFFSET,
-  DEFAULT_PROP_OFFSETS,
   DEFAULT_PROP_SPACING,
   DEFAULT_PROP_CENTERLINE_OFFSETS,
 } from "../kernel/kerbs";
@@ -16,13 +12,9 @@ import {
   isVenueSchema,
   parseProject,
   type Project,
-  type ProjectKerbSpan,
-  type ProjectPropKind,
-  type ProjectPropSpan,
   type ProjectRoadsideKind,
   type ProjectRoadsideRun,
   type ProjectRoadsideSpline,
-  type ProjectWallSpan,
 } from "../kernel/project";
 import { samplePolyline, segmentLengths } from "../kernel/geometry";
 import { fractionAtControlPoint, sampleCenterline } from "../kernel/spline";
@@ -59,6 +51,12 @@ import type { BakedTrack, Spawn, Vec3 } from "../model/baked-track";
 import { mergeLooseBranchEnds } from "./branch-merge";
 import { convertProjectToLatest } from "./convert-project";
 import {
+  spanContains,
+  spanEnd,
+  spanFromPaint,
+  spansOverlap,
+} from "./roadside-authoring";
+import {
   addJunctionMember,
   addLooseSectionAtPoint,
   addSectionAtPoint,
@@ -82,50 +80,6 @@ type DragState =
     }
   | { kind: "attach"; startProject: Project }
   | { kind: "spawn"; startProject: Project }
-  | {
-      kind: "kerb-paint";
-      sectionId: string;
-      side: "left" | "right";
-      closed: boolean;
-      originFraction: number;
-      previousFraction: number;
-      signedLength: number;
-      startProject: Project;
-    }
-  | {
-      kind: "kerb-entry" | "kerb-exit" | "wall-entry" | "wall-exit";
-      sectionId: string;
-      spanIndex: number;
-      startProject: Project;
-    }
-  | {
-      kind: "wall-paint";
-      sectionId: string;
-      side: "left" | "right";
-      closed: boolean;
-      originFraction: number;
-      previousFraction: number;
-      signedLength: number;
-      startProject: Project;
-    }
-  | {
-      kind: "prop-paint";
-      sectionId: string;
-      side: "left" | "right";
-      propKind: ProjectPropKind;
-      paintOffset: number;
-      closed: boolean;
-      originFraction: number;
-      previousFraction: number;
-      signedLength: number;
-      startProject: Project;
-    }
-  | {
-      kind: "prop-entry" | "prop-exit";
-      sectionId: string;
-      spanIndex: number;
-      startProject: Project;
-    }
   | {
       kind: "roadside-paint";
       sectionId: string;
@@ -176,9 +130,6 @@ app.innerHTML = `
         <button class="mode-button" id="mode-terrain" type="button">Terrain</button>
         <button class="mode-button active" id="mode-points" type="button">Track</button>
         <button class="mode-button" id="mode-roadside" type="button">Roadside</button>
-        <button class="mode-button" id="mode-kerbs" type="button" hidden>Kerbs</button>
-        <button class="mode-button" id="mode-walls" type="button" hidden>Walls</button>
-        <button class="mode-button" id="mode-props" type="button" hidden>Props</button>
       </div>
       <div class="project-meta" id="project-meta"></div>
     </div>
@@ -305,87 +256,6 @@ app.innerHTML = `
         </p>
         <div class="edit-status" id="terrain-point-status"></div>
       </section>
-      <section class="panel" hidden>
-        <h2>Kerbs</h2>
-        <div class="edit-field">
-          <label for="kerb-global-flat">global flat height (m)</label>
-          <input type="number" id="kerb-global-flat" min="0" step="0.005" />
-        </div>
-        <div class="edit-field">
-          <label for="kerb-global-corner">global corner height (m)</label>
-          <input type="number" id="kerb-global-corner" min="0" step="0.005" />
-        </div>
-        <div class="junction-list" id="kerb-list"></div>
-        <div class="edit-field" id="kerb-span-heights" hidden>
-          <label class="toggle"><input type="checkbox" id="kerb-span-override" /> override heights for this span</label>
-        </div>
-        <div class="edit-field" id="kerb-span-flat-field" hidden>
-          <label for="kerb-span-flat">span flat height (m)</label>
-          <input type="number" id="kerb-span-flat" min="0" step="0.005" />
-        </div>
-        <div class="edit-field" id="kerb-span-corner-field" hidden>
-          <label for="kerb-span-corner">span corner height (m)</label>
-          <input type="number" id="kerb-span-corner" min="0" step="0.005" />
-        </div>
-        <div class="edit-actions">
-          <button class="edit-button" id="kerb-remove" type="button">Remove span</button>
-        </div>
-        <p class="edit-hint">
-          Switch to Kerbs mode, then drag a dotted guide rail to paint a kerb span.
-          Select a span and drag its endpoint handles to resize it. Delete removes the selected span.
-          Flat and corner heights apply globally, with optional per-span overrides.
-        </p>
-        <div class="edit-status" id="kerb-status"></div>
-      </section>
-      <section class="panel" hidden>
-        <h2>Walls</h2>
-        <div class="edit-field">
-          <label for="wall-height">wall height (m)</label>
-          <input type="number" id="wall-height" min="0.1" step="0.05" />
-        </div>
-        <div class="edit-field">
-          <label for="wall-offset">offset from asphalt edge (m)</label>
-          <input type="number" id="wall-offset" min="0" step="0.05" />
-        </div>
-        <div class="junction-list" id="wall-list"></div>
-        <div class="edit-actions">
-          <button class="edit-button" id="wall-remove" type="button">Remove wall</button>
-        </div>
-        <p class="edit-hint">
-          Switch to Walls mode, then drag a dotted blue guide rail to paint a wall span.
-          Select a wall to edit its height and offset, or drag its endpoint handles.
-        </p>
-        <div class="edit-status" id="wall-status"></div>
-      </section>
-      <section class="panel" hidden>
-        <h2>Props</h2>
-        <div class="edit-actions">
-          <button class="edit-button active" id="prop-kind-tree" type="button">Trees</button>
-          <button class="edit-button" id="prop-kind-tyre" type="button">Tyres</button>
-          <button class="edit-button" id="prop-kind-block" type="button">Blocks</button>
-        </div>
-        <div class="edit-field">
-          <label for="prop-paint-offset">paint offset from centreline (m)</label>
-          <input type="number" id="prop-paint-offset" min="0" step="0.1" value="12" />
-        </div>
-        <div class="junction-list" id="prop-list"></div>
-        <div class="edit-field" id="prop-offset-field" hidden>
-          <label for="prop-offset">run offset from centreline (m)</label>
-          <input type="number" id="prop-offset" min="0" step="0.1" />
-        </div>
-        <div class="edit-field" id="prop-spacing-field" hidden>
-          <label for="prop-spacing">spacing (m)</label>
-          <input type="number" id="prop-spacing" min="0.1" step="0.1" />
-        </div>
-        <div class="edit-actions">
-          <button class="edit-button" id="prop-remove" type="button">Remove run</button>
-        </div>
-        <p class="edit-hint">
-          Switch to Props mode, choose Trees, Tyres, or Blocks, then drag a dotted guide rail
-          to paint a run along the spline. Runs follow the section and are spaced automatically.
-        </p>
-        <div class="edit-status" id="prop-status"></div>
-      </section>
       <section class="panel">
         <h2>Overlays</h2>
         <div class="toggle-list">
@@ -502,37 +372,6 @@ const roadsideKindButtons: Array<
 const modeTerrainButton =
   document.querySelector<HTMLButtonElement>("#mode-terrain")!;
 const modePointsButton = document.querySelector<HTMLButtonElement>("#mode-points")!;
-const modeKerbsButton = document.querySelector<HTMLButtonElement>("#mode-kerbs")!;
-const modeWallsButton = document.querySelector<HTMLButtonElement>("#mode-walls")!;
-const modePropsButton = document.querySelector<HTMLButtonElement>("#mode-props")!;
-const kerbGlobalFlat = document.querySelector<HTMLInputElement>("#kerb-global-flat")!;
-const kerbGlobalCorner = document.querySelector<HTMLInputElement>("#kerb-global-corner")!;
-const kerbSpanHeights = document.querySelector<HTMLDivElement>("#kerb-span-heights")!;
-const kerbSpanOverride = document.querySelector<HTMLInputElement>("#kerb-span-override")!;
-const kerbSpanFlatField = document.querySelector<HTMLDivElement>("#kerb-span-flat-field")!;
-const kerbSpanFlat = document.querySelector<HTMLInputElement>("#kerb-span-flat")!;
-const kerbSpanCornerField = document.querySelector<HTMLDivElement>("#kerb-span-corner-field")!;
-const kerbSpanCorner = document.querySelector<HTMLInputElement>("#kerb-span-corner")!;
-const kerbRemoveButton = document.querySelector<HTMLButtonElement>("#kerb-remove")!;
-const kerbList = document.querySelector<HTMLDivElement>("#kerb-list")!;
-const kerbStatus = document.querySelector<HTMLDivElement>("#kerb-status")!;
-const wallHeight = document.querySelector<HTMLInputElement>("#wall-height")!;
-const wallOffset = document.querySelector<HTMLInputElement>("#wall-offset")!;
-const wallList = document.querySelector<HTMLDivElement>("#wall-list")!;
-const wallRemoveButton = document.querySelector<HTMLButtonElement>("#wall-remove")!;
-const wallStatus = document.querySelector<HTMLDivElement>("#wall-status")!;
-const propKindTree = document.querySelector<HTMLButtonElement>("#prop-kind-tree")!;
-const propKindTyre = document.querySelector<HTMLButtonElement>("#prop-kind-tyre")!;
-const propKindBlock = document.querySelector<HTMLButtonElement>("#prop-kind-block")!;
-const propPaintOffsetInput =
-  document.querySelector<HTMLInputElement>("#prop-paint-offset")!;
-const propRemoveButton = document.querySelector<HTMLButtonElement>("#prop-remove")!;
-const propList = document.querySelector<HTMLDivElement>("#prop-list")!;
-const propOffsetField = document.querySelector<HTMLDivElement>("#prop-offset-field")!;
-const propOffset = document.querySelector<HTMLInputElement>("#prop-offset")!;
-const propSpacingField = document.querySelector<HTMLDivElement>("#prop-spacing-field")!;
-const propSpacing = document.querySelector<HTMLInputElement>("#prop-spacing")!;
-const propStatus = document.querySelector<HTMLDivElement>("#prop-status")!;
 
 const centerlineToggle = document.querySelector<HTMLInputElement>("#toggle-centerline")!;
 const racingLineToggle =
@@ -552,21 +391,7 @@ let redoStack: Project[] = [];
 let drag: DragState = null;
 let selectedTerrainPoint: number | null = null;
 let addTerrainPointMode = false;
-let selectedKerbSpan: { sectionId: string; index: number } | null = null;
-let selectedWallSpan: { sectionId: string; index: number } | null = null;
-let kerbEditStart: Project | null = null;
-let wallEditStart: Project | null = null;
-let selectedPropSpan: { sectionId: string; index: number } | null = null;
-let propEditStart: Project | null = null;
-let propPaintKind: ProjectPropKind = "tree";
-let propPaintOffset = DEFAULT_PROP_CENTERLINE_OFFSETS.tree;
-let editorMode:
-  | "terrain"
-  | "track"
-  | "kerbs"
-  | "walls"
-  | "props"
-  | "roadside" = "track";
+let editorMode: "terrain" | "track" | "roadside" = "track";
 let roadsideSectionId: string | null = null;
 let selectedRoadsideSpline: { sectionId: string; splineId: string } | null = null;
 let selectedRoadsideRun:
@@ -822,15 +647,9 @@ function updateAuthoringUI(): void {
     updateTerrainPointsUI(project);
     updateSectionList(project);
     updateJunctionList(project);
-    updateKerbsUI(project);
-    updateWallsUI(project);
-    updatePropsUI(project);
     updateRoadsideUI(project);
   } else {
     sectionList.innerHTML = "";
-    kerbList.innerHTML = "";
-    wallList.innerHTML = "";
-    propList.innerHTML = "";
     roadsideSplineList.innerHTML = "";
   }
 }
@@ -839,9 +658,6 @@ function updateModeUI(): void {
   modeTerrainButton.classList.toggle("active", editorMode === "terrain");
   modePointsButton.classList.toggle("active", editorMode === "track");
   modeRoadsideButton.classList.toggle("active", editorMode === "roadside");
-  modeKerbsButton.classList.toggle("active", editorMode === "kerbs");
-  modeWallsButton.classList.toggle("active", editorMode === "walls");
-  modePropsButton.classList.toggle("active", editorMode === "props");
   view?.setCenterlinesVisible(
     editorMode === "track" && centerlineToggle.checked,
   );
@@ -855,9 +671,7 @@ function updateModePanels(): void {
   }
 }
 
-function setEditorMode(
-  mode: "terrain" | "track" | "kerbs" | "walls" | "props" | "roadside",
-): void {
+function setEditorMode(mode: "terrain" | "track" | "roadside"): void {
   if (editorMode === mode) {
     return;
   }
@@ -866,9 +680,6 @@ function setEditorMode(
   setSelection(null);
   setTerrainSelection(null);
   addTerrainPointMode = false;
-  selectedKerbSpan = null;
-  selectedWallSpan = null;
-  selectedPropSpan = null;
   selectedRoadsideSpline = null;
   selectedRoadsideRun = null;
   if (mode === "roadside" && project && !roadsideSectionId) {
@@ -1176,63 +987,14 @@ function overlayProps(track: BakedTrack): PropOverlayData[] {
   }));
 }
 
-function kerbSpanIntervals(
-  start: number,
-  length: number,
-  closed: boolean,
-): Array<[number, number]> {
-  const end = start + length;
-  if (closed && end > 1) {
-    return [
-      [start, 1],
-      [0, end - 1],
-    ];
-  }
-  return [[start, end]];
-}
-
-function kerbSpanEnd(start: number, length: number): number {
-  return (start + length) % 1;
-}
-
-function kerbSpansOverlap(
-  aStart: number,
-  aLength: number,
-  bStart: number,
-  bLength: number,
-  closed: boolean,
-): boolean {
-  for (const a of kerbSpanIntervals(aStart, aLength, closed)) {
-    for (const b of kerbSpanIntervals(bStart, bLength, closed)) {
-      if (a[0] < b[1] - 1e-9 && a[1] > b[0] + 1e-9) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function kerbSpanContains(
-  start: number,
-  length: number,
-  fraction: number,
-  closed: boolean,
-): boolean {
-  return kerbSpanIntervals(start, length, closed).some(
-    (interval) =>
-      fraction >= interval[0] - 1e-9 && fraction <= interval[1] + 1e-9,
-  );
-}
-
 function roadsideRailPoints(
   source: Project,
   bounds: { min: Vec3; max: Vec3 },
   section: Project["centerlines"][number],
-  kind: "kerb" | "wall" | "prop" | "spline",
   side: "left" | "right",
   start: number,
   length: number,
-  offsetFromEdge?: number,
+  offsetFromEdge: number,
 ): Vec3[][] {
   const heightAt = centerlineHeightSampler(source, bounds);
   const sampled = sampleCenterline(
@@ -1240,9 +1002,7 @@ function roadsideRailPoints(
     section.closed,
     section.spline,
   );
-  const defaultOffset =
-    kind === "kerb" ? KERB_WIDTH / 2 : DEFAULT_WALL_OFFSET + WALL_THICKNESS / 2;
-  const offset = source.road.halfWidth + (offsetFromEdge ?? defaultOffset);
+  const offset = source.road.halfWidth + offsetFromEdge;
   const sideSign = side === "left" ? 1 : -1;
   const pieces: Array<[number, number]> = [];
   if (!section.closed || start + length <= 1 + 1e-9) {
@@ -1264,236 +1024,6 @@ function roadsideRailPoints(
     return points;
   });
 }
-
-function overlayKerbs(
-  source: Project,
-  bounds: { min: Vec3; max: Vec3 },
-): KerbOverlayData {
-  const activeKind: "kerb" | "wall" | "prop" | null =
-    editorMode === "kerbs"
-      ? "kerb"
-      : editorMode === "walls"
-        ? "wall"
-        : editorMode === "props"
-          ? "prop"
-          : null;
-  if (!activeKind) {
-    return { rails: [], spans: [] };
-  }
-  const rails: KerbRailOverlayData[] = [];
-  for (const section of source.centerlines) {
-    for (const side of ["left", "right"] as const) {
-      const edgeOffset =
-        activeKind === "prop"
-          ? propPaintOffset - source.road.halfWidth
-          : undefined;
-      const [points] = roadsideRailPoints(
-        source,
-        bounds,
-        section,
-        activeKind,
-        side,
-        0,
-        1,
-        edgeOffset,
-      );
-      if (points && points.length >= 2) {
-        rails.push({
-          kind: activeKind,
-          sectionId: section.id,
-          side,
-          ...(activeKind === "prop" ? { offset: propPaintOffset, active: true } : {}),
-          points,
-        });
-      }
-    }
-  }
-
-  if (activeKind === "prop") {
-    const seen = new Set(
-      rails.map(
-        (rail) =>
-          `${rail.sectionId}:${rail.side}:${(rail.offset ?? 0).toFixed(3)}`,
-      ),
-    );
-    for (const section of source.centerlines) {
-      for (const span of section.props ?? []) {
-        const centerlineOffset =
-          source.road.halfWidth +
-          (span.offset ?? DEFAULT_PROP_OFFSETS[span.kind]);
-        const key = `${section.id}:${span.side}:${centerlineOffset.toFixed(3)}`;
-        if (seen.has(key)) {
-          continue;
-        }
-        seen.add(key);
-        const [points] = roadsideRailPoints(
-          source,
-          bounds,
-          section,
-          "prop",
-          span.side,
-          0,
-          1,
-          centerlineOffset - source.road.halfWidth,
-        );
-        if (points && points.length >= 2) {
-          rails.push({
-            kind: "prop",
-            sectionId: section.id,
-            side: span.side,
-            offset: centerlineOffset,
-            active: false,
-            points,
-          });
-        }
-      }
-    }
-  }
-
-  if (activeKind === "prop") {
-    const seenWalls = new Set<string>();
-    for (const section of source.centerlines) {
-      for (const wall of section.walls ?? []) {
-        const centerlineOffset =
-          source.road.halfWidth +
-          (wall.offset ?? DEFAULT_WALL_OFFSET) +
-          WALL_THICKNESS / 2;
-        const key = `${section.id}:${wall.side}:${centerlineOffset.toFixed(3)}`;
-        if (seenWalls.has(key)) {
-          continue;
-        }
-        seenWalls.add(key);
-        const [points] = roadsideRailPoints(
-          source,
-          bounds,
-          section,
-          "wall",
-          wall.side,
-          0,
-          1,
-          centerlineOffset - source.road.halfWidth,
-        );
-        if (points && points.length >= 2) {
-          rails.push({
-            kind: "wall",
-            sectionId: section.id,
-            side: wall.side,
-            offset: centerlineOffset,
-            active: false,
-            points,
-          });
-        }
-      }
-    }
-  }
-
-  const spans: KerbOverlayData["spans"] = [];
-  for (const section of source.centerlines) {
-    const sectionSpans =
-      activeKind === "kerb"
-        ? section.kerbs ?? []
-        : activeKind === "wall"
-          ? section.walls ?? []
-          : section.props ?? [];
-    for (let spanIndex = 0; spanIndex < sectionSpans.length; spanIndex += 1) {
-      const span = sectionSpans[spanIndex]!;
-      const selectable =
-        activeKind === "kerb"
-          ? selectedKerbSpan?.sectionId === section.id &&
-            selectedKerbSpan.index === spanIndex
-          : activeKind === "wall"
-            ? selectedWallSpan?.sectionId === section.id &&
-              selectedWallSpan.index === spanIndex
-            : selectedPropSpan?.sectionId === section.id &&
-              selectedPropSpan.index === spanIndex;
-      const offset =
-        activeKind === "wall" && "offset" in span && span.offset !== undefined
-          ? span.offset + WALL_THICKNESS / 2
-          : activeKind === "prop" && "kind" in span
-            ? span.offset ?? DEFAULT_PROP_OFFSETS[span.kind]
-            : undefined;
-      const pieces = roadsideRailPoints(
-        source,
-        bounds,
-        section,
-        activeKind,
-        span.side,
-        span.start,
-        span.length,
-        offset,
-      );
-      const first = pieces[0];
-      const last = pieces[pieces.length - 1];
-      if (!first || !last || first.length === 0 || last.length === 0) {
-        continue;
-      }
-      spans.push({
-        kind: activeKind,
-        sectionId: section.id,
-        spanIndex,
-        side: span.side,
-        selected: selectable,
-        pieces,
-        entry: first[0]!,
-        exit: last[last.length - 1]!,
-      });
-    }
-  }
-
-  let preview: KerbOverlayData["preview"] = null;
-  if (
-    (drag?.kind === "kerb-paint" ||
-      drag?.kind === "wall-paint" ||
-      drag?.kind === "prop-paint") &&
-    project
-  ) {
-    const activeDrag = drag;
-    const section = project.centerlines.find(
-      (candidate) => candidate.id === activeDrag.sectionId,
-    );
-    if (section) {
-      const signed = activeDrag.signedLength;
-      const start =
-        signed >= 0 ? activeDrag.originFraction : activeDrag.previousFraction;
-      const length = Math.abs(signed);
-      if (length > 1e-5) {
-        const kind =
-          activeDrag.kind === "kerb-paint"
-            ? "kerb"
-            : activeDrag.kind === "wall-paint"
-              ? "wall"
-              : "prop";
-        const offset =
-          activeDrag.kind === "prop-paint"
-            ? activeDrag.paintOffset - project.road.halfWidth
-            : undefined;
-        const pieces = roadsideRailPoints(
-          project,
-          bounds,
-          section,
-          kind,
-          activeDrag.side,
-          start,
-          length,
-          offset,
-        );
-        const first = pieces[0];
-        const last = pieces[pieces.length - 1];
-        if (first && last && first.length > 0 && last.length > 0) {
-          preview = {
-            kind,
-            pieces,
-            entry: first[0]!,
-            exit: last[last.length - 1]!,
-          };
-        }
-      }
-    }
-  }
-
-  return { rails, spans, preview };
-}
-
 
 function serializeProject(source: Project): unknown {
   if (source.schema === "track-ed/project@1") {
@@ -1762,14 +1292,8 @@ function loadProject(input: unknown, frame: boolean): void {
   redoStack = [];
   selectedPoint = null;
   selectedTerrainPoint = null;
-  selectedKerbSpan = null;
-  selectedWallSpan = null;
-  selectedPropSpan = null;
   selectedRoadsideSpline = null;
   selectedRoadsideRun = null;
-  kerbEditStart = null;
-  wallEditStart = null;
-  propEditStart = null;
   addTerrainPointMode = false;
   drag = null;
   renderProject(project, { frame });
@@ -1787,14 +1311,8 @@ function undo(): void {
   project = previous;
   selectedPoint = null;
   selectedTerrainPoint = null;
-  selectedKerbSpan = null;
-  selectedWallSpan = null;
-  selectedPropSpan = null;
   selectedRoadsideSpline = null;
   selectedRoadsideRun = null;
-  kerbEditStart = null;
-  wallEditStart = null;
-  propEditStart = null;
   addTerrainPointMode = false;
   drag = null;
   syncBranchStart(project);
@@ -1813,14 +1331,8 @@ function redo(): void {
   project = next;
   selectedPoint = null;
   selectedTerrainPoint = null;
-  selectedKerbSpan = null;
-  selectedWallSpan = null;
-  selectedPropSpan = null;
   selectedRoadsideSpline = null;
   selectedRoadsideRun = null;
-  kerbEditStart = null;
-  wallEditStart = null;
-  propEditStart = null;
   addTerrainPointMode = false;
   drag = null;
   syncBranchStart(project);
@@ -1959,594 +1471,6 @@ function updateSectionList(source: Project): void {
   }
 }
 
-function findKerbSpan(
-  source: Project,
-  sectionId: string,
-  spanIndex: number,
-): { section: Project["centerlines"][number]; span: ProjectKerbSpan } | null {
-  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
-  const span = section?.kerbs?.[spanIndex];
-  return section && span ? { section, span } : null;
-}
-
-function findKerbSpanAt(
-  source: Project,
-  sectionId: string,
-  side: "left" | "right",
-  fraction: number,
-): number | null {
-  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
-  if (!section) {
-    return null;
-  }
-  const spans = section.kerbs ?? [];
-  for (let index = 0; index < spans.length; index += 1) {
-    const span = spans[index]!;
-    if (
-      span.side === side &&
-      kerbSpanContains(span.start, span.length, fraction, section.closed)
-    ) {
-      return index;
-    }
-  }
-  return null;
-}
-
-function kerbPaintSpan(
-  drag: Extract<NonNullable<DragState>, { kind: "kerb-paint" }>,
-): { start: number; length: number } | null {
-  const length = Math.abs(drag.signedLength);
-  if (length <= 1e-5) {
-    return null;
-  }
-  const start =
-    drag.signedLength >= 0 ? drag.originFraction : drag.previousFraction;
-  return {
-    start: ((start % 1) + 1) % 1,
-    length: Math.min(1 - 1e-9, length),
-  };
-}
-
-function updateKerbsUI(source: Project): void {
-  const editable = isVenueSchema(source.schema);
-  if (
-    selectedKerbSpan &&
-    !findKerbSpan(source, selectedKerbSpan.sectionId, selectedKerbSpan.index)
-  ) {
-    selectedKerbSpan = null;
-  }
-
-  kerbList.innerHTML = "";
-  let spanCount = 0;
-  for (const section of source.centerlines) {
-    const spans = section.kerbs ?? [];
-    for (let index = 0; index < spans.length; index += 1) {
-      spanCount += 1;
-      const span = spans[index]!;
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className =
-        selectedKerbSpan?.sectionId === section.id && selectedKerbSpan.index === index
-          ? "section-row selected"
-          : "section-row";
-      const label = document.createElement("div");
-      label.className = "section-label";
-      const title = document.createElement("strong");
-      title.textContent = `${section.id} · ${span.side}`;
-      const detail = document.createElement("span");
-      const rawEnd = span.start + span.length;
-      const end = section.closed ? rawEnd % 1 : rawEnd;
-      const wraps = section.closed && rawEnd > 1 + 1e-9;
-      detail.textContent = `${span.start.toFixed(3)} – ${end.toFixed(3)}${
-        wraps ? " (wraps)" : ""
-      }`;
-      label.append(title, detail);
-      row.append(label);
-      row.addEventListener("click", () => {
-        selectedKerbSpan = { sectionId: section.id, index };
-        scheduleOverlayUpdate();
-        updateKerbsUI(source);
-      });
-      kerbList.appendChild(row);
-    }
-  }
-  if (spanCount === 0) {
-    const empty = document.createElement("div");
-    empty.className = "junction-empty";
-    empty.textContent =
-      isVenueSchema(source.schema)
-        ? "No kerb spans. Switch to Kerbs mode and drag a dotted guide rail."
-        : "Kerb authoring requires track-ed/project@3 or project@4.";
-    kerbList.appendChild(empty);
-  }
-
-  const selected = selectedKerbSpan
-    ? findKerbSpan(source, selectedKerbSpan.sectionId, selectedKerbSpan.index)
-    : null;
-
-  const globalFlat = source.kerbs?.flatHeight ?? DEFAULT_KERB_FLAT_HEIGHT;
-  const globalCorner = source.kerbs?.cornerHeight ?? DEFAULT_KERB_CORNER_HEIGHT;
-  if (document.activeElement !== kerbGlobalFlat) {
-    kerbGlobalFlat.value = String(globalFlat);
-  }
-  if (document.activeElement !== kerbGlobalCorner) {
-    kerbGlobalCorner.value = String(globalCorner);
-  }
-  kerbGlobalFlat.disabled = !editable;
-  kerbGlobalCorner.disabled = !editable;
-
-  kerbRemoveButton.disabled = !editable || selected === null;
-  kerbSpanHeights.hidden = selected === null;
-  if (selected) {
-    const overridden =
-      selected.span.flatHeight !== undefined ||
-      selected.span.cornerHeight !== undefined;
-    kerbSpanOverride.checked = overridden;
-    kerbSpanOverride.disabled = !editable;
-    kerbSpanFlatField.hidden = !overridden;
-    kerbSpanCornerField.hidden = !overridden;
-    const flat = selected.span.flatHeight ?? globalFlat;
-    const corner = selected.span.cornerHeight ?? globalCorner;
-    if (document.activeElement !== kerbSpanFlat) {
-      kerbSpanFlat.value = String(flat);
-    }
-    if (document.activeElement !== kerbSpanCorner) {
-      kerbSpanCorner.value = String(corner);
-    }
-    kerbSpanFlat.disabled = !editable || !overridden;
-    kerbSpanCorner.disabled = !editable || !overridden;
-  }
-
-  kerbStatus.textContent = selected
-    ? `Editing ${selected.section.id} · ${selected.span.side} kerb span.`
-    : spanCount > 0
-      ? `${spanCount} kerb span${spanCount === 1 ? "" : "s"}.`
-      : "No kerb spans.";
-}
-
-function removeKerbSpan(): void {
-  if (!project || !selectedKerbSpan) {
-    return;
-  }
-  const located = findKerbSpan(project, selectedKerbSpan.sectionId, selectedKerbSpan.index);
-  if (!located) {
-    return;
-  }
-  const before = cloneProject(project);
-  located.section.kerbs!.splice(selectedKerbSpan.index, 1);
-  if (located.section.kerbs!.length === 0) {
-    delete located.section.kerbs;
-  }
-  selectedKerbSpan = null;
-  if (!renderProject(project, { frame: false })) {
-    project = before;
-    renderProject(project, { frame: false });
-    setKerbStatus("The kerb change does not bake.", "error");
-    return;
-  }
-  pushUndo(before);
-  setKerbStatus("Removed kerb span.", "ok");
-  scheduleOverlayUpdate();
-}
-
-function setKerbStatus(message: string, tone: "ok" | "error" | "" = ""): void {
-  kerbStatus.textContent = message;
-  kerbStatus.className = `edit-status ${tone}`.trim();
-}
-
-function editSelectedKerbSpan(
-  mutate: (span: NonNullable<Project["centerlines"][number]["kerbs"]>[number]) => void,
-): void {
-  if (!project || !selectedKerbSpan) {
-    return;
-  }
-  const located = findKerbSpan(project, selectedKerbSpan.sectionId, selectedKerbSpan.index);
-  if (!located) {
-    return;
-  }
-  if (!kerbEditStart) {
-    kerbEditStart = cloneProject(project);
-  }
-  mutate(located.span);
-  scheduleRender();
-  scheduleOverlayUpdate();
-  updateKerbsUI(project);
-  updateMeta(project);
-}
-
-function findWallSpan(
-  source: Project,
-  sectionId: string,
-  spanIndex: number,
-): { section: Project["centerlines"][number]; span: ProjectWallSpan } | null {
-  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
-  const span = section?.walls?.[spanIndex];
-  return section && span ? { section, span } : null;
-}
-
-function findWallSpanAt(
-  source: Project,
-  sectionId: string,
-  side: "left" | "right",
-  fraction: number,
-): number | null {
-  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
-  if (!section) {
-    return null;
-  }
-  const spans = section.walls ?? [];
-  for (let index = 0; index < spans.length; index += 1) {
-    const span = spans[index]!;
-    if (
-      span.side === side &&
-      kerbSpanContains(span.start, span.length, fraction, section.closed)
-    ) {
-      return index;
-    }
-  }
-  return null;
-}
-
-function wallPaintSpan(
-  drag: Extract<NonNullable<DragState>, { kind: "wall-paint" }>,
-): { start: number; length: number } | null {
-  const length = Math.abs(drag.signedLength);
-  if (length <= 1e-5) {
-    return null;
-  }
-  const start =
-    drag.signedLength >= 0 ? drag.originFraction : drag.previousFraction;
-  return {
-    start: ((start % 1) + 1) % 1,
-    length: Math.min(1 - 1e-9, length),
-  };
-}
-
-function updateWallsUI(source: Project): void {
-  const editable = isVenueSchema(source.schema);
-  if (
-    selectedWallSpan &&
-    !findWallSpan(source, selectedWallSpan.sectionId, selectedWallSpan.index)
-  ) {
-    selectedWallSpan = null;
-  }
-
-  wallList.innerHTML = "";
-  let spanCount = 0;
-  for (const section of source.centerlines) {
-    const spans = section.walls ?? [];
-    for (let index = 0; index < spans.length; index += 1) {
-      spanCount += 1;
-      const span = spans[index]!;
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className =
-        selectedWallSpan?.sectionId === section.id && selectedWallSpan.index === index
-          ? "section-row selected"
-          : "section-row";
-      const label = document.createElement("div");
-      label.className = "section-label";
-      const title = document.createElement("strong");
-      title.textContent = `${section.id} · ${span.side}`;
-      const detail = document.createElement("span");
-      const rawEnd = span.start + span.length;
-      const end = section.closed ? rawEnd % 1 : rawEnd;
-      const wraps = section.closed && rawEnd > 1 + 1e-9;
-      detail.textContent = `${span.start.toFixed(3)} – ${end.toFixed(3)}${
-        wraps ? " (wraps)" : ""
-      } · ${(span.height ?? DEFAULT_WALL_HEIGHT).toFixed(2)} m`;
-      label.append(title, detail);
-      row.append(label);
-      row.addEventListener("click", () => {
-        selectedWallSpan = { sectionId: section.id, index };
-        scheduleOverlayUpdate();
-        updateWallsUI(source);
-      });
-      wallList.appendChild(row);
-    }
-  }
-  if (spanCount === 0) {
-    const empty = document.createElement("div");
-    empty.className = "junction-empty";
-    empty.textContent = isVenueSchema(source.schema)
-      ? "No wall spans. Switch to Walls mode and drag a dotted blue guide rail."
-      : "Wall authoring requires track-ed/project@3 or project@4.";
-    wallList.appendChild(empty);
-  }
-
-  const selected = selectedWallSpan
-    ? findWallSpan(source, selectedWallSpan.sectionId, selectedWallSpan.index)
-    : null;
-  const height = selected?.span.height ?? DEFAULT_WALL_HEIGHT;
-  const offset = selected?.span.offset ?? DEFAULT_WALL_OFFSET;
-  if (document.activeElement !== wallHeight) {
-    wallHeight.value = String(height);
-  }
-  if (document.activeElement !== wallOffset) {
-    wallOffset.value = String(offset);
-  }
-  wallHeight.disabled = !editable || selected === null;
-  wallOffset.disabled = !editable || selected === null;
-  wallRemoveButton.disabled = !editable || selected === null;
-  wallStatus.textContent = selected
-    ? `Editing ${selected.section.id} · ${selected.span.side} wall span.`
-    : spanCount > 0
-      ? `${spanCount} wall span${spanCount === 1 ? "" : "s"}.`
-      : "No wall spans.";
-}
-
-function removeWallSpan(): void {
-  if (!project || !selectedWallSpan) {
-    return;
-  }
-  const located = findWallSpan(project, selectedWallSpan.sectionId, selectedWallSpan.index);
-  if (!located) {
-    return;
-  }
-  const before = cloneProject(project);
-  located.section.walls!.splice(selectedWallSpan.index, 1);
-  if (located.section.walls!.length === 0) {
-    delete located.section.walls;
-  }
-  selectedWallSpan = null;
-  if (!renderProject(project, { frame: false })) {
-    project = before;
-    renderProject(project, { frame: false });
-    setWallStatus("The wall change does not bake.", "error");
-    return;
-  }
-  pushUndo(before);
-  setWallStatus("Removed wall span.", "ok");
-  scheduleOverlayUpdate();
-}
-
-function setWallStatus(message: string, tone: "ok" | "error" | "" = ""): void {
-  wallStatus.textContent = message;
-  wallStatus.className = `edit-status ${tone}`.trim();
-}
-
-function editSelectedWallSpan(
-  mutate: (span: ProjectWallSpan) => void,
-): void {
-  if (!project || !selectedWallSpan) {
-    return;
-  }
-  const located = findWallSpan(project, selectedWallSpan.sectionId, selectedWallSpan.index);
-  if (!located) {
-    return;
-  }
-  if (!wallEditStart) {
-    wallEditStart = cloneProject(project);
-  }
-  mutate(located.span);
-  scheduleRender();
-  scheduleOverlayUpdate();
-  updateWallsUI(project);
-  updateMeta(project);
-}
-
-function findPropSpan(
-  source: Project,
-  sectionId: string,
-  spanIndex: number,
-): { section: Project["centerlines"][number]; span: ProjectPropSpan } | null {
-  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
-  const span = section?.props?.[spanIndex];
-  return section && span ? { section, span } : null;
-}
-
-function findPropSpanAt(
-  source: Project,
-  sectionId: string,
-  side: "left" | "right",
-  kind: ProjectPropKind,
-  fraction: number,
-  centerlineOffset?: number,
-): number | null {
-  const section = source.centerlines.find((candidate) => candidate.id === sectionId);
-  if (!section) {
-    return null;
-  }
-  const spans = section.props ?? [];
-  for (let index = 0; index < spans.length; index += 1) {
-    const span = spans[index]!;
-    const spanOffset =
-      source.road.halfWidth +
-      (span.offset ?? DEFAULT_PROP_OFFSETS[span.kind]);
-    if (
-      span.kind === kind &&
-      span.side === side &&
-      (centerlineOffset === undefined ||
-        Math.abs(spanOffset - centerlineOffset) <= 0.05) &&
-      kerbSpanContains(span.start, span.length, fraction, section.closed)
-    ) {
-      return index;
-    }
-  }
-  return null;
-}
-
-function propPaintSpan(drag: {
-  signedLength: number;
-  originFraction: number;
-  previousFraction: number;
-}): { start: number; length: number } | null {
-  const length = Math.abs(drag.signedLength);
-  if (length <= 1e-5) {
-    return null;
-  }
-  const start =
-    drag.signedLength >= 0 ? drag.originFraction : drag.previousFraction;
-  return {
-    start: ((start % 1) + 1) % 1,
-    length: Math.min(1 - 1e-9, length),
-  };
-}
-
-function updatePropsUI(source: Project): void {
-  const editable = source.schema === "track-ed/project@4";
-  if (
-    selectedPropSpan &&
-    !findPropSpan(source, selectedPropSpan.sectionId, selectedPropSpan.index)
-  ) {
-    selectedPropSpan = null;
-  }
-
-  propList.innerHTML = "";
-  let spanCount = 0;
-  for (const section of source.centerlines) {
-    const spans = section.props ?? [];
-    for (let index = 0; index < spans.length; index += 1) {
-      spanCount += 1;
-      const span = spans[index]!;
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className =
-        selectedPropSpan?.sectionId === section.id && selectedPropSpan.index === index
-          ? "section-row selected"
-          : "section-row";
-      const label = document.createElement("div");
-      label.className = "section-label";
-      const title = document.createElement("strong");
-      title.textContent = `${span.kind} · ${section.id} · ${span.side}`;
-      const detail = document.createElement("span");
-      const rawEnd = span.start + span.length;
-      const end = section.closed ? rawEnd % 1 : rawEnd;
-      const wraps = section.closed && rawEnd > 1 + 1e-9;
-      const offset =
-        source.road.halfWidth +
-        (span.offset ?? DEFAULT_PROP_OFFSETS[span.kind]);
-      const spacing = span.spacing ?? DEFAULT_PROP_SPACING[span.kind];
-      detail.textContent = `${span.start.toFixed(3)} – ${end.toFixed(3)}${
-        wraps ? " (wraps)" : ""
-      } · ${offset.toFixed(1)} m from centre · ${spacing.toFixed(1)} m apart`;
-      label.append(title, detail);
-      row.append(label);
-      row.addEventListener("click", () => {
-        selectedPropSpan = { sectionId: section.id, index };
-        propPaintKind = span.kind;
-        scheduleOverlayUpdate();
-        updatePropsUI(source);
-      });
-      propList.appendChild(row);
-    }
-  }
-  if (spanCount === 0) {
-    const empty = document.createElement("div");
-    empty.className = "junction-empty";
-    empty.textContent = editable
-      ? "No prop runs. Switch to Props mode and drag a dotted guide rail."
-      : "Prop runs require track-ed/project@4.";
-    propList.appendChild(empty);
-  }
-
-  const selected = selectedPropSpan
-    ? findPropSpan(source, selectedPropSpan.sectionId, selectedPropSpan.index)
-    : null;
-  if (document.activeElement !== propPaintOffsetInput) {
-    propPaintOffsetInput.value = String(propPaintOffset);
-  }
-  propPaintOffsetInput.disabled = !editable;
-  const offset =
-    selected !== null
-      ? source.road.halfWidth +
-        (selected.span.offset ?? DEFAULT_PROP_OFFSETS[selected.span.kind])
-      : propPaintOffset;
-  const spacing = selected?.span.spacing ?? DEFAULT_PROP_SPACING[propPaintKind];
-  propOffsetField.hidden = selected === null;
-  propSpacingField.hidden = selected === null;
-  if (document.activeElement !== propOffset) {
-    propOffset.value = String(offset);
-  }
-  if (document.activeElement !== propSpacing) {
-    propSpacing.value = String(spacing);
-  }
-  propOffset.disabled = !editable || selected === null;
-  propSpacing.disabled = !editable || selected === null;
-  propRemoveButton.disabled = !editable || selected === null;
-
-  for (const [button, kind] of [
-    [propKindTree, "tree"],
-    [propKindTyre, "tyre"],
-    [propKindBlock, "block"],
-  ] as const) {
-    button.classList.toggle("active", propPaintKind === kind);
-    button.disabled = !editable;
-  }
-
-  propStatus.textContent = selected
-    ? `Editing ${selected.span.kind} run on ${selected.section.id} · ${selected.span.side}.`
-    : spanCount > 0
-      ? `${spanCount} prop run${spanCount === 1 ? "" : "s"}. Painting ${propPaintKind} at ${propPaintOffset.toFixed(1)} m.`
-      : `No prop runs. Painting ${propPaintKind} at ${propPaintOffset.toFixed(1)} m.`;
-}
-
-function removePropSpan(): void {
-  if (!project || !selectedPropSpan) {
-    return;
-  }
-  const located = findPropSpan(project, selectedPropSpan.sectionId, selectedPropSpan.index);
-  if (!located) {
-    return;
-  }
-  const before = cloneProject(project);
-  located.section.props!.splice(selectedPropSpan.index, 1);
-  if (located.section.props!.length === 0) {
-    delete located.section.props;
-  }
-  selectedPropSpan = null;
-  if (!renderProject(project, { frame: false })) {
-    project = before;
-    renderProject(project, { frame: false });
-    setPropStatus("The prop run does not bake.", "error");
-    return;
-  }
-  pushUndo(before);
-  setPropStatus("Removed prop run.", "ok");
-  scheduleOverlayUpdate();
-}
-
-function setPropStatus(message: string, tone: "ok" | "error" | "" = ""): void {
-  propStatus.textContent = message;
-  propStatus.className = `edit-status ${tone}`.trim();
-}
-
-function editSelectedPropSpan(mutate: (span: ProjectPropSpan) => void): void {
-  if (!project || !selectedPropSpan) {
-    return;
-  }
-  const located = findPropSpan(project, selectedPropSpan.sectionId, selectedPropSpan.index);
-  if (!located) {
-    return;
-  }
-  if (!propEditStart) {
-    propEditStart = cloneProject(project);
-  }
-  mutate(located.span);
-  scheduleRender();
-  scheduleOverlayUpdate();
-  updatePropsUI(project);
-}
-
-function finishPropSpanEdit(): void {
-  if (!propEditStart) {
-    return;
-  }
-  const start = propEditStart;
-  propEditStart = null;
-  if (!flushPendingRender()) {
-    project = start;
-    renderProject(project, { frame: false });
-    setPropStatus("The prop run does not bake.", "error");
-    updateAuthoringUI();
-    return;
-  }
-  if (project && JSON.stringify(start) !== JSON.stringify(project)) {
-    pushUndo(start);
-  }
-  updateAuthoringUI();
-}
-
 function roadsideSection(source: Project): Project["centerlines"][number] | null {
   if (!roadsideSectionId) {
     return source.centerlines[0] ?? null;
@@ -2611,7 +1535,7 @@ function findRoadsideRunAt(
   let fallback: number | null = null;
   for (let index = 0; index < spline.runs.length; index += 1) {
     const run = spline.runs[index]!;
-    if (!kerbSpanContains(run.start, run.length, fraction, closed)) {
+    if (!spanContains(run.start, run.length, fraction, closed)) {
       continue;
     }
     if (run.kind === "wall") {
@@ -2633,7 +1557,7 @@ function roadsideRunOverlaps(
   return spline.runs.some((run, index) => {
     if (
       index === ignoreIndex ||
-      !kerbSpansOverlap(start, length, run.start, run.length, closed)
+      !spansOverlap(start, length, run.start, run.length, closed)
     ) {
       return false;
     }
@@ -3004,7 +1928,6 @@ function overlayRoadsideSplines(
         source,
         bounds,
         section,
-        "spline",
         spline.side,
         0,
         1,
@@ -3029,7 +1952,6 @@ function overlayRoadsideSplines(
           source,
           bounds,
           section,
-          "spline",
           spline.side,
           run.start,
           run.length,
@@ -3076,7 +1998,6 @@ function overlayRoadsideSplines(
           project,
           bounds,
           located.section,
-          "spline",
           located.spline.side,
           start,
           length,
@@ -3105,7 +2026,7 @@ function overlayForMode(
 ): KerbOverlayData {
   return editorMode === "roadside"
     ? overlayRoadsideSplines(source, bounds)
-    : overlayKerbs(source, bounds);
+    : { rails: [], spans: [] };
 }
 
 function updateJunctionList(source: Project): void {
@@ -3824,129 +2745,6 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         return;
       }
       const point = pointerNdc(event, canvas);
-      if (editorMode === "kerbs") {
-        const handle = trackView.pickKerbHandle(point.x, point.y);
-        if (handle) {
-          event.stopPropagation();
-          event.preventDefault();
-          selectedKerbSpan = { sectionId: handle.sectionId, index: handle.spanIndex };
-          drag = {
-            kind: handle.handle === "entry" ? "kerb-entry" : "kerb-exit",
-            sectionId: handle.sectionId,
-            spanIndex: handle.spanIndex,
-            startProject: cloneProject(project),
-          };
-          trackView.setControlsEnabled(false);
-          canvas.setPointerCapture(event.pointerId);
-          canvas.style.cursor = "grabbing";
-          scheduleOverlayUpdate();
-          updateKerbsUI(project);
-          return;
-        }
-        const rail = trackView.pickKerbRail(point.x, point.y);
-        if (rail) {
-          const section = project.centerlines.find(
-            (candidate) => candidate.id === rail.sectionId,
-          );
-          if (!section) {
-            return;
-          }
-          const spanIndex = findKerbSpanAt(
-            project,
-            rail.sectionId,
-            rail.side,
-            rail.fraction,
-          );
-          if (spanIndex !== null) {
-            event.stopPropagation();
-            event.preventDefault();
-            selectedKerbSpan = { sectionId: rail.sectionId, index: spanIndex };
-            scheduleOverlayUpdate();
-            updateKerbsUI(project);
-            return;
-          }
-          event.stopPropagation();
-          event.preventDefault();
-          drag = {
-            kind: "kerb-paint",
-            sectionId: rail.sectionId,
-            side: rail.side,
-            closed: section.closed,
-            originFraction: rail.fraction,
-            previousFraction: rail.fraction,
-            signedLength: 0,
-            startProject: cloneProject(project),
-          };
-          trackView.setControlsEnabled(false);
-          canvas.setPointerCapture(event.pointerId);
-          canvas.style.cursor = "crosshair";
-          scheduleOverlayUpdate();
-          return;
-        }
-        return;
-      }
-      if (editorMode === "walls") {
-        const handle = trackView.pickKerbHandle(point.x, point.y);
-        if (handle && handle.kind === "wall") {
-          event.stopPropagation();
-          event.preventDefault();
-          selectedWallSpan = { sectionId: handle.sectionId, index: handle.spanIndex };
-          drag = {
-            kind: handle.handle === "entry" ? "wall-entry" : "wall-exit",
-            sectionId: handle.sectionId,
-            spanIndex: handle.spanIndex,
-            startProject: cloneProject(project),
-          };
-          trackView.setControlsEnabled(false);
-          canvas.setPointerCapture(event.pointerId);
-          canvas.style.cursor = "grabbing";
-          scheduleOverlayUpdate();
-          updateWallsUI(project);
-          return;
-        }
-        const rail = trackView.pickKerbRail(point.x, point.y);
-        if (rail && rail.kind === "wall") {
-          const section = project.centerlines.find(
-            (candidate) => candidate.id === rail.sectionId,
-          );
-          if (!section) {
-            return;
-          }
-          const spanIndex = findWallSpanAt(
-            project,
-            rail.sectionId,
-            rail.side,
-            rail.fraction,
-          );
-          if (spanIndex !== null) {
-            event.stopPropagation();
-            event.preventDefault();
-            selectedWallSpan = { sectionId: rail.sectionId, index: spanIndex };
-            scheduleOverlayUpdate();
-            updateWallsUI(project);
-            return;
-          }
-          event.stopPropagation();
-          event.preventDefault();
-          drag = {
-            kind: "wall-paint",
-            sectionId: rail.sectionId,
-            side: rail.side,
-            closed: section.closed,
-            originFraction: rail.fraction,
-            previousFraction: rail.fraction,
-            signedLength: 0,
-            startProject: cloneProject(project),
-          };
-          trackView.setControlsEnabled(false);
-          canvas.setPointerCapture(event.pointerId);
-          canvas.style.cursor = "crosshair";
-          scheduleOverlayUpdate();
-          return;
-        }
-        return;
-      }
-
       if (editorMode === "roadside") {
         const handle = trackView.pickKerbHandle(point.x, point.y);
         if (handle && handle.splineId) {
@@ -4027,75 +2825,6 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
           canvas.style.cursor = "crosshair";
           scheduleOverlayUpdate();
           updateRoadsideUI(project);
-          return;
-        }
-        return;
-      }
-
-      if (editorMode === "props") {
-        const handle = trackView.pickKerbHandle(point.x, point.y);
-        if (handle && handle.kind === "prop") {
-          event.stopPropagation();
-          event.preventDefault();
-          selectedPropSpan = { sectionId: handle.sectionId, index: handle.spanIndex };
-          drag = {
-            kind: handle.handle === "entry" ? "prop-entry" : "prop-exit",
-            sectionId: handle.sectionId,
-            spanIndex: handle.spanIndex,
-            startProject: cloneProject(project),
-          };
-          trackView.setControlsEnabled(false);
-          canvas.setPointerCapture(event.pointerId);
-          canvas.style.cursor = "grabbing";
-          scheduleOverlayUpdate();
-          updatePropsUI(project);
-          return;
-        }
-        const rail = trackView.pickKerbRail(point.x, point.y);
-        if (rail && rail.kind === "prop") {
-          const section = project.centerlines.find(
-            (candidate) => candidate.id === rail.sectionId,
-          );
-          if (!section) {
-            return;
-          }
-          if (rail.offset !== undefined) {
-            propPaintOffset = rail.offset;
-          }
-          const spanIndex = findPropSpanAt(
-            project,
-            rail.sectionId,
-            rail.side,
-            propPaintKind,
-            rail.fraction,
-            rail.offset,
-          );
-          if (spanIndex !== null) {
-            event.stopPropagation();
-            event.preventDefault();
-            selectedPropSpan = { sectionId: rail.sectionId, index: spanIndex };
-            scheduleOverlayUpdate();
-            updatePropsUI(project);
-            return;
-          }
-          event.stopPropagation();
-          event.preventDefault();
-          drag = {
-            kind: "prop-paint",
-            sectionId: rail.sectionId,
-            side: rail.side,
-            propKind: propPaintKind,
-            paintOffset: propPaintOffset,
-            closed: section.closed,
-            originFraction: rail.fraction,
-            previousFraction: rail.fraction,
-            signedLength: 0,
-            startProject: cloneProject(project),
-          };
-          trackView.setControlsEnabled(false);
-          canvas.setPointerCapture(event.pointerId);
-          canvas.style.cursor = "crosshair";
-          scheduleOverlayUpdate();
           return;
         }
         return;
@@ -4241,186 +2970,6 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
       if (!ground) {
         return;
       }
-      if (drag.kind === "kerb-paint") {
-        const activeDrag = drag;
-        const section = project.centerlines.find(
-          (candidate) => candidate.id === activeDrag.sectionId,
-        );
-        if (!section) {
-          return;
-        }
-        const fraction = nearestPolylineFraction(section, ground);
-        if (fraction === null) {
-          return;
-        }
-        if (activeDrag.closed) {
-          let delta = fraction - activeDrag.previousFraction;
-          if (delta > 0.5) {
-            delta -= 1;
-          } else if (delta < -0.5) {
-            delta += 1;
-          }
-          activeDrag.signedLength += delta;
-          activeDrag.previousFraction = fraction;
-        } else {
-          activeDrag.signedLength = fraction - activeDrag.originFraction;
-          activeDrag.previousFraction = fraction;
-        }
-        scheduleOverlayUpdate();
-        return;
-      }
-
-      if (drag.kind === "kerb-entry" || drag.kind === "kerb-exit") {
-        const activeDrag = drag;
-        const section = project.centerlines.find(
-          (candidate) => candidate.id === activeDrag.sectionId,
-        );
-        const span = section?.kerbs?.[activeDrag.spanIndex];
-        if (!section || !span) {
-          return;
-        }
-        const fraction = nearestPolylineFraction(section, ground);
-        if (fraction === null) {
-          return;
-        }
-        const minimum = 0.002;
-        let start = span.start;
-        let length = span.length;
-        if (activeDrag.kind === "kerb-entry") {
-          const exit = kerbSpanEnd(span.start, span.length);
-          const forward = section.closed
-            ? (exit - fraction + 1) % 1
-            : exit - fraction;
-          if (forward <= minimum || forward >= 1) {
-            return;
-          }
-          start = fraction;
-          length = forward;
-        } else {
-          const forward = section.closed
-            ? (fraction - span.start + 1) % 1
-            : fraction - span.start;
-          if (forward <= minimum || forward >= 1) {
-            return;
-          }
-          length = forward;
-        }
-        if (!section.closed && start + length > 1 + 1e-9) {
-          return;
-        }
-        const overlaps = (section.kerbs ?? []).some(
-          (candidate, index) =>
-            index !== activeDrag.spanIndex &&
-            candidate.side === span.side &&
-            kerbSpansOverlap(
-              start,
-              length,
-              candidate.start,
-              candidate.length,
-              section.closed,
-            ),
-        );
-        if (overlaps) {
-          return;
-        }
-        span.start = start;
-        span.length = length;
-        scheduleOverlayUpdate();
-        scheduleDragRender();
-        updateKerbsUI(project);
-        return;
-      }
-
-      if (drag.kind === "wall-paint") {
-        const activeDrag = drag;
-        const section = project.centerlines.find(
-          (candidate) => candidate.id === activeDrag.sectionId,
-        );
-        if (!section) {
-          return;
-        }
-        const fraction = nearestPolylineFraction(section, ground);
-        if (fraction === null) {
-          return;
-        }
-        if (activeDrag.closed) {
-          let delta = fraction - activeDrag.previousFraction;
-          if (delta > 0.5) {
-            delta -= 1;
-          } else if (delta < -0.5) {
-            delta += 1;
-          }
-          activeDrag.signedLength += delta;
-          activeDrag.previousFraction = fraction;
-        } else {
-          activeDrag.signedLength = fraction - activeDrag.originFraction;
-          activeDrag.previousFraction = fraction;
-        }
-        scheduleOverlayUpdate();
-        return;
-      }
-
-      if (drag.kind === "wall-entry" || drag.kind === "wall-exit") {
-        const activeDrag = drag;
-        const section = project.centerlines.find(
-          (candidate) => candidate.id === activeDrag.sectionId,
-        );
-        const span = section?.walls?.[activeDrag.spanIndex];
-        if (!section || !span) {
-          return;
-        }
-        const fraction = nearestPolylineFraction(section, ground);
-        if (fraction === null) {
-          return;
-        }
-        const minimum = 0.002;
-        let start = span.start;
-        let length = span.length;
-        if (activeDrag.kind === "wall-entry") {
-          const exit = kerbSpanEnd(span.start, span.length);
-          const forward = section.closed
-            ? (exit - fraction + 1) % 1
-            : exit - fraction;
-          if (forward <= minimum || forward >= 1) {
-            return;
-          }
-          start = fraction;
-          length = forward;
-        } else {
-          const forward = section.closed
-            ? (fraction - span.start + 1) % 1
-            : fraction - span.start;
-          if (forward <= minimum || forward >= 1) {
-            return;
-          }
-          length = forward;
-        }
-        if (!section.closed && start + length > 1 + 1e-9) {
-          return;
-        }
-        const overlaps = (section.walls ?? []).some(
-          (candidate, index) =>
-            index !== activeDrag.spanIndex &&
-            candidate.side === span.side &&
-            kerbSpansOverlap(
-              start,
-              length,
-              candidate.start,
-              candidate.length,
-              section.closed,
-            ),
-        );
-        if (overlaps) {
-          return;
-        }
-        span.start = start;
-        span.length = length;
-        scheduleOverlayUpdate();
-        scheduleDragRender();
-        updateWallsUI(project);
-        return;
-      }
-
       if (drag.kind === "roadside-paint") {
         const activeDrag = drag;
         const section = project.centerlines.find(
@@ -4471,7 +3020,7 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         let start = run.start;
         let length = run.length;
         if (activeDrag.kind === "roadside-entry") {
-          const exit = kerbSpanEnd(run.start, run.length);
+          const exit = spanEnd(run.start, run.length);
           const forward = section.closed
             ? (exit - fraction + 1) % 1
             : exit - fraction;
@@ -4509,81 +3058,6 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
         scheduleOverlayUpdate();
         scheduleDragRender();
         updateRoadsideUI(project);
-        return;
-      }
-
-      if (drag.kind === "prop-paint") {
-        const activeDrag = drag;
-        const section = project.centerlines.find(
-          (candidate) => candidate.id === activeDrag.sectionId,
-        );
-        if (!section) {
-          return;
-        }
-        const fraction = nearestPolylineFraction(section, ground);
-        if (fraction === null) {
-          return;
-        }
-        if (activeDrag.closed) {
-          let delta = fraction - activeDrag.previousFraction;
-          if (delta > 0.5) {
-            delta -= 1;
-          } else if (delta < -0.5) {
-            delta += 1;
-          }
-          activeDrag.signedLength += delta;
-          activeDrag.previousFraction = fraction;
-        } else {
-          activeDrag.signedLength = fraction - activeDrag.originFraction;
-          activeDrag.previousFraction = fraction;
-        }
-        scheduleOverlayUpdate();
-        return;
-      }
-
-      if (drag.kind === "prop-entry" || drag.kind === "prop-exit") {
-        const activeDrag = drag;
-        const section = project.centerlines.find(
-          (candidate) => candidate.id === activeDrag.sectionId,
-        );
-        const span = section?.props?.[activeDrag.spanIndex];
-        if (!section || !span) {
-          return;
-        }
-        const fraction = nearestPolylineFraction(section, ground);
-        if (fraction === null) {
-          return;
-        }
-        const minimum = 0.002;
-        let start = span.start;
-        let length = span.length;
-        if (activeDrag.kind === "prop-entry") {
-          const exit = kerbSpanEnd(span.start, span.length);
-          const forward = section.closed
-            ? (exit - fraction + 1) % 1
-            : exit - fraction;
-          if (forward <= minimum || forward >= 1) {
-            return;
-          }
-          start = fraction;
-          length = forward;
-        } else {
-          const forward = section.closed
-            ? (fraction - span.start + 1) % 1
-            : fraction - span.start;
-          if (forward <= minimum || forward >= 1) {
-            return;
-          }
-          length = forward;
-        }
-        if (!section.closed && start + length > 1 + 1e-9) {
-          return;
-        }
-        span.start = start;
-        span.length = length;
-        scheduleOverlayUpdate();
-        scheduleDragRender();
-        updatePropsUI(project);
         return;
       }
 
@@ -4737,68 +3211,6 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
       return;
     }
 
-    if (editorMode === "kerbs") {
-      const handle = trackView.pickKerbHandle(point.x, point.y);
-      if (handle) {
-        canvas.style.cursor = "grab";
-        pickInfo.innerHTML = `
-          <div class="pick-row"><span>kerb handle</span><strong>${handle.handle}</strong></div>
-          <div class="pick-row"><span>section</span><strong>${handle.sectionId}</strong></div>
-        `;
-        return;
-      }
-      const rail = trackView.pickKerbRail(point.x, point.y);
-      if (rail) {
-        const section = project?.centerlines.find(
-          (candidate) => candidate.id === rail.sectionId,
-        );
-        const spanIndex = section
-          ? findKerbSpanAt(project!, rail.sectionId, rail.side, rail.fraction)
-          : null;
-        canvas.style.cursor = spanIndex === null ? "crosshair" : "pointer";
-        pickInfo.innerHTML = `
-          <div class="pick-row"><span>kerb rail</span><strong>${rail.sectionId} · ${rail.side}</strong></div>
-          <div class="pick-row"><span>fraction</span><strong>${rail.fraction.toFixed(3)}</strong></div>
-        `;
-        return;
-      }
-      canvas.style.cursor = "default";
-      pickInfo.textContent =
-        "Drag a dotted kerb rail to paint a span. Select a span to show endpoint handles.";
-      return;
-    }
-
-    if (editorMode === "walls") {
-      const handle = trackView.pickKerbHandle(point.x, point.y);
-      if (handle && handle.kind === "wall") {
-        canvas.style.cursor = "grab";
-        pickInfo.innerHTML = `
-          <div class="pick-row"><span>wall handle</span><strong>${handle.handle}</strong></div>
-          <div class="pick-row"><span>section</span><strong>${handle.sectionId}</strong></div>
-        `;
-        return;
-      }
-      const rail = trackView.pickKerbRail(point.x, point.y);
-      if (rail && rail.kind === "wall") {
-        const section = project?.centerlines.find(
-          (candidate) => candidate.id === rail.sectionId,
-        );
-        const spanIndex = section
-          ? findWallSpanAt(project!, rail.sectionId, rail.side, rail.fraction)
-          : null;
-        canvas.style.cursor = spanIndex === null ? "crosshair" : "pointer";
-        pickInfo.innerHTML = `
-          <div class="pick-row"><span>wall rail</span><strong>${rail.sectionId} · ${rail.side}</strong></div>
-          <div class="pick-row"><span>fraction</span><strong>${rail.fraction.toFixed(3)}</strong></div>
-        `;
-        return;
-      }
-      canvas.style.cursor = "default";
-      pickInfo.textContent =
-        "Drag a dotted wall rail to paint a span. Select a wall to edit height and offset.";
-      return;
-    }
-
     if (editorMode === "roadside") {
       const handle = trackView.pickKerbHandle(point.x, point.y);
       if (handle && handle.splineId) {
@@ -4821,45 +3233,6 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
       canvas.style.cursor = "default";
       pickInfo.textContent =
         "Select a spline, choose a feature type, then drag a spline rail to paint.";
-      return;
-    }
-
-    if (editorMode === "props") {
-      const handle = trackView.pickKerbHandle(point.x, point.y);
-      if (handle && handle.kind === "prop") {
-        canvas.style.cursor = "grab";
-        pickInfo.innerHTML = `
-          <div class="pick-row"><span>prop run handle</span><strong>${handle.handle}</strong></div>
-          <div class="pick-row"><span>section</span><strong>${handle.sectionId}</strong></div>
-        `;
-        return;
-      }
-      const rail = trackView.pickKerbRail(point.x, point.y);
-      if (rail && rail.kind === "prop") {
-        const section = project?.centerlines.find(
-          (candidate) => candidate.id === rail.sectionId,
-        );
-        const spanIndex = section
-          ? findPropSpanAt(
-              project!,
-              rail.sectionId,
-              rail.side,
-              propPaintKind,
-              rail.fraction,
-              rail.offset,
-            )
-          : null;
-        canvas.style.cursor = spanIndex === null ? "crosshair" : "pointer";
-        pickInfo.innerHTML = `
-          <div class="pick-row"><span>prop rail</span><strong>${rail.sectionId} · ${rail.side}</strong></div>
-          <div class="pick-row"><span>kind</span><strong>${propPaintKind}</strong></div>
-          <div class="pick-row"><span>offset</span><strong>${(rail.offset ?? propPaintOffset).toFixed(1)} m</strong></div>
-        `;
-        return;
-      }
-      canvas.style.cursor = "default";
-      pickInfo.textContent =
-        "Drag a dotted prop rail to paint a run. Select a run to edit offset and spacing.";
       return;
     }
 
@@ -4933,169 +3306,12 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
       flushPendingRender();
     }
 
-    if (currentDrag.kind === "kerb-paint" && project) {
-      const painted = kerbPaintSpan(currentDrag);
-      if (!painted) {
-        scheduleOverlayUpdate();
-        updateAuthoringUI();
-        return;
-      }
-      const section = project.centerlines.find(
-        (candidate) => candidate.id === currentDrag.sectionId,
-      );
-      if (!section) {
-        return;
-      }
-      if (
-        !section.closed &&
-        painted.start + painted.length > 1 + 1e-9
-      ) {
-        setKerbStatus("The kerb span must stay within this open section.", "error");
-        scheduleOverlayUpdate();
-        return;
-      }
-      const overlaps = (section.kerbs ?? []).some(
-        (span) =>
-          span.side === currentDrag.side &&
-          kerbSpansOverlap(
-            painted.start,
-            painted.length,
-            span.start,
-            span.length,
-            section.closed,
-          ),
-      );
-      if (overlaps) {
-        setKerbStatus("Kerbs on the same side cannot overlap.", "error");
-        scheduleOverlayUpdate();
-        return;
-      }
-      const before = currentDrag.startProject;
-      section.kerbs = [
-        ...(section.kerbs ?? []),
-        { side: currentDrag.side, start: painted.start, length: painted.length },
-      ].sort((a, b) => a.side.localeCompare(b.side) || a.start - b.start);
-      selectedKerbSpan = {
-        sectionId: section.id,
-        index: section.kerbs.findIndex(
-          (span) =>
-            span.side === currentDrag.side &&
-            span.start === painted.start &&
-            span.length === painted.length,
-        ),
-      };
-      if (!renderProject(project, { frame: false })) {
-        project = before;
-        selectedKerbSpan = null;
-        renderProject(project, { frame: false });
-        setKerbStatus("The painted kerb span does not bake.", "error");
-        scheduleOverlayUpdate();
-        return;
-      }
-      pushUndo(before);
-      setKerbStatus("Painted kerb span.", "ok");
-      scheduleOverlayUpdate();
-      updateAuthoringUI();
-      return;
-    }
-
-    if (currentDrag.kind === "kerb-entry" || currentDrag.kind === "kerb-exit") {
-      if (project && !bakeValid) {
-        project = currentDrag.startProject;
-        renderProject(project, { frame: false });
-        setKerbStatus("Kerb resize rejected: the track would become invalid.", "error");
-      } else if (
-        project &&
-        JSON.stringify(currentDrag.startProject) !== JSON.stringify(project)
-      ) {
-        pushUndo(currentDrag.startProject);
-      }
-      scheduleOverlayUpdate();
-      updateAuthoringUI();
-      return;
-    }
-
-    if (currentDrag.kind === "wall-paint" && project) {
-      const painted = wallPaintSpan(currentDrag);
-      if (!painted) {
-        scheduleOverlayUpdate();
-        updateAuthoringUI();
-        return;
-      }
-      const section = project.centerlines.find(
-        (candidate) => candidate.id === currentDrag.sectionId,
-      );
-      if (!section) {
-        return;
-      }
-      if (!section.closed && painted.start + painted.length > 1 + 1e-9) {
-        setWallStatus("The wall span must stay within this open section.", "error");
-        scheduleOverlayUpdate();
-        return;
-      }
-      const overlaps = (section.walls ?? []).some(
-        (span) =>
-          span.side === currentDrag.side &&
-          kerbSpansOverlap(
-            painted.start,
-            painted.length,
-            span.start,
-            span.length,
-            section.closed,
-          ),
-      );
-      if (overlaps) {
-        setWallStatus("Walls on the same side cannot overlap.", "error");
-        scheduleOverlayUpdate();
-        return;
-      }
-      const before = currentDrag.startProject;
-      section.walls = [
-        ...(section.walls ?? []),
-        { side: currentDrag.side, start: painted.start, length: painted.length },
-      ].sort((a, b) => a.side.localeCompare(b.side) || a.start - b.start);
-      selectedWallSpan = {
-        sectionId: section.id,
-        index: section.walls.findIndex(
-          (span) =>
-            span.side === currentDrag.side &&
-            span.start === painted.start &&
-            span.length === painted.length,
-        ),
-      };
-      if (!renderProject(project, { frame: false })) {
-        project = before;
-        selectedWallSpan = null;
-        renderProject(project, { frame: false });
-        setWallStatus("The painted wall span does not bake.", "error");
-        scheduleOverlayUpdate();
-        return;
-      }
-      pushUndo(before);
-      setWallStatus("Painted wall span.", "ok");
-      scheduleOverlayUpdate();
-      updateAuthoringUI();
-      return;
-    }
-
-    if (currentDrag.kind === "wall-entry" || currentDrag.kind === "wall-exit") {
-      if (project && !bakeValid) {
-        project = currentDrag.startProject;
-        renderProject(project, { frame: false });
-        setWallStatus("Wall resize rejected: the track would become invalid.", "error");
-      } else if (
-        project &&
-        JSON.stringify(currentDrag.startProject) !== JSON.stringify(project)
-      ) {
-        pushUndo(currentDrag.startProject);
-      }
-      scheduleOverlayUpdate();
-      updateAuthoringUI();
-      return;
-    }
-
     if (currentDrag.kind === "roadside-paint" && project) {
-      const painted = propPaintSpan(currentDrag);
+      const painted = spanFromPaint(
+        currentDrag.signedLength,
+        currentDrag.originFraction,
+        currentDrag.previousFraction,
+      );
       if (!painted) {
         scheduleOverlayUpdate();
         updateAuthoringUI();
@@ -5181,81 +3397,6 @@ function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
           "Run resize rejected: the track would become invalid.",
           "error",
         );
-      } else if (
-        project &&
-        JSON.stringify(currentDrag.startProject) !== JSON.stringify(project)
-      ) {
-        pushUndo(currentDrag.startProject);
-      }
-      scheduleOverlayUpdate();
-      updateAuthoringUI();
-      return;
-    }
-
-    if (currentDrag.kind === "prop-paint" && project) {
-      const painted = propPaintSpan(currentDrag);
-      if (!painted) {
-        scheduleOverlayUpdate();
-        updateAuthoringUI();
-        return;
-      }
-      const section = project.centerlines.find(
-        (candidate) => candidate.id === currentDrag.sectionId,
-      );
-      if (!section) {
-        return;
-      }
-      if (!section.closed && painted.start + painted.length > 1 + 1e-9) {
-        setPropStatus("The prop run must stay within this open section.", "error");
-        scheduleOverlayUpdate();
-        return;
-      }
-      const before = currentDrag.startProject;
-      section.props = [
-        ...(section.props ?? []),
-        {
-          kind: currentDrag.propKind,
-          side: currentDrag.side,
-          start: painted.start,
-          length: painted.length,
-          offset: Math.max(0, currentDrag.paintOffset - project.road.halfWidth),
-        },
-      ].sort(
-        (a, b) =>
-          a.side.localeCompare(b.side) ||
-          a.kind.localeCompare(b.kind) ||
-          a.start - b.start,
-      );
-      selectedPropSpan = {
-        sectionId: section.id,
-        index: section.props.findIndex(
-          (span) =>
-            span.kind === currentDrag.propKind &&
-            span.side === currentDrag.side &&
-            span.start === painted.start &&
-            span.length === painted.length,
-        ),
-      };
-      if (!renderProject(project, { frame: false })) {
-        project = before;
-        selectedPropSpan = null;
-        renderProject(project, { frame: false });
-        setPropStatus("The painted prop run does not bake.", "error");
-        scheduleOverlayUpdate();
-        return;
-      }
-      pushUndo(before);
-      setPropStatus("Painted prop run.", "ok");
-      scheduleOverlayUpdate();
-      updateAuthoringUI();
-      return;
-    }
-
-    if (currentDrag.kind === "prop-entry" || currentDrag.kind === "prop-exit") {
-      if (project && !bakeValid) {
-        project = currentDrag.startProject;
-        renderProject(project, { frame: false });
-        setPropStatus("Prop run resize rejected: the track would become invalid.", "error");
       } else if (
         project &&
         JSON.stringify(currentDrag.startProject) !== JSON.stringify(project)
@@ -5475,131 +3616,6 @@ spawnCenterline.addEventListener("change", () => {
   updateAuthoringUI();
 });
 
-kerbGlobalFlat.addEventListener("input", () => {
-  if (!project) {
-    return;
-  }
-  if (!kerbEditStart) {
-    kerbEditStart = cloneProject(project);
-  }
-  const corner = project.kerbs?.cornerHeight ?? DEFAULT_KERB_CORNER_HEIGHT;
-  const requested = Math.max(0, Number(kerbGlobalFlat.value) || 0);
-  const flat = Math.min(requested, corner - 0.005);
-  kerbGlobalFlat.value = String(flat);
-  project.kerbs = { ...project.kerbs, flatHeight: flat };
-  scheduleRender();
-  updateKerbsUI(project);
-});
-
-kerbGlobalCorner.addEventListener("input", () => {
-  if (!project) {
-    return;
-  }
-  if (!kerbEditStart) {
-    kerbEditStart = cloneProject(project);
-  }
-  const flat = project.kerbs?.flatHeight ?? DEFAULT_KERB_FLAT_HEIGHT;
-  const requested = Math.max(0.005, Number(kerbGlobalCorner.value) || 0.005);
-  const corner = Math.max(requested, flat + 0.005);
-  kerbGlobalCorner.value = String(corner);
-  project.kerbs = { ...project.kerbs, cornerHeight: corner };
-  scheduleRender();
-  updateKerbsUI(project);
-});
-
-kerbGlobalFlat.addEventListener("change", finishKerbEdit);
-kerbGlobalCorner.addEventListener("change", finishKerbEdit);
-
-kerbSpanOverride.addEventListener("change", () => {
-  if (!project || !selectedKerbSpan) {
-    return;
-  }
-  const located = findKerbSpan(project, selectedKerbSpan.sectionId, selectedKerbSpan.index);
-  if (!located) {
-    return;
-  }
-  const span = located.span;
-  const before = cloneProject(project);
-  if (kerbSpanOverride.checked) {
-    span.flatHeight = project.kerbs?.flatHeight ?? DEFAULT_KERB_FLAT_HEIGHT;
-    span.cornerHeight = project.kerbs?.cornerHeight ?? DEFAULT_KERB_CORNER_HEIGHT;
-  } else {
-    delete span.flatHeight;
-    delete span.cornerHeight;
-  }
-  if (!renderProject(project, { frame: false })) {
-    project = before;
-    renderProject(project, { frame: false });
-    setKerbStatus("Those kerb heights do not bake.", "error");
-    return;
-  }
-  pushUndo(before);
-  updateKerbsUI(project);
-});
-
-kerbSpanFlat.addEventListener("input", () => {
-  if (!project || !selectedKerbSpan) {
-    return;
-  }
-  const located = findKerbSpan(project, selectedKerbSpan.sectionId, selectedKerbSpan.index);
-  const span = located?.span;
-  if (!span || (span.flatHeight === undefined && span.cornerHeight === undefined)) {
-    return;
-  }
-  const corner =
-    span.cornerHeight ?? project.kerbs?.cornerHeight ?? DEFAULT_KERB_CORNER_HEIGHT;
-  const requested = Math.max(0, Number(kerbSpanFlat.value) || 0);
-  const flat = Math.min(requested, corner - 0.005);
-  kerbSpanFlat.value = String(flat);
-  editSelectedKerbSpan((editableSpan) => {
-    editableSpan.flatHeight = flat;
-    editableSpan.cornerHeight ??= corner;
-  });
-});
-
-kerbSpanCorner.addEventListener("input", () => {
-  if (!project || !selectedKerbSpan) {
-    return;
-  }
-  const located = findKerbSpan(project, selectedKerbSpan.sectionId, selectedKerbSpan.index);
-  const span = located?.span;
-  if (!span || (span.flatHeight === undefined && span.cornerHeight === undefined)) {
-    return;
-  }
-  const flat = span.flatHeight ?? project.kerbs?.flatHeight ?? DEFAULT_KERB_FLAT_HEIGHT;
-  const requested = Math.max(0.005, Number(kerbSpanCorner.value) || 0.005);
-  const corner = Math.max(requested, flat + 0.005);
-  kerbSpanCorner.value = String(corner);
-  editSelectedKerbSpan((editableSpan) => {
-    editableSpan.cornerHeight = corner;
-    editableSpan.flatHeight ??= flat;
-  });
-});
-
-kerbSpanFlat.addEventListener("change", finishKerbEdit);
-kerbSpanCorner.addEventListener("change", finishKerbEdit);
-
-function finishKerbEdit(): void {
-  if (!kerbEditStart) {
-    return;
-  }
-  const start = kerbEditStart;
-  kerbEditStart = null;
-  if (!flushPendingRender()) {
-    project = start;
-    renderProject(project, { frame: false });
-    setKerbStatus("The kerb span does not bake. Adjust or remove it.", "error");
-    updateAuthoringUI();
-    return;
-  }
-  if (project && JSON.stringify(start) !== JSON.stringify(project)) {
-    pushUndo(start);
-  }
-  updateAuthoringUI();
-}
-
-kerbRemoveButton.addEventListener("click", removeKerbSpan);
-
 modeTerrainButton.addEventListener("click", () => setEditorMode("terrain"));
 modePointsButton.addEventListener("click", () => setEditorMode("track"));
 modeRoadsideButton.addEventListener("click", () => setEditorMode("roadside"));
@@ -5644,116 +3660,6 @@ roadsideRunProperty.addEventListener("input", () => {
 });
 roadsideRunProperty.addEventListener("change", finishRoadsideEdit);
 roadsideRunRemoveButton.addEventListener("click", removeRoadsideRun);
-modeKerbsButton.addEventListener("click", () => setEditorMode("kerbs"));
-modeWallsButton.addEventListener("click", () => setEditorMode("walls"));
-modePropsButton.addEventListener("click", () => setEditorMode("props"));
-
-wallHeight.addEventListener("input", () => {
-  if (!project || !selectedWallSpan) {
-    return;
-  }
-  const requested = Number(wallHeight.value);
-  if (!Number.isFinite(requested) || requested <= 0) {
-    return;
-  }
-  editSelectedWallSpan((span) => {
-    span.height = requested;
-  });
-});
-wallOffset.addEventListener("input", () => {
-  if (!project || !selectedWallSpan) {
-    return;
-  }
-  const requested = Number(wallOffset.value);
-  if (!Number.isFinite(requested) || requested < 0) {
-    return;
-  }
-  editSelectedWallSpan((span) => {
-    span.offset = requested;
-  });
-});
-wallHeight.addEventListener("change", finishWallEdit);
-wallOffset.addEventListener("change", finishWallEdit);
-wallRemoveButton.addEventListener("click", removeWallSpan);
-
-function finishWallEdit(): void {
-  if (!wallEditStart) {
-    return;
-  }
-  const start = wallEditStart;
-  wallEditStart = null;
-  if (!flushPendingRender()) {
-    project = start;
-    renderProject(project, { frame: false });
-    setWallStatus("The wall span does not bake. Adjust or remove it.", "error");
-    updateAuthoringUI();
-    return;
-  }
-  if (project && JSON.stringify(start) !== JSON.stringify(project)) {
-    pushUndo(start);
-  }
-  updateAuthoringUI();
-}
-
-for (const [button, kind] of [
-  [propKindTree, "tree"],
-  [propKindTyre, "tyre"],
-  [propKindBlock, "block"],
-] as const) {
-  button.addEventListener("click", () => {
-    if (project && project.schema !== "track-ed/project@4") {
-      setPropStatus("Props require track-ed/project@4.", "error");
-      return;
-    }
-    if (editorMode !== "props") {
-      setEditorMode("props");
-    }
-    propPaintKind = kind;
-    propPaintOffset = DEFAULT_PROP_CENTERLINE_OFFSETS[kind];
-    updateModeUI();
-    scheduleOverlayUpdate();
-    updateAuthoringUI();
-  });
-}
-propPaintOffsetInput.addEventListener("input", () => {
-  if (!project) {
-    return;
-  }
-  const value = Number(propPaintOffsetInput.value);
-  if (!Number.isFinite(value) || value < 0) {
-    return;
-  }
-  propPaintOffset = value;
-  scheduleOverlayUpdate();
-  updatePropsUI(project);
-});
-propRemoveButton.addEventListener("click", removePropSpan);
-propOffset.addEventListener("input", () => {
-  if (!project || !selectedPropSpan) {
-    return;
-  }
-  const value = Number(propOffset.value);
-  if (!Number.isFinite(value) || value < 0) {
-    return;
-  }
-  editSelectedPropSpan((span) => {
-    span.offset = Math.max(0, value - (project?.road.halfWidth ?? 0));
-  });
-});
-propSpacing.addEventListener("input", () => {
-  if (!project || !selectedPropSpan) {
-    return;
-  }
-  const value = Number(propSpacing.value);
-  if (!Number.isFinite(value) || value <= 0) {
-    return;
-  }
-  editSelectedPropSpan((span) => {
-    span.spacing = value;
-  });
-});
-propOffset.addEventListener("change", finishPropSpanEdit);
-propSpacing.addEventListener("change", finishPropSpanEdit);
 
 centerlineToggle.addEventListener("change", () => {
   view?.setCenterlinesVisible(
@@ -5849,16 +3755,7 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   if (event.key === "Delete" || event.key === "Backspace") {
-    if (editorMode === "kerbs" && selectedKerbSpan) {
-      event.preventDefault();
-      removeKerbSpan();
-    } else if (editorMode === "walls" && selectedWallSpan) {
-      event.preventDefault();
-      removeWallSpan();
-    } else if (editorMode === "props" && selectedPropSpan) {
-      event.preventDefault();
-      removePropSpan();
-    } else if (editorMode === "roadside" && selectedRoadsideRun) {
+    if (editorMode === "roadside" && selectedRoadsideRun) {
       event.preventDefault();
       removeRoadsideRun();
     } else if (selectedPoint) {
@@ -5868,17 +3765,11 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.key === "Escape") {
     if (
-      editorMode === "kerbs" ||
-      editorMode === "walls" ||
-      editorMode === "props" ||
       editorMode === "roadside"
     ) {
       event.preventDefault();
       drag = null;
       view?.setControlsEnabled(true);
-      selectedKerbSpan = null;
-      selectedWallSpan = null;
-      selectedPropSpan = null;
       selectedRoadsideSpline = null;
       selectedRoadsideRun = null;
       scheduleOverlayUpdate();
