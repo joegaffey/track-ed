@@ -28,13 +28,7 @@ import {
   type Vec2,
 } from "../kernel/math2";
 import { validateBakedTrack, type ValidationReport } from "../kernel/validate-baked";
-import { exportLapsterGlbTrack } from "../export/lapster";
-import {
-  compileAndStoreTrack,
-  lapsterDriveUrl,
-  lapsterHostEnabled,
-  trackPackInput,
-} from "./lapster-host";
+import { lapsterHostEnabled } from "./lapster-host";
 import {
   createTrackView,
   SURFACE_COLORS,
@@ -51,11 +45,12 @@ import type { BakedTrack, Spawn, Vec3 } from "../model/baked-track";
 import { mergeLooseBranchEnds } from "./branch-merge";
 import { convertProjectToLatest } from "./convert-project";
 import {
-  spanContains,
-  spanEnd,
-  spanFromPaint,
-  spansOverlap,
-} from "./roadside-authoring";
+  clearAutosave,
+  readAutosave,
+  writeAutosave,
+  type AutosaveStorage,
+} from "./autosave";
+import { spanContains, spansOverlap } from "./roadside-authoring";
 import {
   addJunctionMember,
   addLooseSectionAtPoint,
@@ -69,44 +64,9 @@ import {
   splitOpenSection,
   syncSectionJunctions,
 } from "./section-edit";
-
-type DragState =
-  | {
-      kind: "point";
-      centerlineIndex: number;
-      pointIndex: number;
-      startProject: Project;
-      pendingDetach?: boolean;
-    }
-  | { kind: "attach"; startProject: Project }
-  | { kind: "spawn"; startProject: Project }
-  | {
-      kind: "roadside-paint";
-      sectionId: string;
-      splineId: string;
-      runKind: ProjectRoadsideKind;
-      closed: boolean;
-      originFraction: number;
-      previousFraction: number;
-      signedLength: number;
-      startProject: Project;
-    }
-  | {
-      kind: "roadside-entry" | "roadside-exit";
-      sectionId: string;
-      splineId: string;
-      runIndex: number;
-      startProject: Project;
-    }
-  | {
-      kind: "terrain-point";
-      index: number;
-      startProject: Project;
-      startHeight: number;
-      startClientY: number;
-      unitsPerPixel: number;
-    }
-  | null;
+import { attachEditing } from "./editing";
+import type { DragState } from "./editing/drag";
+import type { EditingContext } from "./editing/context";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -402,6 +362,13 @@ let roadsideEditStart: Project | null = null;
 let bakeValid = false;
 let statusExpanded = false;
 
+const AUTOSAVE_DEBOUNCE_MS = 600;
+let autosaveStorage: AutosaveStorage | null = getBrowserAutosaveStorage();
+let autosaveTimer: number | null = null;
+let autosaveSuspended = true;
+let autosaveWarningShown = false;
+let autosaveDirty = false;
+
 const RENDER_DELAY_MS = 150;
 const RENDER_MAX_WAIT_MS = 300;
 let renderTimer: number | null = null;
@@ -448,6 +415,70 @@ function flushPendingRender(): boolean {
   }
   cancelPendingRender();
   return project ? renderProject(project, { frame: false }) : false;
+}
+
+function getBrowserAutosaveStorage(): AutosaveStorage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function cancelAutosave(): void {
+  if (autosaveTimer !== null) {
+    window.clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+  }
+}
+
+function warnAutosaveUnavailable(): void {
+  if (autosaveWarningShown) {
+    return;
+  }
+  autosaveWarningShown = true;
+  setEditStatus(
+    "Autosave storage is unavailable; edits won't be restored.",
+    "error",
+  );
+}
+
+function flushAutosave(): void {
+  cancelAutosave();
+  if (renderTimer !== null) {
+    flushPendingRender();
+  }
+  cancelAutosave();
+  if (
+    !autosaveDirty ||
+    !project ||
+    !bakeValid ||
+    autosaveStorage === null
+  ) {
+    return;
+  }
+  const result = writeAutosave(autosaveStorage, serializeProject(project));
+  if (result.status === "saved") {
+    autosaveDirty = false;
+  } else {
+    warnAutosaveUnavailable();
+  }
+}
+
+function scheduleAutosave(): void {
+  if (!project || !bakeValid || autosaveSuspended) {
+    return;
+  }
+  autosaveDirty = true;
+  if (autosaveStorage === null) {
+    warnAutosaveUnavailable();
+    return;
+  }
+  cancelAutosave();
+  autosaveTimer = window.setTimeout(() => {
+    autosaveTimer = null;
+    flushAutosave();
+  }, AUTOSAVE_DEBOUNCE_MS);
 }
 
 let overlayFrame: number | null = null;
@@ -1242,7 +1273,7 @@ function renderProject(
     );
     const canvas = viewport.querySelector<HTMLCanvasElement>("canvas");
     if (canvas) {
-      attachEditing(view, canvas);
+      attachEditing(view, canvas, editingContext);
     }
   } else {
     view.update(
@@ -1271,13 +1302,16 @@ function renderProject(
     : "Export is blocked while MUST-level validation fails.";
   setEditStatus("");
   updateAuthoringUI();
+  scheduleAutosave();
   return true;
 }
 
 function loadProject(input: unknown, frame: boolean): void {
   cancelPendingRender();
   cancelOverlayUpdate();
-  const parsed = parseProject(input);
+  const parsed = parseProject(
+    isInternalProject(input) ? serializeProject(input) : input,
+  );
   if (!parsed.project) {
     showFatal(
       "Project validation failed",
@@ -2726,1057 +2760,6 @@ function insertPoint(pick: CenterlineSegmentPick): void {
   updateAuthoringUI();
 }
 
-function pointerNdc(
-  event: PointerEvent | MouseEvent,
-  canvas: HTMLCanvasElement,
-): { x: number; y: number } {
-  const rect = canvas.getBoundingClientRect();
-  return {
-    x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
-    y: -((event.clientY - rect.top) / rect.height) * 2 + 1,
-  };
-}
-
-function attachEditing(trackView: TrackView, canvas: HTMLCanvasElement): void {
-  canvas.addEventListener(
-    "pointerdown",
-    (event) => {
-      if (event.button !== 0 || !project) {
-        return;
-      }
-      const point = pointerNdc(event, canvas);
-      if (editorMode === "roadside") {
-        const handle = trackView.pickKerbHandle(point.x, point.y);
-        if (handle && handle.splineId) {
-          event.stopPropagation();
-          event.preventDefault();
-          selectedRoadsideSpline = {
-            sectionId: handle.sectionId,
-            splineId: handle.splineId,
-          };
-          selectedRoadsideRun = {
-            sectionId: handle.sectionId,
-            splineId: handle.splineId,
-            runIndex: handle.spanIndex,
-          };
-          drag = {
-            kind: handle.handle === "entry" ? "roadside-entry" : "roadside-exit",
-            sectionId: handle.sectionId,
-            splineId: handle.splineId,
-            runIndex: handle.spanIndex,
-            startProject: cloneProject(project),
-          };
-          trackView.setControlsEnabled(false);
-          canvas.setPointerCapture(event.pointerId);
-          canvas.style.cursor = "grabbing";
-          scheduleOverlayUpdate();
-          updateRoadsideUI(project);
-          return;
-        }
-        const rail = trackView.pickKerbRail(point.x, point.y);
-        if (rail && rail.splineId) {
-          const section = project.centerlines.find(
-            (candidate) => candidate.id === rail.sectionId,
-          );
-          if (!section) {
-            return;
-          }
-          event.stopPropagation();
-          event.preventDefault();
-          roadsideSectionId = rail.sectionId;
-          const locatedSpline = section.roadside?.find(
-            (candidate) => candidate.id === rail.splineId,
-          );
-          selectedRoadsideSpline = {
-            sectionId: rail.sectionId,
-            splineId: rail.splineId,
-          };
-          if (locatedSpline) {
-            const runIndex = findRoadsideRunAt(
-              locatedSpline,
-              rail.fraction,
-              section.closed,
-            );
-            if (runIndex !== null) {
-              selectedRoadsideRun = {
-                sectionId: rail.sectionId,
-                splineId: rail.splineId,
-                runIndex,
-              };
-              scheduleOverlayUpdate();
-              updateRoadsideUI(project);
-              return;
-            }
-          }
-          selectedRoadsideRun = null;
-          drag = {
-            kind: "roadside-paint",
-            sectionId: rail.sectionId,
-            splineId: rail.splineId,
-            runKind: roadsidePaintKind,
-            closed: section.closed,
-            originFraction: rail.fraction,
-            previousFraction: rail.fraction,
-            signedLength: 0,
-            startProject: cloneProject(project),
-          };
-          trackView.setControlsEnabled(false);
-          canvas.setPointerCapture(event.pointerId);
-          canvas.style.cursor = "crosshair";
-          scheduleOverlayUpdate();
-          updateRoadsideUI(project);
-          return;
-        }
-        return;
-      }
-
-      const terrainPointIndex =
-        editorMode === "terrain"
-          ? trackView.pickTerrainPoint(point.x, point.y)
-          : null;
-      if (terrainPointIndex !== null) {
-        event.stopPropagation();
-        event.preventDefault();
-        setTerrainSelection(terrainPointIndex);
-        const terrainPoint = project.terrain.points?.[terrainPointIndex];
-        if (!terrainPoint) {
-          return;
-        }
-        drag = {
-          kind: "terrain-point",
-          index: terrainPointIndex,
-          startProject: cloneProject(project),
-          startHeight: terrainPoint.height,
-          startClientY: event.clientY,
-          unitsPerPixel: trackView.screenUnitsPerPixel(),
-        };
-        trackView.setControlsEnabled(false);
-        canvas.setPointerCapture(event.pointerId);
-        canvas.style.cursor = "grabbing";
-        return;
-      }
-
-      const hit =
-        editorMode === "track"
-          ? trackView.pickControlPoint(point.x, point.y)
-          : null;
-      if (hit) {
-        let resolved = hit;
-        const hitCenterline = project.centerlines[hit.centerlineIndex];
-        const hitAttach = hitCenterline?.attach;
-        const resolveJunctionAnchor = (junctionId: string): void => {
-          const junction = project?.junctions.find(
-            (candidate) => candidate.id === junctionId,
-          );
-          if (!junction) {
-            return;
-          }
-          const hostIndex = project!.centerlines.findIndex(
-            (candidate) => candidate.id === junction.centerline,
-          );
-          const host = hostIndex >= 0 ? project!.centerlines[hostIndex] : undefined;
-          const pointIndex = host ? host.pointIds.indexOf(junction.point) : -1;
-          if (pointIndex >= 0) {
-            resolved = { centerlineIndex: hostIndex, pointIndex };
-          }
-        };
-
-        if (
-          hitCenterline &&
-          !hitCenterline.closed &&
-          hit.pointIndex === 0 &&
-          hitAttach &&
-          "junction" in hitAttach
-        ) {
-          resolveJunctionAnchor(hitAttach.junction);
-        } else if (hitCenterline && isVenueSchema(project.schema)) {
-          const hitPointId = hitCenterline.pointIds[hit.pointIndex];
-          const junction = project.junctions.find((candidate) =>
-            (candidate.members ?? []).some(
-              (member) =>
-                member.section === hitCenterline.id && member.point === hitPointId,
-            ),
-          );
-          if (junction) {
-            resolveJunctionAnchor(junction.id);
-          }
-        }
-
-        event.stopPropagation();
-        event.preventDefault();
-        setSelection(resolved);
-        const centerline = project.centerlines[resolved.centerlineIndex];
-        if (!centerline) {
-          return;
-        }
-        const startProject = cloneProject(project);
-        const pendingDetach =
-          !centerline.closed &&
-          resolved.pointIndex === centerline.points.length - 1 &&
-          Boolean(centerline.endAttach);
-        trackView.setJoinTarget(null);
-        if (
-          !centerline.closed &&
-          resolved.pointIndex === 0 &&
-          centerline.attach &&
-          "to" in centerline.attach
-        ) {
-          drag = { kind: "attach", startProject };
-        } else {
-          drag = {
-            kind: "point",
-            centerlineIndex: resolved.centerlineIndex,
-            pointIndex: resolved.pointIndex,
-            startProject,
-            ...(pendingDetach ? { pendingDetach: true } : {}),
-          };
-        }
-        trackView.setControlsEnabled(false);
-        canvas.setPointerCapture(event.pointerId);
-        canvas.style.cursor = "grabbing";
-        return;
-      }
-
-      if (editorMode === "track" && trackView.pickSpawn(point.x, point.y)) {
-        event.stopPropagation();
-        event.preventDefault();
-        setSelection(null);
-        drag = { kind: "spawn", startProject: cloneProject(project) };
-        trackView.setControlsEnabled(false);
-        canvas.setPointerCapture(event.pointerId);
-        canvas.style.cursor = "grabbing";
-        return;
-      }
-
-      if (editorMode === "terrain" && addTerrainPointMode) {
-        const surface = trackView.pick(point.x, point.y);
-        if (surface && surface.surfaceId === 2) {
-          event.stopPropagation();
-          event.preventDefault();
-          addTerrainPointAt(surface.point);
-        }
-      }
-    },
-    { capture: true },
-  );
-
-  canvas.addEventListener("pointermove", (event) => {
-    const point = pointerNdc(event, canvas);
-    if (drag) {
-      if (!project) {
-        return;
-      }
-      const ground = trackView.pickGround(point.x, point.y);
-      if (!ground) {
-        return;
-      }
-      if (drag.kind === "roadside-paint") {
-        const activeDrag = drag;
-        const section = project.centerlines.find(
-          (candidate) => candidate.id === activeDrag.sectionId,
-        );
-        if (!section) {
-          return;
-        }
-        const fraction = nearestPolylineFraction(section, ground);
-        if (fraction === null) {
-          return;
-        }
-        if (activeDrag.closed) {
-          let delta = fraction - activeDrag.previousFraction;
-          if (delta > 0.5) {
-            delta -= 1;
-          } else if (delta < -0.5) {
-            delta += 1;
-          }
-          activeDrag.signedLength += delta;
-          activeDrag.previousFraction = fraction;
-        } else {
-          activeDrag.signedLength = fraction - activeDrag.originFraction;
-          activeDrag.previousFraction = fraction;
-        }
-        scheduleOverlayUpdate();
-        return;
-      }
-
-      if (drag.kind === "roadside-entry" || drag.kind === "roadside-exit") {
-        const activeDrag = drag;
-        const located = findRoadsideRun(
-          project,
-          activeDrag.sectionId,
-          activeDrag.splineId,
-          activeDrag.runIndex,
-        );
-        if (!located) {
-          return;
-        }
-        const section = located.section;
-        const run = located.run;
-        const fraction = nearestPolylineFraction(section, ground);
-        if (fraction === null) {
-          return;
-        }
-        const minimum = 0.002;
-        let start = run.start;
-        let length = run.length;
-        if (activeDrag.kind === "roadside-entry") {
-          const exit = spanEnd(run.start, run.length);
-          const forward = section.closed
-            ? (exit - fraction + 1) % 1
-            : exit - fraction;
-          if (forward <= minimum || forward >= 1) {
-            return;
-          }
-          start = fraction;
-          length = forward;
-        } else {
-          const forward = section.closed
-            ? (fraction - run.start + 1) % 1
-            : fraction - run.start;
-          if (forward <= minimum || forward >= 1) {
-            return;
-          }
-          length = forward;
-        }
-        if (!section.closed && start + length > 1 + 1e-9) {
-          return;
-        }
-        if (
-          roadsideRunOverlaps(
-            located.spline,
-            start,
-            length,
-            section.closed,
-            run.kind,
-            activeDrag.runIndex,
-          )
-        ) {
-          return;
-        }
-        run.start = start;
-        run.length = length;
-        scheduleOverlayUpdate();
-        scheduleDragRender();
-        updateRoadsideUI(project);
-        return;
-      }
-
-      if (drag.kind === "terrain-point") {
-        const terrainPoint = project.terrain.points?.[drag.index];
-        if (!terrainPoint) {
-          return;
-        }
-        const delta = (drag.startClientY - event.clientY) * drag.unitsPerPixel;
-        terrainPoint.height = Math.max(-100, Math.min(100, drag.startHeight + delta));
-        scheduleOverlayUpdate();
-        scheduleDragRender();
-        return;
-      }
-
-      if (drag.kind === "point") {
-        let branch = project.centerlines[drag.centerlineIndex];
-        if (!branch || !branch.points[drag.pointIndex]) {
-          return;
-        }
-
-        if (drag.pendingDetach) {
-          const candidate = cloneProject(project);
-          const candidateBranch = candidate.centerlines[drag.centerlineIndex];
-          if (!candidateBranch) {
-            return;
-          }
-          const junctionId =
-            candidateBranch.endAttach && "junction" in candidateBranch.endAttach
-              ? candidateBranch.endAttach.junction
-              : null;
-          delete candidateBranch.endAttach;
-          candidateBranch.pointIds[drag.pointIndex] = nextPointId(candidateBranch);
-          if (junctionId && !isJunctionReferenced(candidate, junctionId)) {
-            candidate.junctions = candidate.junctions.filter(
-              (candidateJunction) => candidateJunction.id !== junctionId,
-            );
-          }
-          candidateBranch.points[drag.pointIndex] = [ground[0], ground[1]];
-          syncBranchStart(candidate);
-          if (!renderProject(candidate, { frame: false })) {
-            renderProject(project, { frame: false });
-            setEditStatus(
-              "Move the end farther from the main loop to detach it.",
-              "error",
-            );
-            return;
-          }
-          drag.pendingDetach = false;
-          branch = project.centerlines[drag.centerlineIndex];
-          if (!branch) {
-            return;
-          }
-        } else {
-          branch.points[drag.pointIndex] = [ground[0], ground[1]];
-          syncBranchStart(project);
-          scheduleOverlayUpdate();
-          scheduleDragRender();
-        }
-
-        const isEndpoint =
-          !branch.closed &&
-          (drag.pointIndex === 0 || drag.pointIndex === branch.points.length - 1);
-        const canJoin =
-          isVenueSchema(project.schema)
-            ? isEndpoint && isLooseSectionEnd(project, branch.id, drag.pointIndex)
-            : drag.pointIndex === branch.points.length - 1;
-        if (canJoin) {
-          const position = branch.points[drag.pointIndex]!;
-          const target = findJoinTarget(
-            project,
-            drag.centerlineIndex,
-            drag.pointIndex,
-            position,
-          );
-          trackView.setJoinTarget(target);
-          if (target) {
-            const targetCenterline = project.centerlines[target.centerlineIndex];
-            const isLoopClose =
-              isVenueSchema(project.schema) &&
-              targetCenterline?.id === branch.id;
-            const isMergeTarget =
-              isVenueSchema(project.schema) &&
-              targetCenterline !== undefined &&
-              !isLoopClose &&
-              isLooseSectionEnd(project, targetCenterline.id, target.pointIndex);
-            if (isLoopClose) {
-              setEditStatus("Release to close this section into a loop", "ok");
-            } else if (isMergeTarget) {
-              setEditStatus(
-                `Release to merge ${branch.id} and ${targetCenterline.id}`,
-                "ok",
-              );
-            } else if (targetCenterline?.closed) {
-              setEditStatus(
-                `Release to join ${branch.id} to ${targetCenterline.id}/${
-                  targetCenterline.pointIds[target.pointIndex] ?? ""
-                }`,
-                "ok",
-              );
-            } else {
-              setEditStatus(
-                `Release to join ${branch.id} to ${targetCenterline?.id ?? "section"}/${
-                  targetCenterline?.pointIds[target.pointIndex] ?? ""
-                }`,
-                "ok",
-              );
-            }
-          }
-        } else {
-          trackView.setJoinTarget(null);
-        }
-        return;
-      }
-
-      if (drag.kind === "spawn") {
-        const centerline = project.centerlines.find(
-          (candidate) => candidate.id === project!.spawn.centerline,
-        );
-        if (!centerline) {
-          return;
-        }
-        const fraction = nearestPolylineFraction(centerline, ground);
-        if (fraction === null) {
-          return;
-        }
-        project.spawn.fraction = Math.max(0, Math.min(0.999, fraction));
-        scheduleOverlayUpdate();
-        scheduleDragRender();
-        return;
-      }
-
-      const main = mainOf(project);
-      const legacyBranch = branchesOf(project).find(
-        (candidate) => candidate.attach && "to" in candidate.attach,
-      );
-      const fraction = main ? nearestPolylineFraction(main, ground) : null;
-      if (!legacyBranch?.attach || !("fraction" in legacyBranch.attach) || fraction === null) {
-        return;
-      }
-      const previous = cloneProject(project);
-      moveBranchAttach(project, fraction);
-      if (!renderProject(project, { frame: false })) {
-        project = previous;
-        renderProject(project, { frame: false });
-        setEditStatus(
-          "Attach move blocked: the branch would cross the main loop or become invalid.",
-          "error",
-        );
-      }
-      return;
-    }
-
-    if (editorMode === "roadside") {
-      const handle = trackView.pickKerbHandle(point.x, point.y);
-      if (handle && handle.splineId) {
-        canvas.style.cursor = "grab";
-        pickInfo.innerHTML = `
-          <div class="pick-row"><span>roadside handle</span><strong>${handle.handle}</strong></div>
-          <div class="pick-row"><span>spline</span><strong>${handle.splineId}</strong></div>
-        `;
-        return;
-      }
-      const rail = trackView.pickKerbRail(point.x, point.y);
-      if (rail && rail.splineId) {
-        canvas.style.cursor = "crosshair";
-        pickInfo.innerHTML = `
-          <div class="pick-row"><span>roadside spline</span><strong>${rail.splineId}</strong></div>
-          <div class="pick-row"><span>offset</span><strong>${(rail.offset ?? 0).toFixed(1)} m</strong></div>
-        `;
-        return;
-      }
-      canvas.style.cursor = "default";
-      pickInfo.textContent =
-        "Select a spline, choose a feature type, then drag a spline rail to paint.";
-      return;
-    }
-
-    const hoverTerrainPoint =
-      editorMode === "terrain"
-        ? trackView.pickTerrainPoint(point.x, point.y)
-        : null;
-    if (hoverTerrainPoint !== null) {
-      canvas.style.cursor = "grab";
-      const terrainPoint = project?.terrain.points?.[hoverTerrainPoint];
-      if (terrainPoint) {
-        pickInfo.innerHTML = `
-          <div class="pick-row"><span>terrain point</span><strong>${hoverTerrainPoint}</strong></div>
-          <div class="pick-row"><span>x / z</span><strong>${formatNumber(
-            terrainPoint.position[0],
-          )} / ${formatNumber(terrainPoint.position[1])}</strong></div>
-          <div class="pick-row"><span>height</span><strong>${formatNumber(
-            terrainPoint.height,
-          )} m</strong></div>
-        `;
-      }
-      return;
-    }
-
-    const controlPoint =
-      editorMode === "track"
-        ? trackView.pickControlPoint(point.x, point.y)
-        : null;
-    if (controlPoint) {
-      canvas.style.cursor = "grab";
-      const centerline = project?.centerlines[controlPoint.centerlineIndex];
-      const position = centerline?.points[controlPoint.pointIndex];
-      if (centerline && position) {
-        pickInfo.innerHTML = `
-          <div class="pick-row"><span>centreline</span><strong>${centerline.id}</strong></div>
-          <div class="pick-row"><span>point</span><strong>${controlPoint.pointIndex}</strong></div>
-          <div class="pick-row"><span>x / z</span><strong>${formatNumber(position[0])} / ${formatNumber(
-            position[1],
-          )}</strong></div>
-        `;
-      }
-      return;
-    }
-
-    canvas.style.cursor = addTerrainPointMode ? "crosshair" : "default";
-    const pick = trackView.pick(point.x, point.y);
-    if (!pick) {
-      pickInfo.textContent = "Hover a surface triangle.";
-      return;
-    }
-    pickInfo.innerHTML = `
-      <div class="pick-row"><span>triangle</span><strong>${pick.triangle}</strong></div>
-      <div class="pick-row"><span>surface</span><strong>${pick.surfaceName} (${pick.surfaceId})</strong></div>
-      <div class="pick-row"><span>area</span><strong>${formatNumber(pick.area)} m²</strong></div>
-    `;
-  });
-
-  const finishDrag = (event: PointerEvent): void => {
-    if (!drag) {
-      return;
-    }
-    if (canvas.hasPointerCapture(event.pointerId)) {
-      canvas.releasePointerCapture(event.pointerId);
-    }
-    trackView.setControlsEnabled(true);
-    trackView.setJoinTarget(null);
-    canvas.style.cursor = "default";
-    const currentDrag = drag;
-    drag = null;
-    if (project) {
-      flushPendingRender();
-    }
-
-    if (currentDrag.kind === "roadside-paint" && project) {
-      const painted = spanFromPaint(
-        currentDrag.signedLength,
-        currentDrag.originFraction,
-        currentDrag.previousFraction,
-      );
-      if (!painted) {
-        scheduleOverlayUpdate();
-        updateAuthoringUI();
-        return;
-      }
-      const located = findRoadsideSpline(
-        project,
-        currentDrag.sectionId,
-        currentDrag.splineId,
-      );
-      if (!located) {
-        return;
-      }
-      if (
-        !located.section.closed &&
-        painted.start + painted.length > 1 + 1e-9
-      ) {
-        setRoadsideStatus("The run must stay within this open section.", "error");
-        scheduleOverlayUpdate();
-        return;
-      }
-      if (
-        roadsideRunOverlaps(
-          located.spline,
-          painted.start,
-          painted.length,
-          located.section.closed,
-          currentDrag.runKind,
-        )
-      ) {
-        setRoadsideStatus(
-          "Runs on one roadside spline cannot overlap.",
-          "error",
-        );
-        scheduleOverlayUpdate();
-        return;
-      }
-      const run: ProjectRoadsideRun =
-        currentDrag.runKind === "kerb"
-          ? { kind: "kerb", start: painted.start, length: painted.length }
-          : currentDrag.runKind === "wall"
-            ? { kind: "wall", start: painted.start, length: painted.length }
-            : {
-                kind: currentDrag.runKind,
-                start: painted.start,
-                length: painted.length,
-              };
-      const before = currentDrag.startProject;
-      located.spline.runs.push(run);
-      located.spline.runs.sort((a, b) => a.start - b.start);
-      selectedRoadsideSpline = {
-        sectionId: located.section.id,
-        splineId: located.spline.id,
-      };
-      selectedRoadsideRun = {
-        sectionId: located.section.id,
-        splineId: located.spline.id,
-        runIndex: located.spline.runs.indexOf(run),
-      };
-      if (!renderProject(project, { frame: false })) {
-        project = before;
-        selectedRoadsideRun = null;
-        renderProject(project, { frame: false });
-        setRoadsideStatus("The painted run does not bake.", "error");
-        scheduleOverlayUpdate();
-        return;
-      }
-      pushUndo(before);
-      setRoadsideStatus("Painted roadside run.", "ok");
-      scheduleOverlayUpdate();
-      updateAuthoringUI();
-      return;
-    }
-
-    if (
-      currentDrag.kind === "roadside-entry" ||
-      currentDrag.kind === "roadside-exit"
-    ) {
-      if (project && !bakeValid) {
-        project = currentDrag.startProject;
-        renderProject(project, { frame: false });
-        setRoadsideStatus(
-          "Run resize rejected: the track would become invalid.",
-          "error",
-        );
-      } else if (
-        project &&
-        JSON.stringify(currentDrag.startProject) !== JSON.stringify(project)
-      ) {
-        pushUndo(currentDrag.startProject);
-      }
-      scheduleOverlayUpdate();
-      updateAuthoringUI();
-      return;
-    }
-
-    if (currentDrag.kind === "point" && project) {
-      const branch = project.centerlines[currentDrag.centerlineIndex];
-      if (
-        branch &&
-        !branch.closed &&
-        currentDrag.pointIndex === branch.points.length - 1
-      ) {
-        const position = branch.points[currentDrag.pointIndex]!;
-        const target = findJoinTarget(
-          project,
-          currentDrag.centerlineIndex,
-          currentDrag.pointIndex,
-          position,
-        );
-        if (target) {
-          const targetCenterline = project.centerlines[target.centerlineIndex];
-          if (isVenueSchema(project.schema) && targetCenterline) {
-            const isLoopClose = targetCenterline.id === branch.id;
-            const isMergeTarget =
-              !isLoopClose &&
-              isLooseSectionEnd(project, targetCenterline.id, target.pointIndex);
-            const error = isLoopClose
-              ? applySectionLoopClose(project, branch, target, currentDrag.pointIndex)
-              : isMergeTarget
-                ? applySectionEndMerge(project, branch, target, currentDrag.pointIndex)
-                : applySectionJunction(project, branch, target, currentDrag.pointIndex);
-            if (error === null) {
-              pushUndo(currentDrag.startProject);
-            } else {
-              project = currentDrag.startProject;
-              renderProject(project, { frame: false });
-              setEditStatus(error, "error");
-            }
-          } else if (targetCenterline?.closed) {
-            if (applyBranchEndJoin(project, branch, target)) {
-              pushUndo(currentDrag.startProject);
-            } else {
-              project = currentDrag.startProject;
-              renderProject(project, { frame: false });
-              setEditStatus("Could not join the loose end there; adjust the branch points so it does not cross the road.", "error");
-            }
-          } else {
-            const error = applyBranchEndMerge(project, branch, target);
-            if (error === null) {
-              pushUndo(currentDrag.startProject);
-            } else {
-              project = currentDrag.startProject;
-              renderProject(project, { frame: false });
-              setEditStatus(error, "error");
-            }
-          }
-          updateAuthoringUI();
-          return;
-        }
-      }
-    }
-
-    if (currentDrag.kind === "point" && project && !bakeValid) {
-      project = currentDrag.startProject;
-      renderProject(project, { frame: false });
-      setEditStatus(
-        "Point move rejected: the track would become invalid.",
-        "error",
-      );
-      updateAuthoringUI();
-      return;
-    }
-
-    if (project && JSON.stringify(currentDrag.startProject) !== JSON.stringify(project)) {
-      pushUndo(currentDrag.startProject);
-    }
-    updateAuthoringUI();
-  };
-
-  canvas.addEventListener("pointerup", finishDrag);
-  canvas.addEventListener("pointercancel", finishDrag);
-  canvas.addEventListener("pointerleave", () => {
-    if (!drag) {
-      pickInfo.textContent = "Hover a surface triangle.";
-    }
-  });
-
-  canvas.addEventListener("dblclick", (event) => {
-    if (!project || editorMode !== "track") {
-      return;
-    }
-    const point = pointerNdc(event, canvas);
-    const hit = trackView.pickCenterlineSegment(point.x, point.y);
-    if (!hit) {
-      if (trackView.focusAt(point.x, point.y)) {
-        event.preventDefault();
-      }
-      return;
-    }
-    event.preventDefault();
-    insertPoint(hit);
-  });
-}
-
-statusToggle.addEventListener("click", () => {
-  statusExpanded = !statusExpanded;
-  updateStatusCollapsed();
-});
-undoButton.addEventListener("click", undo);
-redoButton.addEventListener("click", redo);
-deleteButton.addEventListener("click", deleteSelectedPoint);
-addSectionButton.addEventListener("click", addLooseSectionAtSelected);
-splitLoopButton.addEventListener("click", splitLoopAtSelection);
-terrainMode.addEventListener("change", () => {
-  if (!project) {
-    return;
-  }
-  const before = cloneProject(project);
-  project.terrain.mode = terrainMode.value === "follow" ? "follow" : "conform";
-  pushUndo(before);
-  renderProject(project, { frame: false });
-  updateAuthoringUI();
-});
-
-addTerrainPointButton.addEventListener("click", () => {
-  addTerrainPointMode = !addTerrainPointMode;
-  const canvas = viewport.querySelector<HTMLCanvasElement>("canvas");
-  if (canvas) {
-    canvas.style.cursor = addTerrainPointMode ? "crosshair" : "default";
-  }
-  updateAuthoringUI();
-});
-deleteTerrainPointButton.addEventListener("click", deleteSelectedTerrainPoint);
-clearTerrainPointsButton.addEventListener("click", clearTerrainPoints);
-terrainPointHeight.addEventListener("change", () => {
-  if (!project || selectedTerrainPoint === null) {
-    return;
-  }
-  const terrainPoint = project.terrain.points?.[selectedTerrainPoint];
-  if (!terrainPoint) {
-    return;
-  }
-  const value = Number(terrainPointHeight.value);
-  if (!Number.isFinite(value)) {
-    return;
-  }
-  const before = cloneProject(project);
-  terrainPoint.height = value;
-  const ok = renderProject(project, { frame: false });
-  if (ok) {
-    pushUndo(before);
-  } else {
-    project = before;
-    renderProject(project, { frame: false });
-    setEditStatus("Terrain point height is invalid.", "error");
-  }
-  updateAuthoringUI();
-});
-addJunctionButton.addEventListener("click", addJunction);
-frameButton.addEventListener("click", () => {
-  view?.frame();
-});
-
-newButton.addEventListener("click", () => {
-  if (undoStack.length > 0 && !window.confirm("Discard edits and start a new loop?")) {
-    return;
-  }
-  updateStatusCollapsed();
-loadProject(loopSplineTerrainJunctionsFixture, true);
-});
-
-saveButton.addEventListener("click", () => {
-  if (!project) {
-    return;
-  }
-  downloadBytes(
-    "project.json",
-    new TextEncoder().encode(`${JSON.stringify(serializeProject(project), null, 2)}\n`),
-    "application/json",
-  );
-});
-
-openButton.addEventListener("click", () => {
-  openFile.click();
-});
-
-openFile.addEventListener("change", async () => {
-  const file = openFile.files?.[0];
-  openFile.value = "";
-  if (!file) {
-    return;
-  }
-  let parsedValue: unknown;
-  try {
-    parsedValue = JSON.parse(await file.text());
-  } catch {
-    setEditStatus("Open failed: invalid JSON.", "error");
-    return;
-  }
-  loadProject(parsedValue, true);
-});
-
-spawnCenterline.addEventListener("change", () => {
-  if (!project || spawnCenterline.value === project.spawn.centerline) {
-    return;
-  }
-  const before = cloneProject(project);
-  project.spawn.centerline = spawnCenterline.value;
-  pushUndo(before);
-  renderProject(project, { frame: false });
-  updateAuthoringUI();
-});
-
-modeTerrainButton.addEventListener("click", () => setEditorMode("terrain"));
-modePointsButton.addEventListener("click", () => setEditorMode("track"));
-modeRoadsideButton.addEventListener("click", () => setEditorMode("roadside"));
-roadsideSectionSelect.addEventListener("change", () => {
-  roadsideSectionId = roadsideSectionSelect.value || null;
-  selectedRoadsideSpline = null;
-  selectedRoadsideRun = null;
-  scheduleOverlayUpdate();
-  if (project) {
-    updateRoadsideUI(project);
-  }
-});
-roadsideAddSplineButton.addEventListener("click", addRoadsideSpline);
-roadsideRemoveSplineButton.addEventListener("click", removeRoadsideSpline);
-for (const [button, kind] of roadsideKindButtons) {
-  button.addEventListener("click", () => {
-    roadsidePaintKind = kind;
-    if (project) {
-      roadsideNewOffset.value = String(roadsideDefaultOffset(project, kind));
-    }
-    scheduleOverlayUpdate();
-    if (project) {
-      updateRoadsideUI(project);
-    }
-  });
-}
-roadsideRunProperty.addEventListener("input", () => {
-  if (!project || !selectedRoadsideRun) {
-    return;
-  }
-  const value = Number(roadsideRunProperty.value);
-  if (!Number.isFinite(value) || value <= 0) {
-    return;
-  }
-  editRoadsideRun((run) => {
-    if (run.kind === "wall") {
-      run.height = value;
-    } else if (run.kind !== "kerb") {
-      run.spacing = value;
-    }
-  });
-});
-roadsideRunProperty.addEventListener("change", finishRoadsideEdit);
-roadsideRunRemoveButton.addEventListener("click", removeRoadsideRun);
-
-centerlineToggle.addEventListener("change", () => {
-  view?.setCenterlinesVisible(
-    editorMode === "track" && centerlineToggle.checked,
-  );
-});
-racingLineToggle.addEventListener("change", () => {
-  view?.setRacingLineVisible(racingLineToggle.checked);
-});
-wireframeToggle.addEventListener("change", () => {
-  view?.setWireframeVisible(wireframeToggle.checked);
-});
-boundaryToggle.addEventListener("change", () => {
-  view?.setBoundaryVisible(boundaryToggle.checked);
-});
-tJunctionToggle.addEventListener("change", () => {
-  view?.setTJunctionsVisible(tJunctionToggle.checked);
-});
-collisionToggle.addEventListener("change", () => {
-  view?.setCollisionVisible(collisionToggle.checked);
-});
-
-exportButton.addEventListener("click", () => {
-  if (!bakeValid || !currentTrack || !currentReport?.ok) {
-    return;
-  }
-  try {
-    const bundle = exportLapsterGlbTrack(currentTrack);
-    for (const file of bundle.files) {
-      downloadBytes(file.name, file.bytes, file.mimeType);
-    }
-    exportStatus.innerHTML = bundle.files
-      .map(
-        (file) =>
-          `<div class="export-file"><span>${file.name}</span><strong>${formatNumber(
-            file.bytes.length,
-          )} B · ${hashBytes(file.bytes)}</strong></div>`,
-      )
-      .join("");
-  } catch (error) {
-    exportStatus.textContent = `Export failed: ${String(error)}`;
-  }
-});
-
-testDriveButton.addEventListener("click", () => {
-  if (!bakeValid || !currentTrack || !currentReport?.ok) {
-    return;
-  }
-  testDriveButton.disabled = true;
-  void (async () => {
-    try {
-      exportStatus.textContent = "Compiling Lapster track...";
-      const bundle = exportLapsterGlbTrack(currentTrack);
-      const pack = await compileAndStoreTrack(trackPackInput(bundle));
-      exportStatus.textContent = `Compiled ${formatNumber(
-        pack.byteLength,
-      )} B. Opening Test drive...`;
-      window.location.href = lapsterDriveUrl(
-        window.location.href,
-        window.location.search,
-      ).toString();
-    } catch (error) {
-      testDriveButton.disabled = false;
-      exportStatus.textContent = `Test drive failed: ${String(error)}`;
-    }
-  })();
-});
-
-window.addEventListener("keydown", (event) => {
-  const target = event.target as HTMLElement | null;
-  if (
-    target &&
-    (target.tagName === "INPUT" ||
-      target.tagName === "SELECT" ||
-      target.tagName === "TEXTAREA" ||
-      target.isContentEditable)
-  ) {
-    return;
-  }
-  const modifier = event.ctrlKey || event.metaKey;
-  if (modifier && event.key.toLowerCase() === "z") {
-    event.preventDefault();
-    if (event.shiftKey) {
-      redo();
-    } else {
-      undo();
-    }
-    return;
-  }
-  if (modifier && event.key.toLowerCase() === "y") {
-    event.preventDefault();
-    redo();
-    return;
-  }
-  if (event.key === "Delete" || event.key === "Backspace") {
-    if (editorMode === "roadside" && selectedRoadsideRun) {
-      event.preventDefault();
-      removeRoadsideRun();
-    } else if (selectedPoint) {
-      event.preventDefault();
-      deleteSelectedPoint();
-    }
-  }
-  if (event.key === "Escape") {
-    if (
-      editorMode === "roadside"
-    ) {
-      event.preventDefault();
-      drag = null;
-      view?.setControlsEnabled(true);
-      selectedRoadsideSpline = null;
-      selectedRoadsideRun = null;
-      scheduleOverlayUpdate();
-      updateAuthoringUI();
-    }
-  }
-});
 
 const resizeObserver = new ResizeObserver(() => {
   view?.resize();
@@ -3913,8 +2896,237 @@ function installE2EHook(): void {
   (window as unknown as { __trackEd?: TrackEdE2EHook }).__trackEd = hook;
 }
 
+const editingContext: EditingContext = {
+  getProject: () => project,
+  setProject: (value) => {
+    project = value;
+  },
+  cloneProject: (source) => cloneProject(source),
+  getView: () => view,
+  isBakeValid: () => bakeValid,
+  getCurrentTrack: () => currentTrack,
+  getCurrentReport: () => currentReport,
+  getUndoDepth: () => undoStack.length,
+
+  getSelectedPoint: () => selectedPoint,
+  setSelection: (point) => setSelection(point),
+  getSelectedTerrainPoint: () => selectedTerrainPoint,
+  setTerrainSelection: (index) => setTerrainSelection(index),
+
+  getEditorMode: () => editorMode,
+  setEditorMode: (mode) => setEditorMode(mode),
+  getDrag: () => drag,
+  setDrag: (value) => {
+    drag = value;
+  },
+
+  getAddTerrainPointMode: () => addTerrainPointMode,
+  setAddTerrainPointMode: (value) => {
+    addTerrainPointMode = value;
+  },
+  addTerrainPointAt: (position) => addTerrainPointAt(position),
+  deleteSelectedTerrainPoint: () => deleteSelectedTerrainPoint(),
+  clearTerrainPoints: () => clearTerrainPoints(),
+
+  getRoadsideSectionId: () => roadsideSectionId,
+  setRoadsideSectionId: (id) => {
+    roadsideSectionId = id;
+  },
+  getSelectedRoadsideSpline: () => selectedRoadsideSpline,
+  setSelectedRoadsideSpline: (value) => {
+    selectedRoadsideSpline = value;
+  },
+  getSelectedRoadsideRun: () => selectedRoadsideRun,
+  setSelectedRoadsideRun: (value) => {
+    selectedRoadsideRun = value;
+  },
+  getRoadsidePaintKind: () => roadsidePaintKind,
+  setRoadsidePaintKind: (kind) => {
+    roadsidePaintKind = kind;
+  },
+  addRoadsideSpline: () => addRoadsideSpline(),
+  removeRoadsideSpline: () => removeRoadsideSpline(),
+  removeRoadsideRun: () => removeRoadsideRun(),
+  editRoadsideRun: (update) => editRoadsideRun(update),
+  finishRoadsideEdit: () => finishRoadsideEdit(),
+  roadsideDefaultOffset: (source, kind) => roadsideDefaultOffset(source, kind),
+  updateRoadsideUI: (source) => updateRoadsideUI(source),
+  findRoadsideSpline: (source, sectionId, splineId) =>
+    findRoadsideSpline(source, sectionId, splineId),
+  findRoadsideRun: (source, sectionId, splineId, runIndex) =>
+    findRoadsideRun(source, sectionId, splineId, runIndex),
+  findRoadsideRunAt: (spline, fraction, closed) =>
+    findRoadsideRunAt(spline, fraction, closed),
+  roadsideRunOverlaps: (
+    spline,
+    start,
+    length,
+    closed,
+    kind,
+    ignoreIndex = -1,
+  ) => roadsideRunOverlaps(spline, start, length, closed, kind, ignoreIndex),
+  nearestPolylineFraction: (section, point) =>
+    nearestPolylineFraction(section, point),
+
+  scheduleRender: (options) => scheduleRender(options),
+  scheduleDragRender: () => scheduleDragRender(),
+  flushPendingRender: () => flushPendingRender(),
+  scheduleOverlayUpdate: () => scheduleOverlayUpdate(),
+  updateAuthoringUI: () => updateAuthoringUI(),
+  setEditStatus: (message, tone = "") => setEditStatus(message, tone),
+  setRoadsideStatus: (message, tone = "") => setRoadsideStatus(message, tone),
+  pushUndo: (snapshot) => pushUndo(snapshot),
+  renderProject: (input, options) => renderProject(input, options),
+  loadProject: (input, frame) => loadProject(input, frame),
+  loadDefaultProject: () => {
+    updateStatusCollapsed();
+    autosaveSuspended = true;
+    cancelAutosave();
+    if (autosaveStorage !== null) {
+      const result = clearAutosave(autosaveStorage);
+      if (result.status === "unavailable") {
+        warnAutosaveUnavailable();
+      }
+    }
+    loadProject(loopSplineTerrainJunctionsFixture, true);
+    autosaveSuspended = false;
+    autosaveDirty = false;
+  },
+  undo: () => undo(),
+  redo: () => redo(),
+  deleteSelectedPoint: () => deleteSelectedPoint(),
+  addLooseSectionAtSelected: () => addLooseSectionAtSelected(),
+  splitLoopAtSelection: () => splitLoopAtSelection(),
+  addJunction: () => addJunction(),
+  insertPoint: (pick) => insertPoint(pick),
+  updateStatusCollapsed: () => updateStatusCollapsed(),
+  isStatusExpanded: () => statusExpanded,
+  setStatusExpanded: (value) => {
+    statusExpanded = value;
+  },
+
+  syncBranchStart: (source) => syncBranchStart(source),
+  nextPointId: (centerline) => nextPointId(centerline),
+  mainOf: (source) => mainOf(source),
+  branchesOf: (source) => branchesOf(source),
+  moveBranchAttach: (source, fraction) => moveBranchAttach(source, fraction),
+  isJunctionReferenced: (source, junctionId) =>
+    isJunctionReferenced(source, junctionId),
+  findJoinTarget: (source, branchIndex, pointIndex, position) =>
+    findJoinTarget(source, branchIndex, pointIndex, position),
+  applyBranchEndJoin: (source, branch, target) =>
+    applyBranchEndJoin(source, branch, target),
+  applyBranchEndMerge: (source, branch, target) =>
+    applyBranchEndMerge(source, branch, target),
+  applySectionJunction: (source, branch, target, draggedPointIndex) =>
+    applySectionJunction(source, branch, target, draggedPointIndex),
+  applySectionLoopClose: (source, branch, target, draggedPointIndex) =>
+    applySectionLoopClose(source, branch, target, draggedPointIndex),
+  applySectionEndMerge: (source, branch, target, draggedPointIndex) =>
+    applySectionEndMerge(source, branch, target, draggedPointIndex),
+
+  formatNumber: (value) => formatNumber(value),
+  hashBytes: (bytes) => hashBytes(bytes),
+  downloadBytes: (name, bytes, mimeType) =>
+    downloadBytes(name, bytes, mimeType),
+  serializeProject: (source) => serializeProject(source),
+
+  elements: {
+    statusToggle,
+    pickInfo,
+    viewport,
+    exportButton,
+    testDriveButton,
+    exportStatus,
+    undoButton,
+    redoButton,
+    deleteButton,
+    addSectionButton,
+    addJunctionButton,
+    splitLoopButton,
+    saveButton,
+    openButton,
+    frameButton,
+    newButton,
+    openFile,
+    spawnCenterline,
+    terrainMode,
+    addTerrainPointButton,
+    deleteTerrainPointButton,
+    clearTerrainPointsButton,
+    terrainPointHeight,
+    modeRoadsideButton,
+    modeTerrainButton,
+    modePointsButton,
+    roadsideSectionSelect,
+    roadsideNewOffset,
+    roadsideAddSplineButton,
+    roadsideRemoveSplineButton,
+    roadsideRunProperty,
+    roadsideRunRemoveButton,
+    roadsideKindButtons,
+    centerlineToggle,
+    racingLineToggle,
+    wireframeToggle,
+    boundaryToggle,
+    tJunctionToggle,
+    collisionToggle,
+  },
+};
+
+function boot(): void {
+  autosaveSuspended = true;
+  let status: { message: string; tone: "ok" | "error" } | null = null;
+  let restored = false;
+
+  if (autosaveStorage === null) {
+    autosaveWarningShown = true;
+    status = {
+      message: "Autosave storage is unavailable; edits won't be restored.",
+      tone: "error",
+    };
+  } else {
+    const stored = readAutosave(autosaveStorage);
+    if (stored.status === "restored") {
+      loadProject(stored.project, true);
+      if (bakeValid) {
+        restored = true;
+        status = { message: "Restored autosaved project.", tone: "ok" };
+      }
+    } else if (stored.status === "invalid") {
+      clearAutosave(autosaveStorage);
+      status = {
+        message: "Ignored invalid autosaved project; loaded the default.",
+        tone: "error",
+      };
+    } else if (stored.status === "unavailable") {
+      autosaveStorage = null;
+      autosaveWarningShown = true;
+      status = {
+        message: "Autosave storage is unavailable; edits won't be restored.",
+        tone: "error",
+      };
+    }
+  }
+
+  if (!restored) {
+    loadProject(loopSplineTerrainJunctionsFixture, true);
+  }
+  autosaveDirty = false;
+  autosaveSuspended = false;
+  if (status) {
+    setEditStatus(status.message, status.tone);
+  }
+}
+
 updateStatusCollapsed();
-loadProject(loopSplineTerrainJunctionsFixture, true);
+boot();
+window.addEventListener("pagehide", () => flushAutosave());
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    flushAutosave();
+  }
+});
 if (
   lapsterHostEnabled &&
   new URLSearchParams(window.location.search).get("e2e") === "1"
