@@ -3783,5 +3783,141 @@ const resizeObserver = new ResizeObserver(() => {
 });
 resizeObserver.observe(viewport);
 
+interface E2EProjectSnapshot {
+  schema: string;
+  name: string;
+  centerlines: Array<{
+    id: string;
+    closed: boolean;
+    points: Array<{ id: string; position: [number, number] }>;
+  }>;
+  junctions: Array<{
+    id: string;
+    members: Array<{ section: string; point: string }>;
+  }>;
+  errors: string[];
+}
+
+interface TrackEdE2EHook {
+  whenReady(): Promise<void>;
+  project(): E2EProjectSnapshot | null;
+  projectErrors(): string[];
+  selectPoint(index: number): ControlPointPick | null;
+  movePoint(index: number, position: [number, number]): boolean;
+}
+
+function e2ePointAt(index: number): ControlPointPick | null {
+  if (!project) {
+    return null;
+  }
+  let remaining = index;
+  for (
+    let centerlineIndex = 0;
+    centerlineIndex < project.centerlines.length;
+    centerlineIndex += 1
+  ) {
+    const centerline = project.centerlines[centerlineIndex]!;
+    if (remaining < centerline.points.length) {
+      return { centerlineIndex, pointIndex: remaining };
+    }
+    remaining -= centerline.points.length;
+  }
+  return null;
+}
+
+// Explicitly opt-in browser-test hook. Only installed for hosted builds with
+// ?e2e=1 so normal authoring pages expose nothing new.
+function installE2EHook(): void {
+  const hook: TrackEdE2EHook = {
+    async whenReady() {
+      const deadline = Date.now() + 45_000;
+      while (Date.now() < deadline) {
+        if (project && bakeValid && currentReport) {
+          return;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 25));
+      }
+      throw new Error("track-ed did not become ready");
+    },
+    project() {
+      if (!project) {
+        return null;
+      }
+      return {
+        schema: project.schema,
+        name: project.name,
+        centerlines: project.centerlines.map((centerline) => ({
+          id: centerline.id,
+          closed: centerline.closed,
+          points: centerline.points.map((position, index) => ({
+            id: centerline.pointIds[index]!,
+            position: [position[0], position[1]],
+          })),
+        })),
+        junctions: project.junctions.map((junction) => ({
+          id: junction.id,
+          members: (junction.members ?? [
+            { section: junction.centerline, point: junction.point },
+          ]).map((member) => ({
+            section: member.section,
+            point: member.point,
+          })),
+        })),
+        errors: hook.projectErrors(),
+      };
+    },
+    projectErrors() {
+      return (
+        currentReport?.violations
+          .filter((violation) => violation.severity === "error")
+          .map((violation) => `${violation.rule}: ${violation.message}`) ?? []
+      );
+    },
+    selectPoint(index: number) {
+      const point = e2ePointAt(index);
+      if (!point) {
+        return null;
+      }
+      setSelection(point);
+      return point;
+    },
+    movePoint(index: number, position: [number, number]) {
+      if (
+        !project ||
+        !Array.isArray(position) ||
+        !Number.isFinite(position[0]) ||
+        !Number.isFinite(position[1])
+      ) {
+        return false;
+      }
+      const target = e2ePointAt(index);
+      const centerline = target
+        ? project.centerlines[target.centerlineIndex]
+        : undefined;
+      if (!target || !centerline?.points[target.pointIndex]) {
+        return false;
+      }
+      const before = cloneProject(project);
+      centerline.points[target.pointIndex] = [position[0], position[1]];
+      syncBranchStart(project);
+      if (!renderProject(project, { frame: false })) {
+        project = before;
+        renderProject(project, { frame: false });
+        return false;
+      }
+      setSelection(target);
+      pushUndo(before);
+      return true;
+    },
+  };
+  (window as unknown as { __trackEd?: TrackEdE2EHook }).__trackEd = hook;
+}
+
 updateStatusCollapsed();
 loadProject(loopSplineTerrainJunctionsFixture, true);
+if (
+  lapsterHostEnabled &&
+  new URLSearchParams(window.location.search).get("e2e") === "1"
+) {
+  installE2EHook();
+}
