@@ -40,6 +40,32 @@ function loadLoopProject() {
   return parsed.project!;
 }
 
+type Quat4 = [number, number, number, number];
+
+function multiplyQuat(a: Quat4, b: Quat4): Quat4 {
+  const [ax, ay, az, aw] = a;
+  const [bx, by, bz, bw] = b;
+  return [
+    aw * bx + ax * bw + ay * bz - az * by,
+    aw * by - ax * bz + ay * bw + az * bx,
+    aw * bz + ax * by - ay * bx + az * bw,
+    aw * bw - ax * bx - ay * by - az * bz,
+  ];
+}
+
+function rotateVector(q: Quat4, v: Vec3): Vec3 {
+  const [x, y, z, w] = q;
+  const [vx, vy, vz] = v;
+  const tx = 2 * (y * vz - z * vy);
+  const ty = 2 * (z * vx - x * vz);
+  const tz = 2 * (x * vy - y * vx);
+  return [
+    vx + w * tx + (y * tz - z * ty),
+    vy + w * ty + (z * tx - x * tz),
+    vz + w * tz + (x * ty - y * tx),
+  ];
+}
+
 describe("bakeProject", () => {
   it("bakes one welded surface graph with asphalt, dirt, and grass", () => {
     const track = bakeProject(loadLoopProject());
@@ -101,6 +127,27 @@ describe("bakeProject", () => {
     expect(Math.hypot(x, y, z, w)).toBeCloseTo(1, 12);
   });
 
+
+  it("pre-flips the spawn rotation so the runtime drive flip follows the route tangent", () => {
+    const track = bakeProject(loadLoopProject());
+    const spawn = track.spawns[0]!;
+    const race = track.race!;
+    const start = race.layout.points[0]!;
+    const next = race.layout.points[1]!;
+    const tangentLength = Math.hypot(next[0] - start[0], next[2] - start[2]);
+    const tangentX = (next[0] - start[0]) / tangentLength;
+    const tangentZ = (next[2] - start[2]) / tangentLength;
+
+    // Lapster applies this flip to the metadata spawn rotation at runtime.
+    const driveFlip: Quat4 = [0, 1, 0, 0];
+    const runtimeRotation = multiplyQuat(driveFlip, spawn.rotation);
+    const forward = rotateVector(runtimeRotation, [0, 0, -1]);
+
+    expect(forward[1]).toBeCloseTo(0, 6);
+    expect(forward[0]).toBeCloseTo(tangentX, 6);
+    expect(forward[2]).toBeCloseTo(tangentZ, 6);
+    expect(forward[0] * tangentX + forward[2] * tangentZ).toBeGreaterThan(0.999);
+  });
 
   it("samples the spawn at the requested fraction and lateral offset", () => {
     const value = structuredClone(loopFixture) as {
