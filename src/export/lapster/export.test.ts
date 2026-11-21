@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import loopFixture from "../../../fixtures/projects/loop.json";
+import branch30 from "../../../fixtures/projects/loop-with-branch-30.json";
 import loopSpurFixture from "../../../fixtures/projects/venue-loop-spur-junction.json";
 import venueFixture from "../../../fixtures/projects/venue-two-loops-spur.json";
 import wallsPropsFixture from "../../../fixtures/projects/venue-walls-props.json";
@@ -27,7 +28,7 @@ function readJsonChunk(bytes: Uint8Array): Record<string, unknown> {
   return JSON.parse(text.trimEnd()) as Record<string, unknown>;
 }
 
-describe("lapster-glb-track@4", () => {
+describe("lapster-glb-track@5", () => {
   it("emits a deterministic GLB and manifest", () => {
     const track = validTrack();
     const first = exportLapsterGlbTrack(track);
@@ -47,7 +48,7 @@ describe("lapster-glb-track@4", () => {
     const bundle = exportLapsterGlbTrack(validTrack());
     const manifest = bundle.manifest;
 
-    expect(manifest.schema).toBe("sim-track-glb-v1");
+    expect(manifest.schema).toBe("sim-track-glb-v2");
     expect(manifest.kind).toBe("track");
     expect(manifest.name).toBe("Loop Fixture");
     expect(manifest.length).toBeCloseTo(360, 9);
@@ -65,6 +66,65 @@ describe("lapster-glb-track@4", () => {
       "grass",
     ]);
     expect(manifest.default_surface).toBe(0);
+    expect(manifest.race).toBeDefined();
+    expect(manifest.race!.version).toBe(1);
+    expect(manifest.race!.layout.layout_id).toBe("main");
+    expect(manifest.race!.layout.closed).toBe(true);
+    expect(manifest.race!.layout.direction).toBe("forward");
+    expect(manifest.race!.layout.points[0]).toEqual(
+      manifest.race!.start_finish.position,
+    );
+    expect(manifest.race!.start_finish.section_id).toBe("main");
+    expect(manifest.race!.start_finish.fraction).toBe(0);
+    expect(manifest.race!.grid).toHaveLength(8);
+    expect(manifest.race!.sectors).toHaveLength(4);
+  });
+
+  it("includes race only when the spawn section is closed", () => {
+    const openValue = structuredClone(branch30) as {
+      spawn: { centerline: string; fraction: number; lateral: number };
+    };
+    openValue.spawn.centerline = "branch-30";
+    openValue.spawn.fraction = 0.5;
+    openValue.spawn.lateral = 0;
+    const parsed = parseProject(openValue);
+    expect(parsed.issues).toEqual([]);
+    const openTrack = bakeProject(parsed.project!);
+
+    const openBundle = exportLapsterGlbTrack(openTrack);
+    expect(openBundle.manifest.schema).toBe("sim-track-glb-v2");
+    expect(openBundle.manifest.race).toBeUndefined();
+    expect(openBundle.files.map((file) => file.name)).toEqual([
+      "track.glb",
+      "track.json",
+    ]);
+
+    const closedBundle = exportLapsterGlbTrack(validTrack());
+    expect(closedBundle.manifest.race).toBeDefined();
+    const closedManifest = JSON.parse(
+      new TextDecoder().decode(closedBundle.files[1]!.bytes),
+    ) as Record<string, unknown>;
+    expect(closedManifest.race).toBeDefined();
+    const openManifest = JSON.parse(
+      new TextDecoder().decode(openBundle.files[1]!.bytes),
+    ) as Record<string, unknown>;
+    expect(openManifest.race).toBeUndefined();
+  });
+
+  it("keeps the GLB geometry and racing line unchanged when race data is present", () => {
+    const track = validTrack();
+    const withRace = exportLapsterGlbTrack(track);
+    const withoutRace = structuredClone(track);
+    delete withoutRace.race;
+    delete withoutRace.warnings;
+    const without = exportLapsterGlbTrack(withoutRace);
+
+    expect(Array.from(withRace.files[0]!.bytes)).toEqual(
+      Array.from(without.files[0]!.bytes),
+    );
+    expect(track.racingLine).toBeDefined();
+    expect(withRace.manifest.race).toBeDefined();
+    expect(without.manifest.race).toBeUndefined();
   });
 
   it("writes a GLB with the required Lapster node and material names", () => {

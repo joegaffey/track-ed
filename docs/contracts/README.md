@@ -3,7 +3,7 @@
 The current pipeline has three layers:
 
 ```text
-track-ed/project@5  ->  BakedTrack v1  ->  lapster-glb-track@4
+track-ed/project@5  ->  BakedTrack v1  ->  lapster-glb-track@5
    venue sections          neutral model        export profile
 ```
 
@@ -13,7 +13,7 @@ track-ed/project@5  ->  BakedTrack v1  ->  lapster-glb-track@4
 - `project-v2.md` — legacy `project@2` shared-junction graph.
 - `project.md` — legacy `project@1` authoring format.
 - `baked-track.md` — consumer-neutral contract between the kernel and every export profile. Owned by track-ed.
-- `lapster-glb-track.md` — v0 export profile for Lapster's `sim-track-glb-v1` importer. The manifest schema is pinned from Lapster.
+- `lapster-glb-track.md` — current export profile for Lapster's `sim-track-glb-v2` importer (optional `race` block). The manifest schema is pinned from Lapster.
 
 Executable schemas:
 

@@ -1,6 +1,6 @@
 # Contract — `BakedTrack` v1
 
-Status: normative for v1. `kerbGraph`, `wallGraph`, `racingLine`, and `props` are additive optional fields.
+Status: normative for v1. `kerbGraph`, `wallGraph`, `racingLine`, `props`, and `race` are additive optional fields.
 
 ## Purpose
 
@@ -31,6 +31,8 @@ interface BakedTrack {
   wallGraph?: SurfaceGraph;
   racingLine?: LineGraph;
   props?: Prop[];
+  race?: RaceData;
+  warnings?: string[];
   surfaces: Surface[];
   spawns: Spawn[];
   cameras: Camera[];
@@ -78,6 +80,35 @@ interface Prop {
   scale: number;
   collision: boolean;
 }
+
+type LayoutDirection = "forward" | "reverse";
+
+interface RaceData {
+  version: number;
+  layout: {
+    layout_id: string;
+    closed: boolean;
+    direction: LayoutDirection;
+    points: Vec3[];
+    half_width: number;
+  };
+  start_finish: {
+    section_id: string;
+    fraction: number;
+    position: Vec3;
+    rotation_xyzw: Quat;
+  };
+  grid: Array<{
+    name: string;
+    position: Vec3;
+    rotation_xyzw: Quat;
+  }>;
+  sectors: Array<{
+    name: string;
+    start_fraction: number;
+    end_fraction: number;
+  }>;
+}
 ```
 
 ## Normative rules
@@ -100,6 +131,8 @@ interface Prop {
 - **BM12** The model is not persisted.
 - **BM13** Quaternions are `xyzw`. Vectors and positions are `[x, y, z]` in metres.
 - **BM14** `racingLine.positions` MUST be finite. `racingLine.uvs` MUST have the same length as positions and contain finite `[u, v]` pairs. `racingLine.indices` MUST reference valid positions and contain whole triangles. `bounds` MUST enclose the racing line.
+- **BM15** `race` is optional. When present it MUST mirror the Lapster `RaceData` field names: `version`, `layout`, `start_finish`, `grid`, and `sectors`. `version` MUST be `1`; the layout MUST be closed with at least three finite points and a positive half-width; `start_finish.position` MUST match `layout.points[0]`; grid slots MUST lie inside the road and on asphalt; sectors MUST be ordered, contiguous, and cover `[0, 1]`; and every layout point MUST lie on drivable asphalt. Race data MUST NOT alter geometry or the racing line.
+- **BM16** `warnings` is optional kernel diagnostics. Each entry is a human-readable string. Warnings MUST NOT make a model invalid or block export.
 
 ## Geometry invariants
 
