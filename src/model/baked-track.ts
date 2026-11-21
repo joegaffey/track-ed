@@ -49,6 +49,43 @@ export interface Prop {
   collision: boolean;
 }
 
+export type LayoutDirection = "forward" | "reverse";
+
+export interface RaceLayout {
+  layout_id: string;
+  closed: boolean;
+  direction: LayoutDirection;
+  points: Vec3[];
+  half_width: number;
+}
+
+export interface RaceStartFinish {
+  section_id: string;
+  fraction: number;
+  position: Vec3;
+  rotation_xyzw: Quat;
+}
+
+export interface RaceGridSlot {
+  name: string;
+  position: Vec3;
+  rotation_xyzw: Quat;
+}
+
+export interface RaceSector {
+  name: string;
+  start_fraction: number;
+  end_fraction: number;
+}
+
+export interface RaceData {
+  version: number;
+  layout: RaceLayout;
+  start_finish: RaceStartFinish;
+  grid: RaceGridSlot[];
+  sectors: RaceSector[];
+}
+
 export interface BakedTrack {
   kind: "track";
   name: string;
@@ -59,6 +96,8 @@ export interface BakedTrack {
   wallGraph?: SurfaceGraph;
   racingLine?: LineGraph;
   props?: Prop[];
+  race?: RaceData;
+  warnings?: string[];
   surfaces: Surface[];
   spawns: Spawn[];
   cameras: Camera[];

@@ -1,12 +1,12 @@
 # track-ed — Functional Specification v1.0
 
-Status: v1 implementation complete through G5; track-ed is promoted to production. Scope: v0 spike plus v1 gates (splines, terrain/TIN, `project@2` junctions, unified `project@5` venue sections, kerbs, walls, props, visual racing lines, and re-conformance). Banking/crown is a post-promotion follow-up.
+Status: v1 implementation complete through G5; track-ed is promoted to production. Scope: v0 spike plus v1 gates (splines, terrain/TIN, `project@2` junctions, unified `project@5` venue sections, kerbs, walls, props, visual racing lines, implicit one-leg race layout export, and re-conformance). Banking/crown is a post-promotion follow-up.
 
 ## 1. Purpose
 
 `track-ed` is a standalone browser editor for authoring simple track geometry, inspecting the baked result, and exporting a GLB plus a manifest. The v0 goal is to prove whether a clean-room three.js-based editor and geometry pipeline can produce acceptable closed-loop and junction geometry faster and more inspectably than the current in-engine builder.
 
-The project model is track-ed's own. Lapster is the first consumer, not the definition of the tool. v0 ships one export profile, `lapster-glb-track@4`, which emits `track.glb` + `track.json` satisfying Lapster's `sim-track-glb-v1` importer. The `.sima` pack is produced downstream by Lapster's asset compiler.
+The project model is track-ed's own. Lapster is the first consumer, not the definition of the tool. v0 ships one export profile, `lapster-glb-track@5`, which emits `track.glb` + `track.json` satisfying Lapster's `sim-track-glb-v2` importer. The `.sima` pack is produced downstream by Lapster's asset compiler.
 
 ## 2. Status
 
@@ -21,11 +21,12 @@ The project model is track-ed's own. Lapster is the first consumer, not the defi
 - v1-G2b is implemented: `follow` mode drapes the road, shoulder, and terrain over the same heightfield while keeping seams welded.
 - v1-G2c1 is implemented: terrain is authored by absolute point heights as a TIN, with click-add, vertical drag, numeric height, delete/clear, and undo/redo. Preview and GLB normals are computed from geometry.
 - v1-G2c4 is implemented: road-follow mode now samples a global TIN built from the terrain points, so the road, shoulder, and terrain follow the same surface.
-- `track-ed/project@3` is implemented: multiple closed sections, dead-ended open sections, multi-way junction members, open-section junctions, section/junction authoring, an independent section list, separate Add section and Add junction flows, loose-end merging, loop closing, junction detach, and open/closed section splitting bake without a main loop. The full fixture matrix bakes, validates, exports, and passes Lapster conformance. Routes remain deferred.
+- `track-ed/project@3` is implemented: multiple closed sections, dead-ended open sections, multi-way junction members, open-section junctions, section/junction authoring, an independent section list, separate Add section and Add junction flows, loose-end merging, loop closing, junction detach, and open/closed section splitting bake without a main loop. The full fixture matrix bakes, validates, exports, and passes Lapster conformance. General routes remain deferred; the implicit one-leg race layout is implemented later.
 - `track-ed/project@2` is implemented: shared junction nodes with stable point ids support multiple junctions and multi-way branches. Moving a shared junction point moves every connected branch. A loose branch end can be dragged onto a main-loop control point to join it (`endAttach`), and dragging a joined end pulls it free. Dragging one loose branch end onto another merges both branches into a single open centreline.
 - v1-G3 kerbs are implemented: authorable section-local spans, continuous red/white kerb geometry with intentional junction overlaps, a separate consumer-neutral kerb graph, and solid kerb collision in the Lapster profile.
 - v1-G4 walls and props are implemented: fixed left/right kerb-edge splines plus editable free section-local roadside splines, with kerb, wall, tree, tyre, and block runs.
 - A visual-only racing line is implemented: one deterministic curvature-biased ribbon per section, shown in the preview with an overlay toggle and exported as a separate `racing_line` node. It is not part of the welded ground graph or collision.
+- The implicit one-leg race layout is implemented: when the spawn centreline is closed, the kernel bakes its centreline at roughly 2 m spacing, rotates it to the spawn fraction, and emits an optional `race` manifest block with layout, start/finish, eight grid slots, and four sectors. An open spawn section omits `race` and reports a warning without blocking export. This adds no project schema field and no general route/layout authoring.
 - `track-ed/project@5` is the current authoring format; `project@1`–`project@4` remain import inputs and upgrade on load.
 - v1-G5 re-conformance is implemented: all 19 fixtures bake, validate, export, compile through Lapster, and load in the track and drive viewers. Preview holds ~60 FPS and export compute stays below 200 ms.
 - The v0 performance comparison remains useful baseline input for the v1 decision.
@@ -45,7 +46,7 @@ The project model is track-ed's own. Lapster is the first consumer, not the defi
 ### 3.2 Out of scope for v0
 
 - Multiple loops, multiple branches per junction, shared sections.
-- Pit lanes, routes, sectors, multiple layouts.
+- Pit lanes, general routes/laps/sectors authoring, multiple layouts.
 - Elevation, terrain relief, water, sky.
 - Textures and advanced materials beyond flat base colours.
 - Direct `.sima` export.
@@ -67,13 +68,13 @@ The project model is track-ed's own. Lapster is the first consumer, not the defi
 ```text
 src/kernel/         consumer-neutral geometry
 src/model/          BakedTrack contract
-src/export/lapster/ lapster-glb-track@4 profile
+src/export/lapster/ lapster-glb-track@5 profile
 src/app/            three.js editor and inspector
 ```
 
 - `src/kernel/` and `src/model/` MUST NOT import `src/export/lapster/`, three.js, or Lapster code.
 - `src/app/` MAY use three.js for rendering and interaction.
-- `src/export/lapster/` is the only place where Lapster-specific terms, `.sima`, importer node names, and `sim-track-glb-v1` may appear.
+- `src/export/lapster/` is the only place where Lapster-specific terms, `.sima`, importer node names, and `sim-track-glb-v2` may appear.
 - The v0 profile is a pure mapping from `BakedTrack` to `track.glb` + `track.json`.
 
 ## 5. Terms
@@ -124,6 +125,7 @@ The model contains:
 - an optional separate wall surface graph;
 - an optional visual-only racing line graph generated per section;
 - optional baked prop instances expanded from section-local tree/tyre/block runs;
+- an optional implicit race layout carrying layout points, start/finish, grid slots, and sectors when the spawn centreline is closed;
 - surfaces (id, name, friction, roughness);
 - spawns;
 - cameras.
@@ -132,14 +134,14 @@ The model MUST be consumer-agnostic. It MUST NOT contain `.sima`, pack chunks, r
 
 ## 9. Export profile v0
 
-The export profile is `lapster-glb-track@4`. The normative contract is `docs/contracts/lapster-glb-track.md`; the manifest schema is `schemas/lapster-track-manifest.schema.json`.
+The export profile is `lapster-glb-track@5`. The normative contract is `docs/contracts/lapster-glb-track.md`; the manifest schema is `schemas/lapster-track-manifest.schema.json`.
 
-The `track.glb` payload is standard glTF 2.0. The Lapster-specific parts are the `track.json` manifest, the `surface_*`/`racing_line` node/material naming convention, surface metadata, spawn/collision rules, and the two-file bundle contract.
+The `track.glb` payload is standard glTF 2.0. The Lapster-specific parts are the `track.json` manifest, the `surface_*`/`racing_line` node/material naming convention, surface metadata, spawn/collision rules, the optional `race` block, and the two-file bundle contract.
 
 The profile emits exactly two files:
 
 - `track.glb`;
-- `track.json` satisfying `sim-track-glb-v1`.
+- `track.json` satisfying `sim-track-glb-v2`.
 
 All Lapster-specific naming, defaults, and metadata live in the profile. The profile MUST NOT alter geometry.
 
@@ -206,6 +208,7 @@ Because inspection is the spike's primary validation surface, the editor MUST pr
 
 - The project MUST be validated against `schemas/project.schema.json` and the cross-field rules in `docs/contracts/project.md`.
 - The baked model MUST be validated against G3–G11 before export.
+- The optional race layout MUST be validated before export: finite points, a closed course with at least 3 points, positive half-width, a start/finish matching point 0, grid slots inside the road and on asphalt, ordered sectors covering `[0, 1]`, and route samples on drivable asphalt. Missing race data is a warning, not an export blocker.
 - The export button MUST be disabled while any MUST-level validation fails.
 - Validation errors MUST identify the violated rule and the affected geometry where possible.
 - The exporter MUST refuse to write output for an invalid model.
@@ -260,7 +263,7 @@ See `docs/toolchain.md`.
 - `length` is display-only or physics-relevant.
 - Node/material wildcard matching is case-insensitive and `*` works as expected.
 - `mountable` is irrelevant for v0 surfaces.
-- The importer ignores sectors, pit boxes, and multiple spawns.
+- The legacy importer ignores top-level sectors, pit boxes, and multiple spawns; race sectors travel in the optional Race chunk.
 - `.sima` is produced by Lapster's compiler, not by track-ed.
 - The baked track model can be expressed without Lapster-specific fields.
 
@@ -270,7 +273,7 @@ These are documented only to bound v0. They MUST NOT introduce design hooks, pla
 
 Terrain elevation and rounded spline centrelines are implemented as v1 gates (G1, G2). Multiple loops, shared sections, multi-way junctions, kerbs, walls, and props are implemented in `project@5`. Final re-conformance, the production decision, and the promotion are complete. Banking/crown and the A7 builder iteration-time trial remain post-promotion follow-ups. See `docs/v1-roadmap.md`.
 
-- **Routes, laps, and sectors**: race routes over venue sections, route-based length, sectors, checkpoints, and start/finish logic.
+- **General routes, laps, and sectors authoring**: multi-leg routes over venue sections, route-based length, authored sectors, checkpoints, and start/finish layouts. The implicit one-leg layout derived from a closed spawn section is implemented; general authoring remains deferred.
 - **Pit lanes and pit boxes**: pit entry/exit paths, boxes, and metadata.
 - **Elevation and terrain relief**: heightfields, slopes, and cut/fill.
 - **Spline-resampled centrelines**: rounded corners and non-polyline centreline sampling.
@@ -278,7 +281,7 @@ Terrain elevation and rounded spline centrelines are implemented as v1 gates (G1
 - **Textures and material libraries**: beyond flat base colours.
 - **Direct `.sima` export**: pack writing without the Lapster compiler.
 - **CLI/headless export**: a non-browser bake path.
-- **Multi-layout, routes, sectors**: multiple layouts over shared geometry.
+- **Multi-layout and general routes/sectors authoring**: multiple layouts over shared geometry; the implicit one-leg layout is implemented.
 - **Random/generative authoring and collaboration.**
 - **Additional consumers**: AC, rFactor 2, and others. Each becomes a separate export profile. v0 adds no generic plugin layer or exporter abstraction.
 - **Interchange formats across sims**: no shared game-format layer in v0; evaluate only when a second consumer is actually implemented.
@@ -340,8 +343,9 @@ After promotion, decide explicitly which editor owns track authoring. Do not mai
 ## 23. Contract ownership and versioning
 
 - track-ed owns `track-ed/project@1` and `BakedTrack` v1.
-- Lapster owns `sim-track-glb-v1`; track-ed pins its copy in `schemas/lapster-track-manifest.schema.json`.
-- The current export profile is `lapster-glb-track@4`.
+- Lapster owns `sim-track-glb-v2`; track-ed pins its copy in `schemas/lapster-track-manifest.schema.json`.
+- The current export profile is `lapster-glb-track@5`.
 - v1 terrain, kerbs, walls, props, and the racing line remained additive on `BakedTrack` v1 (optional `kerbGraph`, `wallGraph`, `racingLine`, and `props`); authoring is `project@5`.
 - Changes to node names, materials, or manifest fields require a further profile version bump and a conformance run.
+- `@5` extends `@4` with an optional `race` manifest block and source schema `sim-track-glb-v2`; GLB node names and geometry are unchanged. Race data remains additive and optional, so projects without a closed spawn section still export.
 - Breaking changes to the project format or baked model require a version bump.

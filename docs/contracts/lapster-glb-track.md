@@ -1,13 +1,15 @@
-# Contract — `lapster-glb-track@4`
+# Contract — `lapster-glb-track@5`
 
-Status: normative for v1. `@4` adds an optional visual-only racing-line node to `@3`; the manifest schema remains `sim-track-glb-v1`.
+Status: normative for v1. `@4` added an optional visual-only racing-line node to `@3`; `@5` adds an optional `race` manifest block and moves the source manifest schema to `sim-track-glb-v2`. The GLB node names and geometry are unchanged from `@4`.
 
 ## Purpose
 
-`lapster-glb-track@4` is the current export profile. It maps a valid `BakedTrack` to two files consumed by Lapster's asset compiler:
+`lapster-glb-track@5` is the current export profile. It maps a valid `BakedTrack` to two files consumed by Lapster's asset compiler:
 
 - `track.glb`;
-- `track.json`, satisfying Lapster's `sim-track-glb-v1` manifest.
+- `track.json`, satisfying Lapster's `sim-track-glb-v2` manifest.
+
+The optional `race` block is derived by the kernel from a closed spawn section. It is not authored in `track-ed/project@5`.
 
 `track.glb` is standard glTF 2.0. This profile owns the Lapster-specific manifest, `surface_*` node/material naming, surface metadata, spawn/collision rules, and bundle filenames.
 
@@ -29,13 +31,46 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 
 ```json
 {
-  "schema": "sim-track-glb-v1",
+  "schema": "sim-track-glb-v2",
   "kind": "track",
   "name": "Untitled Loop",
   "length": 312.4,
   "spawn": {
     "position": [0.0, 0.0, 0.0],
     "rotation_xyzw": [0.0, 0.0, 0.0, 1.0]
+  },
+  "race": {
+    "version": 1,
+    "layout": {
+      "layout_id": "main",
+      "closed": true,
+      "direction": "forward",
+      "points": [
+        [0.0, 0.0, 0.0],
+        [2.0, 0.0, 0.0],
+        [4.0, 0.0, 0.0]
+      ],
+      "half_width": 5.0
+    },
+    "start_finish": {
+      "section_id": "main",
+      "fraction": 0.0,
+      "position": [0.0, 0.0, 0.0],
+      "rotation_xyzw": [0.0, 0.0, 0.0, 1.0]
+    },
+    "grid": [
+      {
+        "name": "grid_0",
+        "position": [0.0, 0.0, 2.0],
+        "rotation_xyzw": [0.0, 0.0, 0.0, 1.0]
+      }
+    ],
+    "sectors": [
+      { "name": "sector_1", "start_fraction": 0.0, "end_fraction": 0.25 },
+      { "name": "sector_2", "start_fraction": 0.25, "end_fraction": 0.5 },
+      { "name": "sector_3", "start_fraction": 0.5, "end_fraction": 0.75 },
+      { "name": "sector_4", "start_fraction": 0.75, "end_fraction": 1.0 }
+    ]
   },
   "visual": {
     "glb": "track.glb",
@@ -67,6 +102,7 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 - `length` -> `length`.
 - first spawn -> `spawn`.
 - `cameras` -> `cameras`, or omitted when empty.
+- `race` -> an optional `race` block with the same `version`, `layout`, `start_finish`, `grid`, and `sectors` fields. When `race` is absent, the manifest omits the block.
 - `surfaces` -> `surfaces`.
 - surface graph -> GLB visual and collision meshes without geometry changes.
 - `kerbGraph` -> additional `surface_kerb_*` GLB visual and collision meshes without geometry changes. When `kerbGraph` is absent, no kerb nodes or surfaces are emitted.
@@ -113,6 +149,23 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 - The racing line is visual-only and MUST NOT be declared in `surfaces` or included in collision.
 - `mountable` is omitted in `@3`; Lapster treats omitted as `false`, so all kerb and wall faces participate in collision. This matches the v1 all-kerb-faces-solid decision.
 
+## Race
+
+The `race` block mirrors Lapster's `RaceData` contract in `crates/sim-types/src/race.rs`; field names are identical.
+
+- `version` MUST be `1`.
+- `layout.layout_id` is the spawn centreline id.
+- `layout.closed` MUST be `true` for the MVP.
+- `layout.direction` is `"forward"` because route points follow centreline order.
+- `layout.points` are world-space `[x, y, z]` points at roughly 2 m spacing, ordered in travel direction, with index 0 nearest the start/finish. The last point is not duplicated.
+- `layout.half_width` is `project.road.halfWidth`.
+- `start_finish.section_id` is the spawn centreline id. `start_finish.fraction` is the authored spawn fraction. `start_finish.position` MUST match `layout.points[0]`. `rotation_xyzw` is normalized and faces the route tangent.
+- `grid` contains eight pole-first logical slots derived behind the start line. Each slot is a `name`, `position`, and `rotation_xyzw`. Slots are clamped inside `layout.half_width` and sampled on asphalt. They are race setup, not painted track geometry.
+- `sectors` contains four equal `SectorSpec` entries covering `[0, 1]` exactly once, in order.
+- The route, grid, and start/finish are validated before export: finite points, at least three points, a closed layout, positive half-width, a start/finish matching point 0, grid slots inside the road and on asphalt, ordered contiguous sectors covering `[0, 1]`, and route samples on asphalt.
+- If the spawn centreline is open, the kernel omits `race` and records a warning. Export still succeeds.
+- The race layout is independent of the visual `racing_line` node. It does not alter the welded ground graph, collision, roadside graphs, props, or the racing line.
+
 ## Spawn
 
 - `position` is `[x, y, z]` in metres.
@@ -139,7 +192,7 @@ The executable manifest schema is `schemas/lapster-track-manifest.schema.json`.
 - The profile MUST NOT repair, retriangulate, or alter geometry.
 - The profile MUST reject an invalid `BakedTrack`.
 - All Lapster-specific naming and defaults live in this profile.
-- The profile is the only place where `.sima`, Lapster importer assumptions, and `sim-track-glb-v1` may be mentioned.
+- The profile is the only place where `.sima`, Lapster importer assumptions, and `sim-track-glb-v2` may be mentioned.
 
 ## Conformance
 
@@ -173,9 +226,10 @@ Acceptance: the pack validates, `inspect` reports `Track`, the track viewer show
 
 ## Versioning
 
-- The profile version is `lapster-glb-track@4`.
-- Changes to node names, material names, manifest fields, or surface defaults require a version bump. Texture content, UV accessors, and outline extras may evolve within `lapster-glb-track@4`.
+- The profile version is `lapster-glb-track@5`.
+- Changes to node names, material names, manifest fields, or surface defaults require a version bump. Texture content, UV accessors, and outline extras may evolve within `lapster-glb-track@5`.
 - `@2` extends `@1` with optional kerb nodes and surfaces; ground nodes and manifest fields are unchanged.
 - `@3` extends `@2` with optional wall, prop visual, and prop collision nodes. The manifest `visual.include` and `collision.include` patterns become conditional on the presence of walls/props.
 - `@4` extends `@3` with an optional visual-only `racing_line` node and material. The manifest `visual.include` pattern becomes conditional on the presence of a racing line; collision selectors are unchanged.
-- Lapster owns `sim-track-glb-v1`; track-ed pins a copy of the schema.
+- `@5` extends `@4` with an optional `race` manifest block and source schema `sim-track-glb-v2`. GLB nodes, materials, and geometry are unchanged. Manifests without a closed spawn section omit `race` and remain valid.
+- Lapster owns `sim-track-glb-v2`; track-ed pins a copy of the schema. `track-pack` accepts `sim-track-glb-v1`/`v2`.

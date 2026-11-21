@@ -1,5 +1,7 @@
 import type { BakedTrack, Vec3 } from "../model/baked-track";
+import { sampleSurfaceHeight } from "./bake";
 import { WELD_EPSILON } from "./constants";
+import { validateRaceData } from "./race";
 import { analyzeSurfaceGraph, type TopologyReport } from "./topology";
 
 export type ViolationSeverity = "error" | "warning";
@@ -418,6 +420,21 @@ export function validateBakedTrack(track: BakedTrack): ValidationReport {
     }
     if (typeof prop.collision !== "boolean") {
       addError(violations, "P1", `prop "${prop.id}" has an invalid collision flag`);
+    }
+  }
+
+  for (const warning of track.warnings ?? []) {
+    addWarning(violations, "RC1", warning);
+  }
+  if (track.race) {
+    const asphalt = track.surfaces.find((surface) => surface.name === "asphalt");
+    const asphaltId = asphalt?.id ?? 0;
+    const raceErrors = validateRaceData(track.race, {
+      asphaltHeightAt: (x, z) =>
+        sampleSurfaceHeight(graph, x, z, asphaltId),
+    });
+    for (const message of raceErrors) {
+      addError(violations, "RC1", message);
     }
   }
 

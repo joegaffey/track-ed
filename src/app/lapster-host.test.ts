@@ -5,7 +5,7 @@ import { lapsterDriveUrl, trackPackBaseUrl, trackPackInput } from "./lapster-hos
 function bundle(files: LapsterExportBundle["files"]): LapsterExportBundle {
   return {
     manifest: {
-      schema: "sim-track-glb-v1",
+      schema: "sim-track-glb-v2",
       kind: "track",
       name: "test",
       length: 1,

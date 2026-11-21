@@ -12,7 +12,7 @@ Trade-off: another repository, CI, deploy, and contract to maintain. The v0 spik
 
 ## D2 — Lapster is the first consumer, not the definition
 
-The kernel and `BakedTrack` model are consumer-neutral. track-ed ships one export profile, currently `lapster-glb-track@4` (`@1` was the v0 profile).
+The kernel and `BakedTrack` model are consumer-neutral. track-ed ships one export profile, currently `lapster-glb-track@5` (`@1` was the v0 profile).
 
 Future consumers such as Assetto Corsa or rFactor 2 would be additional export profiles. v0 does not add a plugin system, exporter registry, or generic exporter interface.
 
@@ -198,7 +198,7 @@ Banking/crown was deliberately deferred until after this decision. Rationale: it
 
 ## D21 — Racing line is a separate visual-only graph
 
-The racing line is generated in the kernel as an optional `racingLine: LineGraph` and exported as `racing_line` under `lapster-glb-track@4`.
+The racing line is generated in the kernel as an optional `racingLine: LineGraph` and exported as `racing_line` under `lapster-glb-track@4` and later profiles (`@5`).
 
 - One ribbon is generated per section. Offsets are curvature-biased toward the inside, clamped to the authored asphalt width, smoothed, and lifted `0.02 m` above the road.
 - In `follow` mode the ribbon samples the same terrain source as the road; in `conform` mode it sits on the flat road.
@@ -222,6 +222,34 @@ Tree prop geometry now lives in the consumer-neutral `src/kernel/conifer.ts` mod
 Rationale: the previous preview used smooth cones and the exported trees read as sparse cone stacks. Sharing the layered geometry keeps the editor and Lapster consistent and gives the conifers the fuller, darker, mixed-colour silhouette of the reference art without changing collision, placement, or prop-run semantics.
 
 Trade-off: trees are denser, so the walls/props fixture grows from about 19k to 34k source visual triangles; tree collision remains trunk-only.
+
+## D23 — Implicit one-leg race layout is an approved export feature
+
+Closed spawn sections now export an optional implicit race layout in the
+`sim-track-glb-v2` manifest.
+
+- The kernel bakes the spawn centreline at roughly 2 m spacing, rotates the
+  route so index 0 is nearest the spawn fraction, samples asphalt height, and
+  emits `layout`, `start_finish`, eight staggered grid slots, and four equal
+  sectors.
+- `layout_id` and `start_finish.section_id` are the spawn centreline id;
+  `start_finish.fraction` is the authored spawn fraction.
+- Grid slots are derived race setup, clamped inside the road half-width and
+  sampled on asphalt. They are not authored track geometry.
+- An open spawn section omits `race` and records a warning; export still
+  succeeds.
+- No `track-ed/project@5` field, layout UI, or general route model is added.
+  General routes/laps/sectors authoring and multiple layouts remain out of
+  scope.
+- The visual racing line remains a separate visual-only graph, independent of
+  the race route.
+
+Rationale: AI, lap timing, and online identity need a shared track-side course,
+but the full route/layout editor is still deferred. Deriving a one-leg layout
+from the existing spawn proves the contract without opening general authoring.
+
+Trade-off: multi-section layouts, route legs, authored start/finish and grid
+markings, and per-layout cameras remain follow-ups.
 
 ## Alternatives considered
 

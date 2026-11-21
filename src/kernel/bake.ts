@@ -57,6 +57,7 @@ import {
   type RoadsideInstanceRun,
 } from "./roadside";
 import { buildKerbGraph, buildWallGraph } from "./kerbs";
+import { buildRaceLayout } from "./race";
 
 export { BakeError };
 
@@ -675,6 +676,11 @@ function finishTrack(
   const wallGraph = buildWallGraph(project, bounds);
   const racingLine = buildRacingLineGraph(project, bounds, surfaceGraph);
   const props = bakeProps(project, bounds, surfaceGraph);
+  const raceResult = buildRaceLayout(project, {
+    asphaltHeightAt: (x, z) =>
+      sampleSurfaceHeight(surfaceGraph, x, z, ASPHALT_SURFACE_ID),
+    groundHeightAt: (x, z) => sampleSurfaceHeight(surfaceGraph, x, z),
+  });
   const surfaces: Surface[] = DEFAULT_SURFACES.map((surface) => ({ ...surface }));
   if (kerbGraph) {
     const kerbSurfaceIds = new Set(kerbGraph.triangleSurfaces);
@@ -748,6 +754,8 @@ function finishTrack(
     ...(wallGraph ? { wallGraph } : {}),
     ...(racingLine ? { racingLine } : {}),
     ...(props ? { props } : {}),
+    ...(raceResult.race ? { race: raceResult.race } : {}),
+    ...(raceResult.warnings.length > 0 ? { warnings: raceResult.warnings } : {}),
     surfaces,
     spawns: [spawn],
     cameras: project.cameras.map(cameraFor),

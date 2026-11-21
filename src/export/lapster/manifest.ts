@@ -1,4 +1,4 @@
-import type { BakedTrack, Quat, Vec3 } from "../../model/baked-track";
+import type { BakedTrack, Quat, RaceData, Vec3 } from "../../model/baked-track";
 
 export interface LapsterSurface {
   id: number;
@@ -36,7 +36,7 @@ export interface LapsterCollision {
 }
 
 export interface LapsterManifest {
-  schema: "sim-track-glb-v1";
+  schema: "sim-track-glb-v2";
   kind: "track";
   name: string;
   length: number;
@@ -46,6 +46,52 @@ export interface LapsterManifest {
   collision: LapsterCollision;
   surfaces: LapsterSurface[];
   default_surface: number;
+  race?: RaceData;
+}
+
+function mapRace(race: RaceData): RaceData {
+  return {
+    version: race.version,
+    layout: {
+      layout_id: race.layout.layout_id,
+      closed: race.layout.closed,
+      direction: race.layout.direction,
+      points: race.layout.points.map(
+        (point): Vec3 => [point[0], point[1], point[2]],
+      ),
+      half_width: race.layout.half_width,
+    },
+    start_finish: {
+      section_id: race.start_finish.section_id,
+      fraction: race.start_finish.fraction,
+      position: [
+        race.start_finish.position[0],
+        race.start_finish.position[1],
+        race.start_finish.position[2],
+      ],
+      rotation_xyzw: [
+        race.start_finish.rotation_xyzw[0],
+        race.start_finish.rotation_xyzw[1],
+        race.start_finish.rotation_xyzw[2],
+        race.start_finish.rotation_xyzw[3],
+      ],
+    },
+    grid: race.grid.map((slot) => ({
+      name: slot.name,
+      position: [slot.position[0], slot.position[1], slot.position[2]],
+      rotation_xyzw: [
+        slot.rotation_xyzw[0],
+        slot.rotation_xyzw[1],
+        slot.rotation_xyzw[2],
+        slot.rotation_xyzw[3],
+      ],
+    })),
+    sectors: race.sectors.map((sector) => ({
+      name: sector.name,
+      start_fraction: sector.start_fraction,
+      end_fraction: sector.end_fraction,
+    })),
+  };
 }
 
 export function buildLapsterManifest(track: BakedTrack): LapsterManifest {
@@ -71,7 +117,7 @@ export function buildLapsterManifest(track: BakedTrack): LapsterManifest {
     });
   }
   const manifest: LapsterManifest = {
-    schema: "sim-track-glb-v1",
+    schema: "sim-track-glb-v2",
     kind: "track",
     name: track.name,
     length: track.length,
@@ -117,6 +163,9 @@ export function buildLapsterManifest(track: BakedTrack): LapsterManifest {
       target: [camera.target[0], camera.target[1], camera.target[2]],
       fov_y: camera.fovY,
     }));
+  }
+  if (track.race) {
+    manifest.race = mapRace(track.race);
   }
 
   return manifest;
