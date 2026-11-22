@@ -90,6 +90,15 @@ function quaternionFacing(tangent: Vec2): Quat {
   return [0, Math.sin(half), 0, Math.cos(half)];
 }
 
+// Lapster's runtime applies a PI drive flip to the track spawn rotation before
+// creating the vehicle. Pre-flip the metadata rotation so the runtime-facing
+// spawn points along the centreline tangent.
+function spawnQuaternionFacing(tangent: Vec2): Quat {
+  const yaw = Math.atan2(-tangent[0], -tangent[1]) + Math.PI;
+  const half = yaw / 2;
+  return [0, Math.sin(half), 0, Math.cos(half)];
+}
+
 function sceneBounds(project: Project): { min: Vec3; max: Vec3 } {
   let minX = Infinity;
   let minZ = Infinity;
@@ -143,7 +152,7 @@ export function spawnFor(project: Project, fallback?: ProjectCenterline): Spawn 
   return {
     name: "spawn",
     position: [x, y, z],
-    rotation: quaternionFacing(sample.tangent),
+    rotation: spawnQuaternionFacing(sample.tangent),
   };
 }
 
