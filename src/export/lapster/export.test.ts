@@ -76,7 +76,7 @@ describe("lapster-glb-track@5", () => {
     );
     expect(manifest.race!.start_finish.section_id).toBe("main");
     expect(manifest.race!.start_finish.fraction).toBe(0);
-    expect(manifest.race!.grid).toHaveLength(8);
+    expect(manifest.race!.grid).toHaveLength(10);
     expect(manifest.race!.sectors).toHaveLength(4);
   });
 

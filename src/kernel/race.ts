@@ -13,7 +13,7 @@ import { sampleCenterline } from "./spline";
 export const RACE_DATA_VERSION = 1;
 
 const ROUTE_SPACING = 2;
-const GRID_SLOT_COUNT = 8;
+const GRID_SLOT_COUNT = 10;
 const GRID_FIRST_DISTANCE = 4;
 const GRID_ROW_SPACING = 6;
 const GRID_STAGGER = 1.5;
@@ -325,8 +325,8 @@ export function validateRaceData(
     errors.push("race start_finish position must match layout point 0");
   }
 
-  if (!Array.isArray(race.grid) || race.grid.length < 1 || race.grid.length > 8) {
-    errors.push("race grid must contain 1..8 slots");
+  if (!Array.isArray(race.grid) || race.grid.length < 1 || race.grid.length > 10) {
+    errors.push("race grid must contain 1..10 slots");
   } else {
     for (let index = 0; index < race.grid.length; index += 1) {
       const slot = race.grid[index]!;

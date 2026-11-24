@@ -160,9 +160,9 @@ The `race` block mirrors Lapster's `RaceData` contract in `crates/sim-types/src/
 - `layout.points` are world-space `[x, y, z]` points at roughly 2 m spacing, ordered in travel direction, with index 0 nearest the start/finish. The last point is not duplicated.
 - `layout.half_width` is `project.road.halfWidth`.
 - `start_finish.section_id` is the spawn centreline id. `start_finish.fraction` is the authored spawn fraction. `start_finish.position` MUST match `layout.points[0]`. `rotation_xyzw` is normalized and faces the route tangent.
-- `grid` contains eight pole-first logical slots derived behind the start line. Each slot is a `name`, `position`, and `rotation_xyzw`. Slots are clamped inside `layout.half_width` and sampled on asphalt. They are race setup, not painted track geometry.
+- `grid` contains ten pole-first logical slots derived behind the start line. Each slot is a `name`, `position`, and `rotation_xyzw`. Slots are clamped inside `layout.half_width` and sampled on asphalt. They are race setup, not painted track geometry.
 - `sectors` contains four equal `SectorSpec` entries covering `[0, 1]` exactly once, in order.
-- The route, grid, and start/finish are validated before export: finite points, at least three points, a closed layout, positive half-width, a start/finish matching point 0, grid slots inside the road and on asphalt, ordered contiguous sectors covering `[0, 1]`, and route samples on asphalt.
+- The route, grid, and start/finish are validated before export: finite points, at least three points, a closed layout, positive half-width, a start/finish matching point 0, between 1 and 10 grid slots inside the road and on asphalt, ordered contiguous sectors covering `[0, 1]`, and route samples on asphalt.
 - If the spawn centreline is open, the kernel omits `race` and records a warning. Export still succeeds.
 - The race layout is independent of the visual `racing_line` node. It does not alter the welded ground graph, collision, roadside graphs, props, or the racing line.
 
