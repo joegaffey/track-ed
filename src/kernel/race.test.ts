@@ -26,7 +26,7 @@ describe("implicit race layout", () => {
     expect(race!.layout.points[0]).toEqual(race!.start_finish.position);
     expect(race!.start_finish.section_id).toBe("main");
     expect(race!.start_finish.fraction).toBe(0);
-    expect(race!.grid).toHaveLength(8);
+    expect(race!.grid).toHaveLength(10);
     expect(race!.sectors).toHaveLength(4);
     expect(
       race!.sectors.map((sector) => [
@@ -112,6 +112,25 @@ describe("implicit race layout", () => {
           violation.rule === "RC1" &&
           violation.severity === "error" &&
           violation.message.includes("grid slot 0"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts ten grid slots and rejects more", () => {
+    const track = structuredClone(bakeProject(loadProject(loopFixture)));
+    const template = track.race!.grid[0]!;
+    track.race!.grid = Array.from({ length: 11 }, (_, index) => ({
+      ...template,
+      name: `grid_${index}`,
+    }));
+
+    const report = validateBakedTrack(track);
+
+    expect(report.ok).toBe(false);
+    expect(
+      report.violations.some(
+        (violation) =>
+          violation.rule === "RC1" && violation.message.includes("1..10 slots"),
       ),
     ).toBe(true);
   });

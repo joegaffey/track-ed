@@ -384,7 +384,7 @@
         "grid": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 8,
+          "maxItems": 10,
           "items": {
             "$ref": "#/$defs/grid_slot"
           }

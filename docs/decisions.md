@@ -230,7 +230,7 @@ Closed spawn sections now export an optional implicit race layout in the
 
 - The kernel bakes the spawn centreline at roughly 2 m spacing, rotates the
   route so index 0 is nearest the spawn fraction, samples asphalt height, and
-  emits `layout`, `start_finish`, eight staggered grid slots, and four equal
+  emits `layout`, `start_finish`, ten staggered grid slots, and four equal
   sectors.
 - `layout_id` and `start_finish.section_id` are the spawn centreline id;
   `start_finish.fraction` is the authored spawn fraction.
